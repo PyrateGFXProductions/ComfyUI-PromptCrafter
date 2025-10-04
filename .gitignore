@@ -13,3 +13,10 @@ build/
 .idea/
 *.swp
 *.swo
+
+# Local History/Backup files
+.history/
+
+# Logs and Temporary Files
+debug.log
+js/debug.log 
