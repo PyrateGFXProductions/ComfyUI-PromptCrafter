@@ -1,0 +1,1135 @@
+# Standard library imports
+import os
+import re
+import io
+import json
+import textwrap
+import base64
+import pickle
+import time
+import concurrent.futures
+import itertools
+import hashlib
+import ast
+from PIL import Image
+import torch
+import collections
+import numpy as np
+import requests
+
+# Local module imports
+from . import config
+from . import api_clients
+
+# --- Dependency-specific imports ---
+if config.PYPDF_AVAILABLE: from pypdf import PdfReader
+if config.DUCKDUCKGO_SEARCH_AVAILABLE: from duckduckgo_search import DDGS
+if config.LIBROSA_AVAILABLE: import librosa
+if config.MATPLOTLIB_AVAILABLE:
+    try:
+        import matplotlib
+        import matplotlib.pyplot as plt
+    except ImportError:
+        plt = None
+
+# ------------------------------------------------------------------------------------
+# General Utilities
+# ------------------------------------------------------------------------------------
+
+def _debug_print(debug_mode, title, content):
+    """Prints debug information to the console if debug_mode is True."""
+    if debug_mode:
+        if os.name == 'nt':
+            print(f"\n{'='*20} DEBUG: {title} {'='*20}")
+            print(content)
+            print(f"{ '='* (42 + len(title))}\n")
+        else:
+            print(f"\n\033[95m{'='*20} DEBUG: {title} {'='*20}\033[0m")
+            print(content)
+            print(f"\033[95m{'='* (42 + len(title))}\033[0m\n")
+
+def _hash_none(data, hasher, update_hash_func):
+    hasher.update(b"NoneType")
+
+def _hash_primitive(data, hasher, update_hash_func):
+    hasher.update(b"primitive")
+    hasher.update(repr(data).encode('utf-8'))
+
+def _hash_str_bytes(data, hasher, update_hash_func):
+    hasher.update(b"str_or_bytes")
+    hasher.update(data if isinstance(data, bytes) else data.encode('utf-8'))
+
+def _hash_tensor(data, hasher, update_hash_func):
+    hasher.update(b"torch.Tensor")
+    hasher.update(str(data.shape).encode('utf-8'))
+    hasher.update(str(data.dtype).encode('utf-8'))
+    hasher.update(str(data.device).encode('utf-8'))
+    tensor_bytes = data.cpu().numpy().tobytes()
+    hasher.update(tensor_bytes[:1024])
+    hasher.update(tensor_bytes[-1024:])
+
+def _hash_pil_image(data, hasher, update_hash_func):
+    hasher.update(b"PIL.Image")
+    hasher.update(data.tobytes())
+
+def _hash_list_tuple(data, hasher, update_hash_func):
+    hasher.update(b"list_or_tuple")
+    for item in data:
+        update_hash_func(item)
+
+def _hash_set(data, hasher, update_hash_func):
+    hasher.update(b"set")
+    for item in sorted(list(data), key=repr):
+        update_hash_func(item)
+
+def _hash_dict(data, hasher, update_hash_func):
+    hasher.update(b"dict")
+    try:
+        sorted_keys = sorted(data.keys())
+    except TypeError:
+        sorted_keys = sorted(data.keys(), key=repr)
+    for key in sorted_keys:
+        update_hash_func(key)
+        update_hash_func(data[key])
+
+# Dispatch dictionary for type-specific hashing functions.
+_HASH_DISPATCH = {
+    type(None): _hash_none,
+    str: _hash_str_bytes,
+    bytes: _hash_str_bytes,
+    int: _hash_primitive,
+    float: _hash_primitive,
+    bool: _hash_primitive,
+    torch.Tensor: _hash_tensor,
+    Image.Image: _hash_pil_image,
+    list: _hash_list_tuple,
+    tuple: _hash_list_tuple,
+    set: _hash_set,
+    dict: _hash_dict,
+}
+
+def _get_cache_key(*args, **kwargs):
+    """
+    Creates a unique and deterministic key for caching based on the node's inputs.
+    This function recursively handles complex data types for robust and efficient hashing.
+    """
+    hasher = hashlib.sha256()
+    all_args = list(args)
+
+    def update_hash(data):
+        """A nested helper to recursively update the hash with type-specific handling."""
+        data_type = type(data)
+        handler = _HASH_DISPATCH.get(data_type)
+
+        if handler:
+            handler(data, hasher, update_hash)
+            return
+
+        # --- Fallback for unhandled or complex objects ---
+        try:
+            hasher.update(b"pickled_object")
+            hasher.update(pickle.dumps(data))
+        except (pickle.PicklingError, TypeError):
+            if hasattr(data, '__dict__'):
+                hasher.update(b"object_dict")
+                update_hash(data.__dict__)
+            else:
+                hasher.update(b"repr_fallback")
+                hasher.update(repr(data).encode('utf-8'))
+
+    for arg in all_args:
+        update_hash(arg)
+
+    # Sort kwargs by key to ensure deterministic hash order
+    for key in sorted(kwargs.keys()):
+        update_hash(key)
+        update_hash(kwargs[key])
+
+    return hasher.hexdigest()
+
+def safe_read(path):
+    """A helper function to read a text file safely, returning an error message on failure."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"[Error reading {os.path.basename(path)}: {e}]"
+
+def _detect_language(text: str, fallback='English'):
+    """Detects the language of the input text using the langdetect library."""
+    if not config.LANGDETECT_AVAILABLE or not text or not text.strip():
+        return fallback
+    try:
+        from langdetect import detect, LangDetectException
+        LANG_MAP = {'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German', 'it': 'Italian', 'pt': 'Portuguese', 'nl': 'Dutch', 'ru': 'Russian', 'ja': 'Japanese', 'ko': 'Korean', 'zh-cn': 'Chinese (Simplified)', 'zh-tw': 'Chinese (Traditional)', 'ar': 'Arabic', 'hi': 'Hindi'}
+        lang_code = detect(text[:500])
+        return LANG_MAP.get(lang_code, fallback)
+    except LangDetectException:
+        return fallback
+
+def _get_and_create_output_dir(output_path: str, debug_mode: bool = False) -> str | None:
+    """Constructs, validates, and creates a sanitized output directory, returning the absolute path or None on failure."""
+    if not output_path or not isinstance(output_path, str):
+        print(f"\033[91m[PromptCrafter] Error: Invalid output_path provided: {output_path}\033[0m")
+        return None
+
+    base_dir = os.path.abspath(os.path.join(config.COMFYUI_ROOT_DIR, "output"))
+    
+    # Sanitize the subdirectory part of the path to remove invalid characters and prevent traversal.
+    # This is more robust than just lstrip.
+    invalid_chars = r'[<>:"/\\|?*]'
+    safe_subdir = re.sub(invalid_chars, '_', output_path.strip())
+    safe_subdir = os.path.normpath(safe_subdir)
+
+    out_dir = os.path.join(base_dir, safe_subdir)
+
+    # Security check: ensure the final path is within the intended output directory
+    if os.path.commonpath([base_dir]) != os.path.commonpath([base_dir, out_dir]):
+        print(f"\033[91m[PromptCrafter] Error: Invalid output path '{output_path}' attempts to go outside the ComfyUI output directory.\033[0m")
+        return None
+        
+    if os.path.exists(out_dir):
+        if not os.path.isdir(out_dir):
+            print(f"\033[91m[PromptCrafter] Error: A file exists at the target output path '{out_dir}' and is blocking directory creation.\033[0m")
+            return None
+        return out_dir # Directory already exists and is valid.
+
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        print(f"\033[92m[PromptCrafter] Created output directory: {os.path.relpath(out_dir, base_dir)}\033[0m")
+        return out_dir
+    except OSError as e:
+        # This handles race conditions where a file is created after the os.path.exists check,
+        # as well as permission errors.
+        print(f"\033[91m[PromptCrafter] Error: Could not create output directory at '{out_dir}'. Reason: {e}\033[0m")
+        return None
+
+def _save_output_to_file(filename_prefix, sections, base_filename="prompt"):
+    """Saves generated content sections to a timestamped text file."""
+    out_dir = _get_and_create_output_dir(filename_prefix)
+    fname = f"{base_filename}_{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000}.txt"
+    fpath = os.path.join(out_dir, fname)
+    with open(fpath, "w", encoding="utf-8") as f:
+        for i, (title, content) in enumerate(sections):
+            if content and str(content).strip():
+                f.write(f"=== {title.upper()} ===\n{str(content).strip()}\n")
+                if i < len(sections) - 1: f.write("\n")
+
+# ------------------------------------------------------------------------------------
+# Text & JSON Processing
+# ------------------------------------------------------------------------------------
+
+class TextCleaner:
+    """A utility class for various text cleaning and formatting operations."""
+    @staticmethod
+    def single_paragraph(text: str) -> str:
+        text = (text or "").strip()
+        text = re.sub(r'\s+', ' ', text).strip()
+        if (text.startswith('"') and text.endswith('"')) or (text.startswith("“") and text.endswith("”")):
+            text = text[1:-1].strip()
+        return text
+
+    @staticmethod
+    def dedupe_sentences(text: str) -> str:
+        parts = re.split(r'(?<=[.!?])\s+', text.strip())
+        seen, keep = set(), []
+        for s in parts:
+            ss, key = s.strip(), s.strip().lower()
+            if ss and key not in seen:
+                seen.add(key)
+                keep.append(ss)
+        return " ".join(keep)
+
+    @staticmethod
+    def slim_prompt_text(text: str) -> str:
+        if not text: return text
+        t = re.sub(r"\b(and also|additionally|moreover)\b", "and", text, flags=re.IGNORECASE)
+        t = re.sub(r"\bwith\b([^,]+?), and\b", r"with\1,", t, flags=re.IGNORECASE)
+        t = re.sub(r"\b(and\s+){2,}", "and ", t, flags=re.IGNORECASE)
+        t = re.sub(r",\s*,+", ",", t)
+        return re.sub(r"\s+", " ", t).strip()
+
+class JSONParsingError(ValueError):
+    """Custom exception for errors during JSON extraction and parsing."""
+    def __init__(self, message, text=None, original_exception=None):
+        self.text = text
+        self.original_exception = original_exception
+        full_message = message
+        if text:
+            pos = getattr(original_exception, 'pos', None)
+            if pos is not None:
+                start, end = max(0, pos - 40), min(len(text), pos + 40)
+                snippet, pointer = text[start:end].replace('\n', '\\n'), " " * (pos - start) + "^"
+                full_message += f"\nContext around error (pos {pos}):\n{snippet}\n{pointer}"
+            else:
+                full_message += f"\nText snippet: {text[:200]}..."
+        if original_exception: full_message += f"\nOriginal error: {original_exception}"
+        super().__init__(full_message)
+
+def _find_json_candidate(text: str) -> str | None:
+    """Finds the most likely JSON string candidate from raw text returned by an LLM."""
+    # 1. Prioritize markdown code blocks, which are explicitly formatted.
+    # This regex correctly handles both JSON objects `{...}` and arrays `[...]`.
+    match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```", text, re.DOTALL)
+    if match:
+        return match.group(1)
+
+    # 2. Fallback: Find the last-starting, first-ending balanced JSON object/array.
+    # This is more robust for conversational text where the JSON is often at the end.
+    last_brace = text.rfind('{')
+    last_bracket = text.rfind('[')
+
+    if last_brace == -1 and last_bracket == -1:
+        return None
+
+    start_pos = max(last_brace, last_bracket)
+    start_char = text[start_pos]
+    end_char = '}' if start_char == '{' else ']'
+
+    balance, in_string = 1, False
+    # Start searching from the character *after* the opening bracket.
+    for i in range(start_pos + 1, len(text)):
+        char = text[i]
+
+        if char == '"' and (i == 0 or text[i-1] != '\\'):
+            in_string = not in_string
+        
+        if not in_string:
+            if char == start_char: balance += 1
+            elif char == end_char: balance -= 1
+
+        if balance == 0:
+            return text[start_pos : i + 1]
+            
+    return None
+
+def _clean_json_string(json_str: str) -> str:
+    """Cleans a JSON string candidate to fix common, non-standard syntax produced by LLMs."""
+    # Remove XML-like <ref> tags that some models output during self-correction.
+    cleaned_str = re.sub(r'</?ref>', '', json_str)
+    
+    cleaned_str = re.sub(r"^\s*//.*$", "", json_str, flags=re.MULTILINE)
+    cleaned_str = re.sub(r'/\*[\s\S]*?\*/', '', cleaned_str)
+    
+    cleaned_str = re.sub(r"([{,]\\s*)([a-zA-Z0-9_.-]+)(\\s*:)", r'\1"\2"\3', cleaned_str)
+    cleaned_str = re.sub(r'(:\s*)\'([^\']*)\'', r'\1"\2"', cleaned_str)
+
+    cleaned_str = re.sub(r",\s*([}\]])", r"\1", cleaned_str) # Remove trailing commas
+    cleaned_str = re.sub(r'\bTrue\b', 'true', cleaned_str, flags=re.IGNORECASE)
+    cleaned_str = re.sub(r'\bFalse\b', 'false', cleaned_str, flags=re.IGNORECASE)
+    cleaned_str = re.sub(r'\bNone\b', 'null', cleaned_str, flags=re.IGNORECASE)
+    
+    # Safely handle unescaped newlines inside strings
+    return "".join(_escape_newlines_in_strings(cleaned_str)).strip()
+
+def _extract_and_parse_json(text: str):
+    """Extracts and parses a JSON object from a string that may contain other text."""
+    if not text or not text.strip(): raise JSONParsingError("Input text is empty or contains only whitespace.")
+    json_str_candidate = _find_json_candidate(text)
+    text_to_parse, source_label = (json_str_candidate, "extracted JSON candidate") if json_str_candidate else (text, "full text response")
+    cleaned_json_str = _clean_json_string(text_to_parse)
+    try:
+        return json.loads(cleaned_json_str)
+    except json.JSONDecodeError as json_err:
+        try:
+            pythonic_str = cleaned_json_str.replace('true', 'True').replace('false', 'False').replace('null', 'None')
+            return ast.literal_eval(pythonic_str)
+        except (ValueError, SyntaxError, MemoryError, TypeError, RecursionError) as ast_err:
+            raise JSONParsingError(f"Failed to parse {source_label} as JSON or Python literal.", text=cleaned_json_str, original_exception=ast_err) from ast_err
+
+def _escape_newlines_in_strings(text: str):
+    """A generator that yields characters, escaping newlines only when inside a string."""
+    in_string, is_escaped = False, False
+    for char in text:
+        if char == '"' and not is_escaped:
+            in_string = not in_string
+        
+        if in_string and not is_escaped:
+            if char == '\n':
+                yield '\\n'
+                continue
+            if char == '\r':
+                continue
+        
+        yield char
+        is_escaped = (char == '\\' and not is_escaped)
+
+# ------------------------------------------------------------------------------------
+# Image & Audio Processing
+# ------------------------------------------------------------------------------------
+
+def convert_to_pil(img_in):
+    """Converts a PyTorch tensor or PIL Image into a standard PIL Image object."""
+    if img_in is None: return None
+    if isinstance(img_in, Image.Image): return img_in
+    if torch.is_tensor(img_in):
+        arr = img_in[0] if img_in.ndim == 4 else img_in
+        arr = arr.detach().cpu().numpy()
+        if arr.dtype != np.uint8: arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+        return Image.fromarray(arr)
+    return None
+
+def encode_image(img):
+    """
+    Converts a PIL Image or tensor into a base64 encoded string.
+    This is the format required for sending images to most modern web APIs.
+    """
+    pil = convert_to_pil(img)
+    if pil is None:
+        return None
+    buf = io.BytesIO()
+    pil.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+def audio_to_spectrogram(audio_path):
+    """Converts an audio file into a Mel spectrogram image."""
+    if not config.LIBROSA_AVAILABLE or not config.MATPLOTLIB_AVAILABLE: return "[Error: librosa or matplotlib not installed]"
+    cache_key = _get_cache_key(audio_path, "spectrogram_v1")
+    if config.CACHE.has(cache_key):
+        print(f"\033[94m[PromptCrafter] Using cached spectrogram for {os.path.basename(audio_path)}.\033[0m")
+        return config.CACHE.get(cache_key)
+    try:
+        y, sr = librosa.load(audio_path, sr=None)
+        S = librosa.feature.melspectrogram(y=y, sr=sr)
+        S_dB = librosa.power_to_db(S, ref=np.max)
+        fig, ax = plt.subplots(figsize=(10, 4))
+        librosa.display.specshow(S_dB, sr=sr, x_axis='time', y_axis='mel', ax=ax)
+        ax.set(title=f'Mel spectrogram: {os.path.basename(audio_path)}')
+        plt.tight_layout()
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        image = Image.open(buf)
+        config.CACHE.set(cache_key, image)
+        return image
+    except Exception as e:
+        return f"[Error generating spectrogram: {e}]"
+
+# ------------------------------------------------------------------------------------
+# Timed Text & Scheduling
+# ------------------------------------------------------------------------------------
+
+def _parse_srt_time(time_str: str) -> float:
+    """Converts SRT time format 'HH:MM:SS,ms' to seconds."""
+    try:
+        parts = time_str.replace(',', '.').split(':')
+        if len(parts) == 3:
+            h, m, s = float(parts[0]), float(parts[1]), float(parts[2])
+            return h * 3600 + m * 60 + s
+    except (ValueError, IndexError):
+        return 0.0
+    return 0.0
+
+def _srt_to_timed_segments(srt_text: str):
+    """Parses an SRT file into timed segments and a combined text string."""
+    segments = []
+    pattern = re.compile(r'(\d+)\s*[\r\n]+(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})\s*[\r\n]+([\s\S]*?)(?=\n\n|\Z)', re.MULTILINE)
+    for match in pattern.finditer(srt_text):
+        text = re.sub(r'<[^>]+>', '', match.group(4)).strip().replace('\n', ' ')
+        if text: segments.append((_parse_srt_time(match.group(2)), _parse_srt_time(match.group(3)), text))
+    return segments, "\n".join([seg[2] for seg in segments])
+
+def _lrc_to_timed_segments(lrc_text: str):
+    """Parses LRC file content into timed segments and a combined text string."""
+    segments, raw_lyrics = [], []
+    pattern = re.compile(r'(\[\d{2}:\d{2}\.\d{2,3}\])(.*)')
+    for line in lrc_text.splitlines():
+        match = pattern.match(line.strip())
+        if match:
+            time_str, text = match.groups()
+            try:
+                minutes, seconds, centiseconds = map(float, time_str.strip('[]').split(':') + [time_str.strip('[]').split('.')[-1]])
+                start_time = minutes * 60 + seconds + centiseconds / 100
+                text = text.strip()
+                if text:
+                    segments.append({'start': start_time, 'text': text})
+                    raw_lyrics.append(text)
+            except ValueError:
+                continue
+    if not segments: return None, lrc_text
+    segments.sort(key=lambda x: x['start'])
+    timed_tuples = []
+    for i in range(len(segments)):
+        start, text = segments[i]['start'], segments[i]['text']
+        end = segments[i+1]['start'] if i + 1 < len(segments) else start + 5
+        timed_tuples.append((start, end, text))
+    return timed_tuples, "\n".join(raw_lyrics)
+
+LYRICS_FORMATS = [
+    {
+        "name": "SRT",
+        "extensions": [".srt"],
+        "pattern": re.compile(r'\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}'),
+        "parser": _srt_to_timed_segments
+    },
+    {
+        "name": "LRC",
+        "extensions": [".lrc"],
+        "pattern": re.compile(r'\[\d{2}:\d{2}\.\d{2,3}\]'),
+        "parser": _lrc_to_timed_segments
+    }
+]
+
+def _process_lyrics_content(content, source_name=""):
+    """Detects format (SRT, LRC, plain text) and processes lyrics content accordingly."""
+    if not content or content.startswith("[Error"):
+        return content, None
+    for fmt in LYRICS_FORMATS:
+        if (source_name and any(source_name.lower().endswith(ext) for ext in fmt["extensions"])) or fmt["pattern"].search(content):
+            segments, text = fmt["parser"](content)
+            if segments: return text, segments
+    return content, None
+
+def _get_verified_path(folder_path, file_name=None, is_dir=False):
+    """Constructs and verifies a path, returning the absolute path or None if not found."""
+    if not folder_path: return None
+    if not is_dir and (not file_name or file_name == "<none>"): return None
+    full_folder_path = folder_path if os.path.isabs(folder_path) else os.path.join(config.COMFYUI_ROOT_DIR, folder_path)
+    if is_dir:
+        if os.path.isdir(full_folder_path): return full_folder_path
+        print(f"\033[93m[PromptCrafter] Warning: Directory not found at '{full_folder_path}'.\033[0m")
+        return None
+    else:
+        filepath = os.path.join(full_folder_path, file_name)
+        if os.path.exists(filepath): return filepath
+        print(f"\033[93m[PromptCrafter] Warning: File not found at '{filepath}'.\033[0m")
+        return None
+
+def _get_audio_path(folder_path, file_name):
+    """Constructs and verifies the path to an audio file."""
+    return _get_verified_path(folder_path, file_name)
+
+def _parse_schedule_prompt(prompt):
+    """Parses a prompt string to separate the text from a weight if present."""
+    weight = 1.0
+    if ":" in prompt:
+        parts = prompt.split(":")
+        if not (len(parts) > 2 or (len(parts) == 2 and not parts[1].strip().replace('.', '', 1).isdigit())):
+            try:
+                prompt, weight_str = ":".join(parts[:-1]), parts[-1]
+                weight = float(weight_str)
+                prompt = prompt.strip()
+            except (ValueError, IndexError): pass
+    return prompt.strip(), weight
+
+def _interpolate_schedule_prompts(schedule, frame_interval):
+    """Inserts interpolated keyframes into a schedule to create smooth transitions."""
+    if frame_interval <= 0: return schedule
+    sorted_frames = sorted(schedule.keys())
+    new_schedule = schedule.copy()
+    for i in range(len(sorted_frames) - 1):
+        start_frame, end_frame = sorted_frames[i], sorted_frames[i+1]
+        start_prompt_text, start_weight = _parse_schedule_prompt(schedule[start_frame])
+        end_prompt_text, end_weight = _parse_schedule_prompt(schedule[end_frame])
+        num_frames_in_segment = end_frame - start_frame
+        if num_frames_in_segment <= frame_interval: continue
+        for interp_frame in range(start_frame + frame_interval, end_frame, frame_interval):
+            t = (interp_frame - start_frame) / num_frames_in_segment
+            if start_prompt_text == end_prompt_text:
+                interp_weight = start_weight + (end_weight - start_weight) * t
+                new_schedule[interp_frame] = f"{json.dumps(start_prompt_text)}:{interp_weight:.4f}"
+            else:
+                new_schedule[interp_frame] = f"[{start_prompt_text}:{1 - t:.4f}][{end_prompt_text}:{t:.4f}]"
+    return collections.OrderedDict(sorted(new_schedule.items()))
+
+def _create_schedule_from_items(items, max_frames, start_frame=0, interpolate=True, interpolation_frame_interval=10):
+    """A generic helper to create a keyframe schedule from a list of items (prompts)."""
+    num_items = len(items)
+    schedule = collections.OrderedDict()
+    if num_items == 1:
+        schedule[start_frame] = items[0]
+    else:
+        keyframe_indices = np.linspace(start_frame, max_frames, num=num_items, endpoint=False, dtype=int)
+        for i, item in enumerate(items):
+            schedule[int(keyframe_indices[i])] = item
+    if interpolate:
+        schedule = _interpolate_schedule_prompts(schedule, interpolation_frame_interval)
+    schedule_items = [f'"{str(key)}": {json.dumps(str(value))}' for key, value in schedule.items()]
+    return ",\n".join(schedule_items)
+
+def _handle_lyrics_from_file(folder_path, file_name):
+    """Handles loading and processing lyrics from a local file path."""
+    filepath = _get_verified_path(folder_path, file_name)
+    if not filepath:
+        return f"[Error: File not found.]", None, (folder_path, file_name)
+    content = safe_read(filepath)
+    text, segments = _process_lyrics_content(content, file_name)
+    return text, segments, (folder_path, file_name)
+
+def _handle_lyrics_from_url(url, debug_mode):
+    """Handles fetching and processing lyrics from a URL."""
+    ok, content_or_error = _fetch_url_content(url, debug_mode)
+    text, segments = _process_lyrics_content(content_or_error, url)
+    return text, segments, ("URL", url)
+
+def _get_lyrics_from_input(user_text, lyrics_folder_path, lyrics_file, debug_mode=False):
+    """Orchestrates loading lyrics from various sources (file, URL, direct text)."""
+    # Priority 1: An explicitly selected file (which could be a local file or a URL in the filename field).
+    if lyrics_folder_path and lyrics_file and lyrics_file != "<none>":
+        if lyrics_file.strip().startswith(('http://', 'https://')):
+            return _handle_lyrics_from_url(lyrics_file.strip(), debug_mode)
+        else:
+            return _handle_lyrics_from_file(lyrics_folder_path, lyrics_file)
+    # Priority 2: Text in the main user_text widget.
+    if user_text and user_text.strip() and user_text.strip() != config.DEFAULT_PROMPT_TEXT:
+        text, segments = _process_lyrics_content(user_text)
+        return text, segments, None
+    # Fallback: No lyrics provided.
+    return "", None, None
+
+# ------------------------------------------------------------------------------------
+# Web & Content Fetching
+# ------------------------------------------------------------------------------------
+
+def _fetch_url_content(url, debug_mode=False):
+    """Fetches and cleans text content from a URL, with support for PDF text extraction."""
+    try:
+        print(f"\033[94m[PromptCrafter] URL detected. Fetching content from: {url}\033[0m")
+        session = getattr(config, "SHARED_SESSION", None)
+        if session is None:
+            session = requests
+        response = session.get(url, timeout=20)
+        response.raise_for_status()
+        content_type = response.headers.get('content-type', '').lower()
+
+        if 'application/pdf' in content_type:
+            if not config.PYPDF_AVAILABLE: return False, "[Error: URL points to a PDF, but `pypdf` is not installed.]"
+            try:
+                pdf_file = io.BytesIO(response.content)
+                reader = PdfReader(pdf_file)
+                text = "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
+                text = re.sub(r'\s+', ' ', text).strip()
+                _debug_print(debug_mode, "Fetched PDF Content (Extracted)", (text[:1000] + "...") if len(text) > 1000 else text)
+                return True, text
+            except Exception as e: return False, f"[Error extracting text from PDF: {e}]"
+        elif 'text' in content_type:
+            text = response.text
+            text = re.sub(r'<(script|style)\b[^>]*>.*?</\1>', '', text, flags=re.DOTALL | re.IGNORECASE)
+            body_match = re.search(r'<body\b[^>]*>(.*?)</body>', text, flags=re.DOTALL | re.IGNORECASE)
+            if body_match: text = body_match.group(1)
+            text = re.sub(r'<[^>]+>', ' ', text)
+            text = re.sub(r'\s+', ' ', text).strip()
+            _debug_print(debug_mode, "Fetched URL Content (Cleaned)", (text[:1000] + "...") if len(text) > 1000 else text)
+            return True, text
+        else:
+            return False, f"[Error: URL content type is not supported ({content_type}) ]"
+    except requests.exceptions.RequestException as e:
+        return False, f"[Error fetching URL: {e}]"
+
+def _should_perform_web_search(user_query, model, seed, debug_mode, timeout=40):
+    """Uses an LLM to determine if a user's query requires a web search."""
+    from . import api_clients
+    if not config.DUCKDUCKGO_SEARCH_AVAILABLE or not user_query or user_query.strip() == config.DEFAULT_PROMPT_TEXT:
+        return False, None
+    
+    current_date = time.strftime('%Y-%m-%d')
+    prompt_template = textwrap.dedent(f"""
+        You are an expert assistant that decides when to use a web search tool to answer a user's query.
+        Your internal knowledge was last updated in early 2023. The current date is {current_date}.
+
+        Analyze the user's query below. You must determine if a web search is necessary to provide an accurate and up-to-date answer.
+
+        **SEARCH IS REQUIRED IF:**
+        - The query asks for information about events that happened after early 2023.
+        - The query asks for real-time or rapidly changing information (e.g., stock prices, weather, sports scores, product availability).
+        - The query asks for "the latest" or "current" information on any topic.
+        - The query mentions a specific, non-famous person, a niche product, or a recent company.
+        - The query includes a URL and asks for its content.
+
+        **SEARCH IS NOT REQUIRED IF:**
+        - The query is a general knowledge question (e.g., "What is the capital of France?").
+        - The query asks for a creative task (e.g., "Write a poem about the ocean").
+        - The query asks about historical events or stable, well-known facts from before 2023.
+
+        ---
+        USER QUERY:
+        {query}
+        ---
+
+        Based on your analysis, respond with ONLY a JSON object.
+        - If a search is needed, provide a concise, keyword-focused search query.
+        - Format: {{"search_needed": true, "search_query": "optimized search keywords for a search engine"}}
+        - If no search is needed: {{"search_needed": false, "search_query": null}}
+    """).strip()
+    check_prompt = prompt_template.format(query=user_query)
+    ok, result_json = api_clients._reason_with_model(model, check_prompt, use_chat_api=True, temperature=0.0, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title="Web Search Check")
+    if ok and isinstance(result_json, dict) and result_json.get("search_needed") and result_json.get("search_query"):
+        return True, result_json.get("search_query")
+    return False, None
+
+def _perform_web_search(query: str, num_results=3, debug_mode=False, fast_search=False, max_concurrent_fetches=5):
+    """Performs a web search using DuckDuckGo and returns a combined context string."""
+    if not config.DUCKDUCKGO_SEARCH_AVAILABLE: return "[Web search is disabled because `duckduckgo-search` is not installed.]"
+    print(f"\033[94m[PromptCrafter] Performing web search for: '{query}'\033[0m")
+    if fast_search: print(f"\033[94m[PromptCrafter] Fast search enabled. Using snippets only.\033[0m")
+    search_context = ""
+    try:
+        with DDGS(timeout=20) as ddgs:
+            results = list(itertools.islice(ddgs.text(query, region='wt-wt', safesearch='moderate', timelimit='y'), num_results))
+            if not results: return "[No web search results found.]"
+            if fast_search:
+                for result in results:
+                    search_context += f"---\nTitle: {result.get('title', 'N/A')}\nSnippet: {result.get('body', 'N/A')}\n\n"
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(num_results, max_concurrent_fetches)) as executor:
+                    future_to_url = {executor.submit(_fetch_url_content, result.get('href'), debug_mode): result for result in results if result.get('href')}
+                    fetched_contents = {}
+                    for future in concurrent.futures.as_completed(future_to_url):
+                        result_meta = future_to_url[future]
+                        url = result_meta.get('href')
+                        try:
+                            is_ok, content_or_err = future.result()
+                            fetched_contents[url] = (is_ok, content_or_err, result_meta)
+                        except Exception as exc:
+                            fetched_contents[url] = (False, f"[Error fetching URL content: {exc}]", result_meta)
+                for result in results:
+                    url = result.get('href')
+                    if url in fetched_contents:
+                        ok, content, result_meta = fetched_contents[url]
+                        search_context += f"--- Web Result from {url} ---\nTitle: {result_meta.get('title', 'N/A')}\nSnippet: {result_meta.get('body', 'N/A')}\n"
+                        if ok and content:
+                            search_context += f"Content Summary: {TextCleaner.single_paragraph(content)[:1500]}...\n\n"
+                        else:
+                            search_context += f"Content: [Could not fetch or process content. Reason: {content}]\n\n"
+        _debug_print(debug_mode, "Web Search Context", search_context)
+        return search_context.strip()
+    except Exception as e:
+        print(f"\033[93m[PromptCrafter] Warning: An error occurred during web search: {e}\033[0m")
+        return f"[An error occurred during web search: {e}]"
+
+# ------------------------------------------------------------------------------------
+# Large Text Summarization (Map-Reduce)
+# ------------------------------------------------------------------------------------
+
+def _split_text_into_chunks(text, chunk_size_words):
+    """
+    Yields sentence-aware chunks of a target word size from a large text.
+    This is a generator function to be memory-efficient with very large texts.
+    """
+    if not text: return
+
+    # Use finditer to create an iterator of sentences, avoiding a large list in memory.
+    # This regex is more robust and handles various sentence-ending punctuation.
+    sentence_matches = re.finditer(r'[^.!?]+(?:[.!?]|\Z)', text.strip())
+    current_chunk_sentences, current_word_count = [], 0
+
+    for match in sentence_matches:
+        sentence = match.group(0).strip()
+        if not sentence: continue
+
+        sentence_word_count = len(sentence.split())
+        if current_chunk_sentences and (current_word_count + sentence_word_count > chunk_size_words):
+            yield " ".join(current_chunk_sentences)
+            current_chunk_sentences, current_word_count = [], 0
+        current_chunk_sentences.append(sentence)
+        current_word_count += sentence_word_count
+
+    if current_chunk_sentences:
+        yield " ".join(current_chunk_sentences)
+
+def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debug_mode, timeout, strategy="default", user_query=None):
+    """Performs a hierarchical map-reduce summarization on large text."""
+    final_strategy = strategy
+    if user_query:
+        simple_summarize_queries = ["summarize", "summarize this", "give me a summary", "can you summarize this", "tldr", "tl;dr", "summary"]
+        if user_query.lower().strip(" .?!") in simple_summarize_queries:
+            print("\033[94m[PromptCrafter] Simple summarize query detected. Switching to faster 'Extractive' strategy for initial pass.\033[0m")
+            final_strategy = "extractive"
+
+    cpu_count = os.cpu_count()
+    max_workers = min(32, (cpu_count if cpu_count else 1) + 4)
+
+    def map_chunk_to_summary(chunk, i):
+        from . import api_clients
+        map_prompt_template = "Extract the most important sentences from the following text chunk. Return ONLY the extracted sentences.\n\nTEXT CHUNK:\n{chunk}" if final_strategy == "extractive" else "Concisely summarize the key points of the following text chunk. Focus on factual information, names, and key events. Return ONLY the summary.\n\nTEXT CHUNK:\n{chunk}"
+        ok, summary_or_err = api_clients.query_model_auto(model, map_prompt_template.format(chunk=chunk), prefer_chat=True, temperature=temperature, seed=seed, debug_mode=debug_mode, timeout=timeout, debug_title=f"Summarize Chunk {i+1}")
+        if ok: return TextCleaner.single_paragraph(summary_or_err)
+        print(f"\033[93m[PromptCrafter] Warning: Could not summarize chunk {i+1}. Error: {summary_or_err}\033[0m")
+        return None
+
+    def reduce_group(group, i, level, total_groups):
+        from . import api_clients
+        reduce_prompt = f"The following text consists of several summaries of a larger document. Synthesize these summaries into one final, coherent summary of the entire document.\n\nSUMMARIES:\n{group}"
+        ok, summary_or_err = api_clients.query_model_auto(model, reduce_prompt, prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title=f"Reduce Level {level} - Group {i+1}/{total_groups}")
+        if ok: return TextCleaner.single_paragraph(summary_or_err)
+        print(f"\033[93m[PromptCrafter] Warning: Reduce step failed for group {i+1} at level {level}. Error: {summary_or_err}\033[0m")
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # --- Map Phase ---
+        print("\033[94m[PromptCrafter] Starting parallel summarization of text chunks (Map phase)...")
+        chunk_iterator = _split_text_into_chunks(text, chunk_size_words)
+        # Use a generator expression to filter out failed summaries without creating an intermediate list
+        current_summaries = (s for s in executor.map(map_chunk_to_summary, chunk_iterator, itertools.count(0)) if s)
+        
+        # Convert to list once, after the map phase is complete
+        summaries_list = list(current_summaries)
+        if not current_summaries:
+            return "[Error: All text chunks failed to summarize.]"
+
+        # --- Reduce Phase ---
+        reduce_level = 1
+        while len(summaries_list) > 1:
+            # Dynamically adjust group size to balance progress and context window limits
+            reduce_group_size = max(2, min(5, (len(summaries_list) + max_workers - 1) // max_workers))
+            print(f"\033[94m[PromptCrafter] Combining {len(summaries_list)} summaries into groups of ~{reduce_group_size} (Reduce level {reduce_level})...")
+            
+            groups_to_process = ["\n\n---\n\n".join(summaries_list[i:i + reduce_group_size]) for i in range(0, len(summaries_list), reduce_group_size)]
+            
+            # Process groups in parallel
+            future_reduced_summaries = executor.map(reduce_group, groups_to_process, itertools.count(0), itertools.repeat(reduce_level), itertools.repeat(len(groups_to_process)))
+            reduced_summaries = list(s for s in future_reduced_summaries if s)
+
+            if not reduced_summaries:
+                print(f"\033[91m[PromptCrafter] Error: All groups failed at reduce level {reduce_level}. Returning previous level's summaries.\033[0m")
+                return "\n\n".join(summaries_list)
+            
+            summaries_list = reduced_summaries
+            reduce_level += 1
+
+    final_summary = summaries_list[0] if summaries_list else "[Error: Summarization resulted in an empty string.]"
+
+    # Final pass to tailor the summary to the user's query, if one was provided.
+    if user_query and user_query.strip() and user_query.strip() != config.DEFAULT_PROMPT_TEXT and final_strategy != 'extractive':
+        print("\033[94m[PromptCrafter] Performing final pass to tailor summary to user query...")
+        final_pass_prompt = textwrap.dedent(f"""
+            You are a synthesis expert. Based on the following comprehensive summary, provide a concise and direct answer to the user's original query. Focus only on the information relevant to the query.
+---
+COMPREHENSIVE SUMMARY ---
+{final_summary}
+--- END SUMMARY ---
+--- USER's ORIGINAL QUERY ---
+{user_query}
+--- END QUERY ---
+            Return ONLY the final, targeted answer.
+        """).strip()
+        from . import api_clients
+        ok, final_answer = api_clients.query_model_auto(model, final_pass_prompt, prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title="Final Summary Pass")
+        if ok: return TextCleaner.single_paragraph(final_answer)
+        else: print(f"\033[93m[PromptCrafter] Warning: Final summary pass failed. Returning the general summary. Error: {final_answer}\033[0m")
+
+    return final_summary
+
+# ------------------------------------------------------------------------------------
+# Advanced Prompt Generation Helpers (moved from nodes.py)
+# ------------------------------------------------------------------------------------
+def _extract_mandatory_tokens_with_model(image_context: str, user_text: str, run_config: 'config.PromptCraftRunConfig', primary_subjects_from_images: list | None = None):
+    cache_key = _get_cache_key(run_config.model, image_context, run_config.use_chat_api, run_config.temperature, run_config.seed, user_text, primary_subjects_from_images, "extract_tokens_v2", run_config.debug_mode)
+    from . import api_clients
+    if config.CACHE.has(cache_key):
+        print("\033[94m[PromptCrafter] Using cached token extraction.\033[0m")
+        return True, config.CACHE.get(cache_key)
+
+    has_user_text = user_text and user_text.strip() and user_text.strip() != config.DEFAULT_PROMPT_TEXT
+
+    # --- Determine Primary and Secondary Subjects ---
+    # If the user provides text, their instructions are the source of truth for primary subjects.
+    # Subjects from images become secondary, inspirational context.
+    if has_user_text:
+        ok_prim, primary_subjects = _extract_primary_subjects(user_text, run_config)
+        if not ok_prim: return False, primary_subjects
+        secondary_subjects = primary_subjects_from_images or []
+    else: # No user text, so subjects from images are primary.
+        primary_subjects = primary_subjects_from_images or []
+        ok_sec, secondary_subjects = _extract_secondary_subjects(image_context, run_config)
+        if not ok_sec: print(f"\033[93m[PromptCrafter] Warning: Could not extract secondary subjects: {secondary_subjects}\033[0m")
+        secondary_subjects = secondary_subjects if ok_sec else []
+    if has_user_text and not primary_subjects:
+        return False, "Model did not identify any required subjects from your instructions. Please try rephrasing."
+
+    # Combine and filter the lists.
+    primary_lower = {p.lower() for p in primary_subjects}
+    clean_sec = [item for item in secondary_subjects if str(item).lower() not in primary_lower]
+
+    tagged = {"primary": [f"[PRIMARY] {s}" for s in primary_subjects], "secondary": [f"[SECONDARY][OPTIONAL] {s}" for s in clean_sec]}
+    primary_list = primary_subjects if isinstance(primary_subjects, list) else [primary_subjects]
+    tagged["allowed_list"] = _unique_keep_order(primary_list + clean_sec)
+    config.CACHE.set(cache_key, tagged)
+    return True, tagged
+
+def _extract_subjects(source_text, source_label, instruction_text, run_config, debug_title, post_process_func=None):
+    from . import api_clients
+    if not source_text or not source_text.strip() or source_text.strip() == config.DEFAULT_PROMPT_TEXT: return True, []
+    ask_prompt = textwrap.dedent(f"""
+        {instruction_text}
+        Return ONLY a JSON array of strings: ["item1", "item2", ...]. No commentary.
+        ---
+        {source_label.upper()} ---
+        {source_text}
+        --- END {source_label.upper()} ---
+    """).strip()
+    ok, items_or_err = api_clients._reason_with_model(run_config.model, ask_prompt, use_chat_api=run_config.use_chat_api, temperature=run_config.temperature, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title=debug_title)
+    if not ok: return False, items_or_err
+    return True, _post_process_extracted_subjects(items_or_err, post_process_func)
+
+def _extract_primary_subjects(user_text, run_config):
+    instruction = "From the USER INSTRUCTIONS, extract a literal list of all visual subjects, characters, and specific named objects the user explicitly wants to see in the final scene. IGNORE musical instruments, audio descriptions, tempo notes, and genre descriptions."
+    def clean_func(item_text):
+        cleaned = re.sub(r'\s*\bfrom image \d+\b\s*', ' ', item_text, flags=re.I).strip()
+        stop_phrases = {"main subjects", "the subjects", "the characters", "subjects from the image", "characters from the image", "an epic scene", "a scene", "main subject", "the main subject", "the main subjects in the images", "subjects in the images"}
+        return "" if cleaned.lower().strip(".,'\"- ") in stop_phrases else cleaned
+    return _extract_subjects(source_text=user_text, source_label="USER INSTRUCTIONS", instruction_text=instruction, run_config=run_config, debug_title="Extract Primary Subjects", post_process_func=clean_func)
+
+def _extract_secondary_subjects(image_context, run_config):
+    if not image_context or image_context.startswith("No reference images provided."): return True, []
+    instruction = "From the IMAGE DESCRIPTIONS, extract a list of all subjects, characters, and major objects."
+    return _extract_subjects(source_text=image_context, source_label="IMAGE DESCRIPTIONS", instruction_text=instruction, run_config=run_config, debug_title="Extract Secondary Subjects", post_process_func=lambda item_text: re.sub(r'\s+', ' ', item_text).strip())
+
+def _post_process_extracted_subjects(items_list, post_process_func=None):
+    if not items_list or not isinstance(items_list, list): return []
+    processed_items = []
+    for item in items_list:
+        if not item: continue
+        processed_item = str(item)
+        if post_process_func: processed_item = post_process_func(processed_item)
+        if processed_item and processed_item.strip(): processed_items.append(processed_item.strip())
+    return _unique_keep_order(processed_items)[:40]
+
+def _unique_keep_order(seq):
+    seen, result = set(), []
+    for item in seq:
+        if not item: continue
+        key = item.lower().strip()
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
+
+def _deep_think_and_refine(model, generation_prompt_text, max_iterations=3, confidence_threshold=0.8, **kwargs):
+    from . import api_clients
+    core_objectives = _summarize_deep_think_objectives(model, generation_prompt_text, **kwargs)
+    _debug_print(kwargs.get("debug_mode", False), "Deep Think - Core Objectives", core_objectives or "Could not be summarized.")
+
+    current_prompt, history = "", []
+
+    for i in range(max_iterations):
+        iteration_num = len(history) + 1
+        _debug_print(kwargs.get("debug_mode", False), f"Deep Think - Iteration {iteration_num} Start", f"Input Prompt:\n{current_prompt or '(First iteration, generating initial draft)'}")
+        if not current_prompt: # Only do initial generation if we have no prompt to start with
+            initial_gen_template = textwrap.dedent(f"""
+                You are a professional cinematic prompt engineer and a meticulous editor. Your task is to perform two steps:
+                1.  **GENERATE**: Read the "FULL REQUEST" and generate a high-quality, polished prompt that fulfills all "CORE OBJECTIVES".
+                2.  **CRITIQUE**: Immediately after generating, critique your own work. Analyze if your generated prompt fully satisfies all "CORE OBJECTIVES". Provide a confidence score (0.0-1.0) and a brief critique.
+                ---
+                FULL REQUEST (for generation)
+{generation_prompt_text}
+---
+                CORE OBJECTIVES (for self-critique)
+{core_objectives}
+---
+                Return your response as a single JSON object with three keys: `refined_prompt` (string), `confidence_score` (float), and `critique` (string).
+            """).strip()
+            # Modify kwargs for this specific call to set the correct debug title
+            initial_gen_kwargs = kwargs.copy()
+            initial_gen_kwargs['debug_title'] = f"Deep Think - Initial Generation & Critique"
+            ok, critique_json = api_clients._reason_with_model(model, initial_gen_template, **initial_gen_kwargs)
+        else:
+            ok, critique_json = _run_deep_think_iteration(current_prompt, history, core_objectives, model, **kwargs)
+        
+        if not ok or not isinstance(critique_json, dict):
+            _debug_print(kwargs.get("debug_mode", False), f"Deep Think - Iteration {iteration_num} Critique Failed", f"Error: {critique_json}")
+            return (True, current_prompt) if current_prompt else (False, "Deep Think process failed at initial generation.")
+        
+        confidence_score = critique_json.get("confidence_score", 0.0)
+        refined_prompt = critique_json.get("refined_prompt")
+        critique = critique_json.get("critique", "No critique provided.")
+        
+        if not refined_prompt:
+            _debug_print(kwargs.get("debug_mode", False), "Deep Think - Iteration did not return refined prompt", "Using previous version.")
+            if not current_prompt: return False, "Deep Think process failed to generate an initial prompt."
+            refined_prompt = current_prompt
+
+        history.append((current_prompt or "Initial Generation", critique))
+        _debug_print(kwargs.get("debug_mode", False), f"Deep Think - Iteration {iteration_num} Critique Result", f"Confidence: {confidence_score}\nCritique: {critique}")
+
+        if confidence_score >= confidence_threshold:
+            _debug_print(kwargs.get("debug_mode", False), f"Deep Think - Confidence Threshold ({confidence_threshold}) Met", f"Final Prompt: {refined_prompt}")
+            return True, refined_prompt
+        if refined_prompt.strip() == current_prompt.strip():
+            _debug_print(kwargs.get("debug_mode", False), "Deep Think - Prompt Stabilized", "Refined prompt is identical to the previous one. Finalizing.")
+            return True, refined_prompt
+        current_prompt = refined_prompt
+    
+    _debug_print(kwargs.get("debug_mode", False), "Deep Think - Loop Finished", "Loop finished without high confidence. Returning last prompt.")
+    return True, current_prompt
+
+def _summarize_deep_think_objectives(model, initial_prompt_text, **kwargs):
+    from . import api_clients
+    summarize_template = textwrap.dedent(f"""
+        You are a task analysis expert. Read the following detailed request and summarize it into a concise list of core objectives and constraints for a prompt engineer.
+        Focus on mandatory subjects, style requirements, and negative constraints.
+        ---
+        FULL REQUEST
+{initial_prompt_text}
+---
+        Return ONLY the summarized list of objectives.
+    """).strip()
+    summary_kwargs = kwargs.copy()
+    summary_kwargs['temperature'] = 0.1
+    summary_kwargs.pop('debug_title', None)
+    ok_summary, core_objectives = api_clients.query_model_auto(model, summarize_template, **summary_kwargs, debug_title="Deep Think - Summarize Objectives")
+    if not ok_summary:
+        print(f"\033[93m[PromptCrafter] Warning: Deep Think objective summarization failed. Using full prompt text for critiques. Error: {core_objectives}\033[0m")
+        return initial_prompt_text
+    return core_objectives
+
+def _run_deep_think_iteration(current_prompt, history, core_objectives, model, **kwargs):
+    from . import api_clients
+    history_log = ""
+    if history:
+        history_log = """--- REFINEMENT HISTORY (for context)---
+"""
+        for j, (p, c) in enumerate(history[-2:]): history_log += f"Critique of previous version: {c}\n"
+        history_log += "---\n"
+    
+    critique_template = textwrap.dedent(f"""
+        You are a meticulous prompt editor. Your task is to critique and refine a generated prompt based on a set of core objectives.
+        --- CORE OBJECTIVES ---
+{core_objectives}
+--- END CORE OBJECTIVES ---
+        {history_log}
+--- CURRENT PROMPT TO CRITIQUE ---
+{current_prompt}
+--- END CURRENT PROMPT ---
+        CRITIQUE INSTRUCTIONS:
+        1. **Analyze**: Does the "CURRENT PROMPT" fully satisfy all "CORE OBJECTIVES"?
+        2. **Review History**: Check the "REFINEMENT HISTORY". Has the current text addressed previous critiques?
+        3. **Score & Refine**: Provide a confidence score (0.0-1.0). If the score is less than 1.0, provide a concise critique and a `refined_prompt` that fixes the issues.
+        Return your response as a single JSON object with three keys: `confidence_score` (float), `critique` (string), and `refined_prompt` (string).
+    """).strip()
+    
+    iter_kwargs = {k: v for k, v in kwargs.items() if k not in ['images', 'images_b64']}
+    return api_clients._reason_with_model(model, critique_template, **iter_kwargs, debug_title=f"Deep Think - Critique Iteration {len(history) + 1}")
+
+def _generate_negative_prompt(scene_prompt, run_config, user_negative_prompt=""): # noqa
+    """Generates a comprehensive negative prompt using a hybrid approach of base keywords and AI-driven contextual analysis."""
+    from . import api_clients
+    if not scene_prompt or "Ollama error" in scene_prompt:
+        return ""
+    
+    # Use a new cache key that includes the model, reflecting the AI-driven nature
+    cache_key = _get_cache_key(scene_prompt, user_negative_prompt, run_config.model, "gen_negative_v8_hybrid")
+    if config.CACHE.has(cache_key):
+        return config.CACHE.get(cache_key)
+
+    # 1. Start with the base keywords (quality, composition, etc.)
+    keywords = set(config.NEGATIVE_KEYWORDS["quality"] + config.NEGATIVE_KEYWORDS["composition"])
+    keywords.update([kw.strip() for kw in config.DEFAULT_CHINESE_NEGATIVE_PROMPT.split('，') if kw.strip()])
+
+    # 2. Add user-provided negative prompts
+    if user_negative_prompt:
+        keywords.update([kw.strip() for kw in user_negative_prompt.replace("\n", ",").split(',') if kw.strip()])
+
+    # 3. Use LLM to generate context-specific negative keywords
+    ai_prompt = textwrap.dedent(f"""
+        Analyze the following image prompt. Based on its content, style, and subject matter, generate a list of specific negative keywords to avoid common issues and unwanted elements.
+        - If the prompt is for a person, add terms to prevent bad anatomy.
+        - If a specific style is mentioned (e.g., "photorealistic"), add terms for other styles (e.g., "anime, cartoon").
+        - If the scene is a landscape, add terms for unwanted objects (e.g., "people, cars").
+        ---
+        PROMPT: "{scene_prompt}"
+        ---
+        Return ONLY a JSON array of strings: ["keyword1", "keyword2", ...].
+    """).strip()
+
+    ok, ai_keywords = api_clients._reason_with_model(run_config.model, ai_prompt, use_chat_api=run_config.use_chat_api, temperature=0.1, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="AI Negative Prompt Generation", remote_api_model=run_config.remote_api_model)
+    if ok and isinstance(ai_keywords, list):
+        keywords.update([str(kw).strip() for kw in ai_keywords if kw])
+
+    final_neg_prompt = ", ".join(sorted(list(keywords)))
+    config.CACHE.set(cache_key, final_neg_prompt)
+    return final_neg_prompt
+
+def _simplify_for_diffusion(prompt_text, user_text, run_config):
+    """Restructures a narrative prompt into a weighted, direct prompt for diffusion models."""
+    from . import api_clients
+    if not prompt_text or not run_config.simplify_for_diffusion: return prompt_text, ""
+    cache_key = _get_cache_key(prompt_text, user_text, run_config.model, "simplify_v3_aggressive")
+    if config.CACHE.has(cache_key):
+        cached_data = config.CACHE.get(cache_key)
+        if cached_data is not None:
+            return cached_data.get("positive_prompt", prompt_text), cached_data.get("negative_keywords", "")
+        else:
+            return prompt_text, ""
+    
+    simplification_template = textwrap.dedent('''
+        You are an expert in Stable Diffusion prompting. Your task is to restructure a narrative prompt into a highly effective, direct prompt, ensuring absolute adherence to the user's core request.
+        **Part 1: Positive Prompt Generation**
+        1. **Analyze Core Request:** The `USER'S CORE REQUEST` is the source of truth. Identify the most critical, non-negotiable subjects and attributes.
+        2. **Structure for Complex Scenes:** If there are multiple subjects, describe their interactions and spatial relationships.
+        3. **Prioritize and Weight:** Create a new prompt starting with the main subject. Use HEAVY weighting like `(description:1.5)` on the most critical attributes from step 1 to FORCE the model's attention.
+        4. **Clarify and Synthesize:** Rephrase the rest of the prompt into clear, comma-separated clauses. Remove narrative fluff.
+        **Part 2: Negative Prompt Generation**
+        5. **Extract Negative Constraints:** Analyze the `USER'S CORE REQUEST` for explicit negative instructions (e.g., "no buildings").
+        6. **Generate Counter-Negatives:** Based on the core positive attributes, identify their direct opposites (e.g., if "white dress" is requested, a counter-negative is "black dress").
+        ---
+        USER'S CORE REQUEST (Source of Truth)
+{user_text}
+---
+        ---
+        NARRATIVE PROMPT (to be restructured)
+{prompt_text}
+---
+        Return ONLY a JSON object with two keys: `positive_prompt` (string) and `negative_keywords` (string).
+    ''').format(user_text=user_text, prompt_text=prompt_text)
+    ok, result_json = api_clients._reason_with_model(run_config.model, simplification_template, use_chat_api=run_config.use_chat_api, temperature=0.1, seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title="Simplify for Diffusion Model (Aggressive)")
+    if ok and isinstance(result_json, dict):
+        positive = TextCleaner.single_paragraph(result_json.get("positive_prompt", prompt_text))
+        negatives = result_json.get("negative_keywords", "")
+        config.CACHE.set(cache_key, {"positive_prompt": positive, "negative_keywords": negatives})
+        return positive, negatives
+    return prompt_text, ""
+
+def _split_text_into_scenes_with_ai(text, run_config):
+    '''Uses an LLM to split a single block of text into a list of scenes.'''
+    from . import api_clients
+    prompt_template = textwrap.dedent('''
+        You are an expert film script analyst. Read the following story. Your task is to break it down into distinct, logical scenes or camera shots.
+        ---
+        STORY
+{text}
+---
+        INSTRUCTIONS: Identify the natural breaking points. Return ONLY a JSON object with a single key, "scenes", which contains an array of strings. Each string is one scene.
+        Example: Input: "A woman walks to a stag and climbs on its back. She rides it across a meadow as an eagle soars above." Output: {{"scenes": ["A woman walks to a stag and climbs up on its back.", "The woman rides the stag across a meadow as an eagle soars above."]}}
+    ''').format(
+        text=text
+    )
+    ok, result_json = api_clients._reason_with_model(run_config.model, prompt_template, use_chat_api=run_config.use_chat_api, temperature=0.1, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="AI Scene Splitter")
+    if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list) and result_json["scenes"]:
+        print(f"\033[92m[PromptCrafter] AI successfully split the story into {len(result_json['scenes'])} scenes.\033[0m")
+        return result_json["scenes"]
+    print("\033[93m[PromptCrafter] Warning: AI scene splitting failed. Treating the entire text as a single scene.\033[0m")
+    return [text]
+
+def _generate_storyboard_from_instruction_with_ai(user_request, image_context, primary_subjects, run_config):
+    '''Uses an LLM to generate a storyboard from a high-level user instruction.'''
+    from . import api_clients
+    print("\033[94m[PromptCrafter] Using AI to generate storyboard from user instruction...")
+    prompt_template = textwrap.dedent('''
+        You are an expert film director. Your task is to break down a user's high-level request into a sequence of distinct, cinematic video scenes.
+        ---
+        USER REQUEST
+{user_request}
+---
+        KEY SUBJECTS (from reference images)
+{primary_subjects_json}
+---
+        INSPIRATIONAL CONTEXT (from reference images)
+{image_context}
+        ---
+        INSTRUCTIONS:
+        1. Read the user's request and analyze the subjects and context.
+        2. Create a storyboard as a sequence of 3-5 distinct scenes that logically follow the user's request.
+        3. For each scene, suggest a cinematic camera shot (e.g., "wide shot", "close-up", "tracking shot").
+        4. Return ONLY a JSON object with a single key, "scenes", which contains an array of strings. Each string is a scene description.
+    ''').format(
+        user_request=user_request,
+        primary_subjects_json=json.dumps(primary_subjects),
+        image_context=image_context
+    )
+    ok, result_json = api_clients._reason_with_model(run_config.model, prompt_template, use_chat_api=run_config.use_chat_api, temperature=0.2, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="AI Storyboard Generation")
+    if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list) and result_json["scenes"]:
+        print(f"\033[92m[PromptCrafter] AI successfully generated a storyboard with {len(result_json['scenes'])} scenes.\033[0m")
+        return result_json["scenes"]
+    return []

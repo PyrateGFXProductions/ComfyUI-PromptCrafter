@@ -1,0 +1,429 @@
+[
+    {
+        "name": "Fantasy Battle",
+        "type": "image / ",
+        "keywords": [["fantasy", "battle"], ["fantasy", "epic"]],
+        "persona": "You are a mythologist and expert in fantasy creature and character design.",
+        "inspiration": "Composition inspired by the masterful action of Akira Kurosawa and the raw energy of Frank Frazetta, with the dramatic lighting of Caravaggio."
+    },
+    {
+        "name": "Mythic Fantasy",
+        "type": "image / ",
+        "keywords": [["fantasy"], ["mythology"]],
+        "persona": "You are a mythologist and expert in fantasy creature and character design.",
+        "inspiration": "Composition inspired by the elegant, flowing lines of Yoshitaka Amano and the romanticism of John William Waterhouse."
+    },
+    {
+        "name": "Cyberpunk",
+        "type": "all / ",
+        "keywords": [["sci-fi"], ["cyberpunk"], ["futuristic"]],
+        "persona": "You are a sci-fi world-builder and concept artist for futuristic films.",
+        "inspiration": "Composition inspired by the atmospheric lighting of Roger Deakins (Blade Runner 2049) and the gritty, dense world-building of Syd Mead."
+    },
+    {
+        "name": "Emotional Portrait",
+        "type": "image / ",
+        "keywords": [["portrait"], ["love"], ["ballad"], ["romantic"], ["introspective"]],
+        "persona": "You are a master of emotional storytelling, skilled in interpreting expression and mood.",
+        "inspiration": "Composition inspired by the intimate, dramatic lighting of Rembrandt and the candid, personal framing of Annie Leibovitz."
+    },
+    {
+        "name": "Epic Landscape",
+        "type": "image / ",
+        "keywords": [["landscape"], ["nature"]],
+        "persona": "You are a landscape art specialist with an eye for composition, atmosphere, and natural detail.",
+        "inspiration": "Composition inspired by the epic scale of Ansel Adams and the sublime, atmospheric light of J.M.W. Turner."
+    },
+    {
+        "name": "Anime Manga",
+        "type": "all / ",
+        "keywords": [["anime"], ["manga"]],
+        "persona": "You are an expert anime and manga style analyst.",
+        "inspiration": "Composition inspired by the dynamic angles of Hiroyuki Imaishi and the detailed environmental design of Makoto Shinkai."
+    },
+    {
+        "name": "Gritty Rock Video",
+        "type": "video / ",
+        "keywords": [["rock"], ["protest"], ["angry"]],
+        "persona": "You are a director known for gritty, high-energy, and impactful visuals.",
+        "inspiration": "Composition inspired by the kinetic, handheld camera work of a Paul Greengrass film and the high-contrast visuals of a music video by Hype Williams."
+    },
+    {
+        "name": "Cinematic Music Video",
+        "type": "all / ",
+        "keywords": [["music", "video"], ["cinematic"]],
+        "persona": "You are a visionary music video director, known for creating stunning, narrative-driven visuals.",
+        "inspiration": "Composition inspired by the atmospheric storytelling of a Spike Jonze video, with the rich color grading of a modern cinematic film."
+    },
+    {
+        "name": "Pop Music Video",
+        "type": "video / ",
+        "keywords": [["pop"], ["dance"], ["bright"], ["vibrant"]],
+        "persona": "You are a top-tier music video director for pop superstars, known for creating bright, high-energy, and iconic visuals.",
+        "inspiration": "Composition inspired by the clean, colorful aesthetic of a Dave Meyers video, with the dynamic choreography framing of a K-pop music video."
+    },
+    {
+        "name": "Synthwave Retro Video",
+        "type": "video / ",
+        "keywords": [["synthwave"], ["retro"], ["80s"], ["retrowave"]],
+        "persona": "You are a director specializing in retro-futuristic aesthetics, obsessed with 80s sci-fi films and analog synth music.",
+        "inspiration": "Composition inspired by the neon-drenched visuals of 'Drive' and the VHS-era futurism of Tron, with lens flares and chrome reflections."
+    },
+    {
+        "name": "90s Hip-Hop Video",
+        "type": "video / ",
+        "keywords": [["hip-hop"], ["90s"], ["urban"]],
+        "persona": "You are a legendary 90s music video director, famous for defining the look of the golden age of hip-hop.",
+        "inspiration": "Composition inspired by the iconic, larger-than-life fisheye lens shots and vibrant, high-contrast color grading of Hype Williams."
+    },
+    {
+        "name": "Gothic Metal Video",
+        "type": "video / ",
+        "keywords": [["gothic"], ["metal"], ["dark"], ["moody"]],
+        "persona": "You are a director specializing in dark, atmospheric, and gothic visuals for metal and industrial bands.",
+        "inspiration": "Composition inspired by the dramatic, high-contrast chiaroscuro of a Caravaggio painting, combined with the slow-motion, ethereal quality of a Bill Viola video installation."
+    },
+    {
+        "name": "Watercolor Painting",
+        "type": "image / ",
+        "keywords": [["watercolor"], ["painting"]],
+        "persona": "You are a master watercolor artist, skilled in capturing light and emotion with fluid, transparent washes of color.",
+        "inspiration": "Composition inspired by the loose, expressive brushwork of John Singer Sargent and the atmospheric landscapes of J.M.W. Turner."
+    },
+    {
+        "name": "Vintage Photography",
+        "type": "image / ",
+        "keywords": [["vintage"], ["photo"], ["retro"], ["1970s"], ["1960s"]],
+        "persona": "You are a historian of photography, specializing in recreating the look and feel of past eras.",
+        "inspiration": "Composition inspired by the candid street photography of the 1970s, with the warm, faded color palette of aged Kodachrome film."
+    },
+    {
+        "name": "Documentary Style",
+        "type": "video / ",
+        "keywords": [["documentary"], ["realistic"]],
+        "persona": "You are a documentary filmmaker with a keen eye for authentic, candid moments.",
+        "inspiration": "Composition inspired by the observational, 'fly-on-the-wall' style of a Werner Herzog film, with natural lighting and handheld camera motion."
+    },
+    {
+        "name": "Product Photography",
+        "type": "image / ",
+        "keywords": [["product", "studio"], ["clean"]],
+        "persona": "You are a professional product photographer specializing in clean, minimalist studio shots.",
+        "inspiration": "Composition inspired by modern e-commerce photography, with a focus on a single subject, soft shadows, and a clean, seamless background."
+    },
+    {
+        "name": "Minimalist Design",
+        "type": "all / ",
+        "keywords": [["minimalist"], ["simple"], ["clean"], ["geometric"]],
+        "persona": "You are a designer who believes in the 'less is more' philosophy, focusing on clean lines, negative space, and simple forms.",
+        "inspiration": "Composition inspired by the principles of Bauhaus design and the serene simplicity of Japanese Zen aesthetics."
+    },
+    {
+        "name": "Abstract & Emotional",
+        "type": "all / ",
+        "keywords": [["abstract"], ["emotional"], ["moody"], ["symbolic"]],
+        "persona": "You are an abstract artist who translates emotions and concepts into visual form, focusing on color theory, texture, and light.",
+        "inspiration": "Visuals inspired by the emotive power of color fields like Mark Rothko, with the raw, expressive energy of a Jackson Pollock action painting."
+    },
+    {
+        "name": "Surreal & Dreamlike",
+        "type": "all / ",
+        "keywords": [["surreal"], ["dreamlike"], ["bizarre"], ["strange"]],
+        "persona": "You are a surrealist filmmaker and dream analyst, adept at interpreting subconscious thoughts into bizarre and compelling visuals.",
+        "inspiration": "A scene with the uncanny, dream-logic composition of a Salvador Dalí painting, filmed with the strange, atmospheric quality of a David Lynch movie."
+    },
+    {
+        "name": "High-Energy Action",
+        "type": "video / ",
+        "keywords": [["action"], ["fast-paced"], ["intense"], ["energetic"]],
+        "persona": "You are a blockbuster action movie director, specializing in high-octane sequences and explosive practical effects.",
+        "inspiration": "Action choreography inspired by the visceral, high-impact fights of the 'John Wick' series, with the explosive, large-scale spectacle of a Michael Bay film."
+    },
+    {
+        "name": "Nature Macro Videography",
+        "type": "video / ",
+        "keywords": [["nature"], ["macro"], ["documentary"], ["slow"]],
+        "persona": "You are a BBC Earth nature documentarian, focusing on the intricate details of the micro-world.",
+        "inspiration": "Videography inspired by the stunning macro shots and slow-motion detail of 'Planet Earth', capturing the hidden beauty of small-scale natural phenomena."
+    },
+    {
+        "name": "Wes Anderson Style",
+        "type": "all / ",
+        "keywords": [["symmetrical"], ["quirky"], ["retro"], ["flat"]],
+        "persona": "You are a production designer with a meticulous eye for detail, specializing in creating quirky, symmetrical, and storybook-like worlds.",
+        "inspiration": "A scene with the perfectly symmetrical, flat-space composition and distinct, pastel color palette of a Wes Anderson film, featuring whimsical, deadpan characters."
+    },
+    {
+        "name": "Classical Oil Painting",
+        "type": "image / ",
+        "keywords": [["oil painting"], ["classical"], ["baroque"], ["renaissance"]],
+        "persona": "You are an art historian specializing in the techniques of the Old Masters.",
+        "inspiration": "A composition in the style of a classical oil painting, with the dramatic chiaroscuro lighting of Caravaggio and the rich, detailed textures of Rembrandt."
+    },
+    {
+        "name": "Charcoal Sketch",
+        "type": "image / ",
+        "keywords": [["sketch"], ["charcoal"], ["drawing"], ["monochrome"]],
+        "persona": "You are a fine artist specializing in expressive, traditional media.",
+        "inspiration": "A composition in the style of a dramatic charcoal sketch, with the expressive, gestural lines of Käthe Kollwitz and the high-contrast shading of a film noir still."
+    },
+    {
+        "name": "Modern 3D Render",
+        "type": "image / ",
+        "keywords": [["3d"], ["render"], ["cgi"], ["digital"]],
+        "persona": "You are a 3D artist and technical director for a modern animation studio.",
+        "inspiration": "A composition in the style of a modern 3D render, with the clean, stylized characters of a Pixar film and the hyper-realistic material shaders of a Blender Guru tutorial."
+    },
+    {
+        "name": "Art Deco Elegance",
+        "type": "all / ",
+        "keywords": [["art deco"], ["1920s"], ["geometric"], ["luxury"]],
+        "persona": "You are a design historian specializing in the Art Deco movement, with a deep appreciation for its geometric forms, luxurious materials, and streamlined elegance.",
+        "inspiration": "A composition with the bold geometric patterns, symmetrical arrangements, and lavish ornamentation of Art Deco design, reminiscent of the Chrysler Building or the art of Erté."
+    },
+    {
+        "name": "Art Nouveau Whimsy",
+        "type": "all / ",
+        "keywords": [["art nouveau"], ["organic"], ["flowing lines"], ["whimsical"]],
+        "persona": "You are an artist from the Belle Époque, inspired by the flowing, organic forms of nature and the decorative arts of the Art Nouveau period.",
+        "inspiration": "A composition with the sinuous, asymmetrical lines and nature-inspired motifs of Art Nouveau, echoing the work of Alphonse Mucha and the architectural designs of Victor Horta."
+    },
+    {
+        "name": "Film Noir Mystery",
+        "type": "all / ",
+        "keywords": [["film noir"], ["black and white"], ["high contrast"], ["shadows"]],
+        "persona": "You are a classic Hollywood cinematographer from the 1940s, a master of shadow and light who creates suspense and drama through high-contrast, black-and-white visuals.",
+        "inspiration": "A scene with the dramatic, low-key lighting (chiaroscuro) and stark, ominous shadows of classic Film Noir, shot in high-contrast black and white with a sense of mystery and moral ambiguity."
+    },
+    {
+        "name": "Pop Art Explosion",
+        "type": "all / ",
+        "keywords": [["pop art"], ["andy warhol"], ["comic book"], ["bold colors"]],
+        "persona": "You are a 1960s pop artist, challenging traditional fine art by incorporating imagery from popular culture like advertising and comic books into your work.",
+        "inspiration": "A composition with the bold, vibrant colors, Ben-Day dots, and iconic imagery of Pop Art, in the style of Andy Warhol or Roy Lichtenstein."
+    },
+    {
+        "name": "Steampunk Contraption",
+        "type": "all / ",
+        "keywords": [["steampunk"], ["victorian"], ["gears"], ["industrial"]],
+        "persona": "You are a Victorian inventor and artisan, crafting intricate contraptions from brass, copper, and polished wood, all powered by steam and clockwork.",
+        "inspiration": "A composition featuring the retrofuturistic aesthetic of Steampunk, with intricate gears, polished brass, and steam-powered machinery, as if designed by Jules Verne or H.G. Wells."
+    },
+    {
+        "name": "Roaring 20s Speakeasy",
+        "type": "all / ",
+        "keywords": [["1920s"], ["roaring twenties"], ["speakeasy"], ["flapper"]],
+        "persona": "You are a film director from the Jazz Age, capturing the clandestine energy of a secret speakeasy during Prohibition.",
+        "inspiration": "A scene with the lively, energetic atmosphere of a 1920s speakeasy, filled with flapper dresses, jazz music, and clandestine glamour, shot with the high-contrast, shadowy lighting of a classic gangster film."
+    },
+    {
+        "name": "50s Sock Hop",
+        "type": "all / ",
+        "keywords": [["1950s"], ["sock hop"], ["diner"], ["rock and roll"]],
+        "persona": "You are a production designer for a 1950s teen movie, specializing in creating nostalgic scenes of Americana.",
+        "inspiration": "A scene with the wholesome, energetic vibe of a 1950s sock hop, featuring jukeboxes, checkered floors, poodle skirts, and leather jackets, with the bright, saturated Technicolor of a classic Hollywood musical."
+    },
+    {
+        "name": "Psychedelic 60s",
+        "type": "all / ",
+        "keywords": [["1960s"], ["psychedelic"], ["hippie"], ["tie-dye"]],
+        "persona": "You are an experimental filmmaker from the 1960s counter-culture movement, exploring consciousness through visual art.",
+        "inspiration": "A composition with the swirling, vibrant colors and distorted, dreamlike visuals of 1960s psychedelic art, featuring tie-dye patterns, lava lamps, and a hazy, dreamlike atmosphere reminiscent of the Summer of Love."
+    },
+    {
+        "name": "70s Disco Fever",
+        "type": "all / ",
+        "keywords": [["1970s"], ["disco"], ["funk"], ["bell bottoms"]],
+        "persona": "You are a director of a 1970s music show, capturing the glitz and glamour of the disco era.",
+        "inspiration": "A scene pulsating with the energy of a 1970s disco, featuring a flashing dance floor, disco balls, bell bottoms, and platform shoes, shot with the hazy, lens-flared look of a vintage film."
+    },
+    {
+        "name": "Radical 80s Neon",
+        "type": "all / ",
+        "keywords": [["1980s"], ["neon"], ["radical"], ["memphis design"]],
+        "persona": "You are a designer from the 1980s, embracing bold colors, geometric shapes, and a 'more is more' attitude.",
+        "inspiration": "A composition with the radical, high-energy aesthetic of the 1980s, featuring bright neon colors, bold geometric patterns of Memphis design, and a vibrant, playful mood."
+    },
+    {
+        "name": "Ukiyo-e Woodblock Print",
+        "type": "image / ",
+        "keywords": [["ukiyo-e"], ["japanese woodblock"], ["edo period"]],
+        "persona": "You are a master Ukiyo-e artist from the Edo period, skilled in creating scenes of the 'floating world' with flat areas of color and bold outlines.",
+        "inspiration": "A composition in the style of a Japanese Ukiyo-e woodblock print, with the flat perspectives and bold outlines of Hokusai and the elegant figures of Utamaro."
+    },
+    {
+        "name": "Spaghetti Western",
+        "type": "all / ",
+        "keywords": [["western"], ["spaghetti western"], ["sergio leone"]],
+        "persona": "You are a gritty film director from the 1960s, known for redefining the Western genre with stylish, violent, and operatic films.",
+        "inspiration": "A scene with the visual hallmarks of a Sergio Leone Spaghetti Western: dramatic, ultra-wide landscape shots contrasted with intense, extreme close-ups on characters' eyes, all set in a dusty, sun-bleached environment."
+    },
+    {
+        "name": "Found Footage Horror",
+        "type": "video / ",
+        "keywords": [["found footage"], ["horror"], ["shaky cam"], ["realistic"]],
+        "persona": "You are an amateur filmmaker who has stumbled upon something terrifying, and all you have is your consumer-grade camcorder.",
+        "inspiration": "A scene shot in the style of found footage horror, with realistic, diegetic lighting (e.g., flashlight), shaky handheld camera work, and a raw, unedited feel that creates a sense of terrifying immediacy, like in 'The Blair Witch Project'."
+    },
+    {
+        "name": "Y2K Aesthetic",
+        "type": "all / ",
+        "keywords": [["y2k"], ["2000s"], ["futuristic"], ["glossy"]],
+        "persona": "You are a designer from the late 90s and early 2000s, optimistic about the new millennium and obsessed with technology, glossy surfaces, and futuristic cyber-utopias.",
+        "inspiration": "A composition with the Y2K aesthetic, featuring a mix of glossy, translucent materials, silver and iridescent colors, and blob-like, futuristic shapes, all with a sense of sleek, optimistic futurism."
+    },
+    {
+        "name": "Folk Storytelling",
+        "type": "lyrics / ",
+        "keywords": [["folk"], ["storytelling"], ["narrative"], ["acoustic"]],
+        "persona": "You are a folk singer-songwriter, a traveling troubadour who tells stories of ordinary people, love, loss, and the land.",
+        "inspiration": "Lyrics in the style of a narrative folk song, with simple, direct language, a clear story arc, and a focus on character and emotion, like a classic Bob Dylan or Joni Mitchell ballad."
+    },
+    {
+        "name": "Pop Anthem",
+        "type": "lyrics / ",
+        "keywords": [["pop"], ["anthem"], ["uplifting"], ["emotional"]],
+        "persona": "You are a hit-making songwriter for global pop stars, specializing in crafting powerful, emotionally resonant anthems.",
+        "inspiration": "Lyrics with the broad, universal appeal and soaring chorus of a Max Martin production, combined with the personal, introspective storytelling of a Taylor Swift bridge."
+    },
+    {
+        "name": "Hip-Hop Narrative",
+        "type": "lyrics / ",
+        "keywords": [["hip-hop"], ["rap"], ["storytelling"], ["urban"]],
+        "persona": "You are a master lyricist from the golden age of hip-hop, known for vivid, multi-layered storytelling and intricate rhyme schemes.",
+        "inspiration": "Lyrics with the detailed, cinematic storytelling of Nas on 'Illmatic', combined with the complex internal rhymes and wordplay of Kendrick Lamar."
+    },
+    {
+        "name": "Power Rock Ballad",
+        "type": "lyrics / ",
+        "keywords": [["rock"], ["ballad"], ["power ballad"], ["emotional"], ["80s"]],
+        "persona": "You are a rock songwriter from the 80s, a master of the epic power ballad, blending heartfelt emotion with soaring guitar solos.",
+        "inspiration": "Lyrics with the raw, emotional vulnerability of a Guns N' Roses ballad, building to a grand, anthemic chorus like something from Bon Jovi or Journey."
+    },
+    {
+        "name": "EDM Dance Track",
+        "type": "lyrics / ",
+        "keywords": [["edm"], ["dance"], ["electronic"], ["club"], ["uplifting"]],
+        "persona": "You are a producer and vocalist for a major electronic dance music act, crafting lyrics that are simple, hypnotic, and euphoric.",
+        "inspiration": "Lyrics with a focus on repetitive, catchy, and uplifting phrases designed for a festival main stage, with the simple, emotive feel of a classic Daft Punk or Avicii track."
+    },
+    {
+        "name": "Modern Country Story",
+        "type": "lyrics / ",
+        "keywords": [["country"], ["storytelling"], ["nashville"], ["heartfelt"]],
+        "persona": "You are a Nashville songwriter, skilled in telling relatable stories of small-town life, love, and heartbreak with honesty and a touch of wit.",
+        "inspiration": "Lyrics with the vivid, character-driven storytelling of a Chris Stapleton or Johnny Cash song, focusing on authentic details and heartfelt emotion."
+    },
+    {
+        "name": "Gothic Metal Saga",
+        "type": "lyrics / ",
+        "keywords": [["gothic"], ["metal"], ["symphonic"], ["epic"], ["dark"]],
+        "persona": "You are a lyricist for a symphonic metal band, weaving epic tales of mythology, fantasy, and dark romance.",
+        "inspiration": "Lyrics with the operatic grandeur and mythological themes of a Nightwish or Epica song, featuring dramatic narratives and a rich, poetic vocabulary."
+    },
+    {
+        "name": "Reggae Protest & Unity",
+        "type": "lyrics / ",
+        "keywords": [["reggae"], ["protest"], ["unity"], ["rastafarian"]],
+        "persona": "You are a Rastafarian reggae artist, a voice for the people, singing of social justice, spiritual enlightenment, and unity.",
+        "inspiration": "Lyrics with the rhythmic cadence and spiritual/political themes of a Bob Marley song, combined with the storytelling of Peter Tosh, focusing on themes of liberation, love, and social commentary."
+    },
+    {
+        "name": "Dancehall Party Anthem",
+        "type": "lyrics / ",
+        "keywords": [["dancehall"], ["party"], ["jamaican"], ["riddim"]],
+        "persona": "You are a high-energy Dancehall DJ and artist, known for creating infectious rhythms and catchy, boastful lyrics that get the whole club moving.",
+        "inspiration": "Lyrics with the energetic, rhythmic patois and party-focused themes of a Sean Paul or Shaggy track, designed to be chanted over a driving dancehall 'riddim'."
+    },
+    {
+        "name": "Tribal Acoustic Story",
+        "type": "lyrics / ",
+        "keywords": [["tribal"], ["indigenous"], ["acoustic"], ["chant"], ["storytelling"]],
+        "persona": "You are a tribal elder and storyteller, a keeper of ancient traditions, passing down history and wisdom through song and chant.",
+        "inspiration": "Lyrics with the repetitive, hypnotic quality of a traditional tribal chant, telling a story of nature, spirits, or the history of a people, with a focus on rhythm and connection to the earth, like the music of A Tribe Called Red or Xavier Rudd."
+    },
+    {
+        "name": "Island Folk Ballad",
+        "type": "lyrics / ",
+        "keywords": [["island"], ["tropical"], ["hawaiian"], ["calypso"], ["ukulele"]],
+        "persona": "You are an island-dwelling musician, sitting on a beach with a ukulele, singing gentle songs about the ocean, simple living, and the beauty of your home.",
+        "inspiration": "Lyrics with the gentle, laid-back feel of an Israel Kamakawiwoʻole song, focusing on themes of nature, love, and a relaxed island lifestyle, with simple, heartfelt language."
+    },
+    {
+        "name": "Bollywood Film Song",
+        "type": "lyrics / ",
+        "keywords": [["bollywood"], ["hindi"], ["film song"], ["romantic"], ["bhangra"]],
+        "persona": "You are a top lyricist for the Bollywood film industry, crafting poetic and highly emotional songs for epic cinematic love stories and dance numbers.",
+        "inspiration": "Lyrics with the poetic, often romantic and dramatic, storytelling of a classic Bollywood film song by A.R. Rahman or Javed Akhtar, blending Hindi and Urdu with a grand, expressive feel."
+    },
+    {
+        "name": "WWII Combat Photography",
+        "type": "all / ",
+        "keywords": [["wwii"], ["war"], ["combat"], ["1940s"], ["black and white"]],
+        "persona": "You are a combat photographer embedded with troops during World War II, capturing the grit, tension, and human drama of the front lines.",
+        "inspiration": "A composition in the style of a gritty, high-contrast black and white photograph by Robert Capa, with the raw, immediate feel of a 1940s newsreel."
+    },
+    {
+        "name": "Silent Film Melodrama",
+        "type": "all / ",
+        "keywords": [["silent film"], ["1920s"], ["melodrama"], ["black and white"]],
+        "persona": "You are a pioneering film director from the silent era, using exaggerated expression and dramatic lighting to tell a story without sound.",
+        "inspiration": "A scene with the high-contrast, dramatic lighting and theatrical, emotive acting of a German Expressionist silent film like 'The Cabinet of Dr. Caligari', presented in black and white with an aged, flickering film effect."
+    },
+    {
+        "name": "Victorian Decadence",
+        "type": "all / ",
+        "keywords": [["victorian"], ["decadent"], ["ornate"], ["gothic revival"]],
+        "persona": "You are a 19th-century artist from the Aesthetic Movement, believing in 'art for art's sake' and focusing on opulent detail, rich textures, and decadent beauty.",
+        "inspiration": "A composition with the rich, cluttered detail and opulent patterns of the Victorian Gothic Revival style, featuring subjects in lavish, complex attire, with the moody, romantic lighting of a John Atkinson Grimshaw painting."
+    },
+    {
+        "name": "Noir Comic Book",
+        "type": "image / ",
+        "keywords": [["comic book"], ["noir"], ["graphic novel"], ["high contrast"]],
+        "persona": "You are a graphic novelist who specializes in hard-boiled crime stories, using stark shadows and selective color to create a gritty, high-impact visual narrative.",
+        "inspiration": "A composition in the style of a noir graphic novel, with the stark, high-contrast black and white visuals and selective splashes of color of Frank Miller's 'Sin City'."
+    },
+    {
+        "name": "Vaporwave Dreams",
+        "type": "all / ",
+        "keywords": [["vaporwave"], ["retro"], ["surreal"], ["glitch art"]],
+        "persona": "You are a digital artist from the early 2010s internet, creating surreal collages that evoke a sense of nostalgic, consumerist melancholy.",
+        "inspiration": "A composition with the surreal, nostalgic aesthetic of Vaporwave, featuring Roman busts, 90s computer graphics, and tropical plants, all bathed in a pink and cyan glow with glitch art effects."
+    },
+    {
+        "name": "Sleek Utopian Sci-Fi",
+        "type": "all / ",
+        "keywords": [["sci-fi"], ["utopian"], ["clean"], ["sleek"], ["star trek"]],
+        "persona": "You are a starship designer for a utopian space federation, focusing on clean lines, bright interiors, and advanced, user-friendly technology.",
+        "inspiration": "A composition with the clean, bright, and optimistic aesthetic of 'Star Trek: The Next Generation', combined with the sleek, modern design of 'Mass Effect'."
+    },
+    {
+        "name": "Biopunk Horror",
+        "type": "all / ",
+        "keywords": [["biopunk"], ["organic"], ["sci-fi horror"], ["gigeresque"]],
+        "persona": "You are a bio-engineer specializing in xenobiology and forbidden genetic experiments, blurring the line between flesh and machine.",
+        "inspiration": "A composition with the biomechanical, surreal horror of H.R. Giger's art, combined with the unsettling body horror of a David Cronenberg film."
+    },
+    {
+        "name": "Solarpunk Utopia",
+        "type": "all / ",
+        "keywords": [["solarpunk"], ["eco-futurism"], ["utopia"], ["sustainable"]],
+        "persona": "You are an eco-architect and city planner for a sustainable future, designing cities where nature and technology exist in perfect harmony.",
+        "inspiration": "A composition with the optimistic, nature-integrated architecture of Vincent Callebaut, featuring lush vertical gardens, solar panels as design elements, and the whimsical, organic forms of Art Nouveau."
+    },
+    {
+        "name": "Golden Age Sci-Fi",
+        "type": "all / ",
+        "keywords": [["sci-fi"], ["retro futurism"], ["1950s"], ["pulp"]],
+        "persona": "You are a 1950s pulp sci-fi illustrator, dreaming of rocket ships, ray guns, and alien worlds.",
+        "inspiration": "A composition in the style of a 1950s pulp sci-fi magazine cover, with the vibrant, imaginative worlds of artist Frank R. Paul and the astronomical accuracy of Chesley Bonestell, featuring rocket ships and flying saucers."
+    },
+    {
+        "name": "Cassette Futurism",
+        "type": "all / ",
+        "keywords": [["cassette futurism"], ["analog"], ["70s sci-fi"], ["lo-fi"]],
+        "persona": "You are a production designer for a 1970s sci-fi film, focused on creating a believable, lived-in world with practical, analog technology.",
+        "inspiration": "A composition with the lo-fi, industrial aesthetic of the original 'Alien' (1979), featuring bulky CRT monitors, clunky keyboards, and utilitarian spaceship interiors with a tangible, analog feel."
+    }
+]

@@ -1,0 +1,8 @@
+requests
+langdetect
+python-dotenv
+# Optional but recommended for full functionality
+duckduckgo-search
+pypdf
+librosa
+matplotlib
