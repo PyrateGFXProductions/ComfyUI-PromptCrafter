@@ -1041,7 +1041,6 @@ class PromptCrafter_FileOrganizer:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": (api_clients.get_all_models(), {"tooltip": "The language model to use for all analysis and generation. Vision-capable models are required if using images."} ),
                 "input_folder": ("STRING", {"default": "output/unorganized", "tooltip": "The folder containing the files you want to organize (relative to ComfyUI root)."}),
                 "output_folder": ("STRING", {"default": "output/organized", "tooltip": "The root folder where organized subdirectories will be created (relative to ComfyUI root)."}),
                 "organization_scheme": ("STRING", {
@@ -1054,6 +1053,7 @@ class PromptCrafter_FileOrganizer:
                 "fallback_folder": ("STRING", {"default": "_unorganized", "tooltip": "Subfolder for files that do not match any rule."}),
             },
             "optional": {
+                "vision_model": (api_clients.get_vision_models(), {"tooltip": "The vision model to use for the 'content_keyword' analysis."}),
                 "run_organization": ("BOOLEAN", {"default": False, "tooltip": "Toggle to True to start the organization process. It will run once per execution."}),
                 "max_workers": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1, "tooltip": "Number of parallel threads for processing files." }),
             }
@@ -1135,7 +1135,7 @@ class PromptCrafter_FileOrganizer:
                                 if self._recursively_find_value(node.get("properties", {}), value):
                                     return folder
             if analysis_priority == "Metadata Only":
-                return None # Stop here if only metadata analysis is requested
+                return None
 
         # --- Content Analysis (VLM) ---
         if vision_model and any(r[0] == 'content_keyword' for r in rules):
@@ -1232,7 +1232,7 @@ class PromptCrafter_FileOrganizer:
 
         return "moved" if action == "Move" else "copied", processed_count
 
-    def execute(self, model, input_folder, output_folder, organization_scheme, action, analysis_priority, fallback_folder, run_organization=False, max_workers=4):
+    def execute(self, input_folder, output_folder, organization_scheme, action, analysis_priority, fallback_folder, vision_model=None, run_organization=False, max_workers=4):
         if not run_organization:
             return ("Organization not started. Set 'run_organization' to True.",)
 
@@ -1267,7 +1267,7 @@ class PromptCrafter_FileOrganizer:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Create a future for each file group
             future_to_group = {
-                executor.submit(self._process_file_group, group, rules, model, analysis_priority, fallback_folder, full_output_path, action): group
+                executor.submit(self._process_file_group, group, rules, vision_model, analysis_priority, fallback_folder, full_output_path, action): group
                 for group in file_groups
             }
 

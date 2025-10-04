@@ -1135,7 +1135,7 @@ class PromptCrafter_FileOrganizer:
                                 if self._recursively_find_value(node.get("properties", {}), value):
                                     return folder
             if analysis_priority == "Metadata Only":
-                return None # Stop here if only metadata analysis is requested
+                return None
 
         # --- Content Analysis (VLM) ---
         if vision_model and any(r[0] == 'content_keyword' for r in rules):
@@ -1232,7 +1232,7 @@ class PromptCrafter_FileOrganizer:
 
         return "moved" if action == "Move" else "copied", processed_count
 
-    def execute(self, model, input_folder, output_folder, organization_scheme, action, analysis_priority, fallback_folder, run_organization=False, max_workers=4):
+    def execute(self, input_folder, output_folder, organization_scheme, action, analysis_priority, fallback_folder, vision_model=None, run_organization=False, max_workers=4):
         if not run_organization:
             return ("Organization not started. Set 'run_organization' to True.",)
 
@@ -1267,7 +1267,7 @@ class PromptCrafter_FileOrganizer:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Create a future for each file group
             future_to_group = {
-                executor.submit(self._process_file_group, group, rules, model, analysis_priority, fallback_folder, full_output_path, action): group
+                executor.submit(self._process_file_group, group, rules, vision_model, analysis_priority, fallback_folder, full_output_path, action): group
                 for group in file_groups
             }
 
