@@ -92,7 +92,7 @@ class OllamaClient(BaseAPIClient):
             status_code = result[2] if len(result) > 2 else None
             if status_code == 404 and endpoint == "chat":
                 self._chat_api_unsupported.add(model_id)
-                print(f"\033[94m[PromptCraft] Ollama model '{model_id}' does not support /api/chat. Switching to /api/generate.\033[0m")
+                print(f"\033[94m[PromptCrafter] Ollama model '{model_id}' does not support /api/chat. Switching to /api/generate.\033[0m")
                 continue # Immediately try the next endpoint
             else:
                 last_err = data_or_err
@@ -183,15 +183,15 @@ def _log_api_status():
     """Informs the user which remote APIs are configured and ready to use."""
     configured_apis = [p.upper() for p, c in API_CLIENTS.items() if c.is_configured()]
     if configured_apis:
-        print(f"\033[92m[PromptCraft] API support enabled for: {', '.join(configured_apis)}\033[0m")
+        print(f"\033[92m[PromptCrafter] API support enabled for: {', '.join(configured_apis)}\033[0m")
 
 def check_ollama_status():
     """Performs a single, clear check for Ollama connectivity at startup."""
     status, _ = _fetch_ollama_models(retries=1)
     if status == 'ok':
-        print(f"\033[92m[PromptCraft] Ollama is Online. Models will be available.\033[0m")
+        print(f"\033[92m[PromptCrafter] Ollama is Online. Models will be available.\033[0m")
     else:
-        print(f"\033[91m[PromptCraft] Ollama is OFFLINE. Local models will not be available.\033[0m")
+        print(f"\033[91m[PromptCrafter] Ollama is OFFLINE. Local models will not be available.\033[0m")
 
 def _filter_kwargs(func: Callable, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Filters a dictionary of keyword arguments to only include those accepted by a function."""
@@ -244,7 +244,7 @@ def _fetch_ollama_models(retries=3, delay=2):
         except config.requests.exceptions.ConnectionError as e:
             last_exc = e
             if i < retries - 1:
-                print(f"\033[93m[PromptCraft] Ollama connection failed (Attempt {i+1}/{retries}). Retrying in {delay}s...\033[0m")
+                print(f"\033[93m[PromptCrafter] Ollama connection failed (Attempt {i+1}/{retries}). Retrying in {delay}s...\033[0m")
                 time.sleep(delay)
             continue
         except config.requests.exceptions.RequestException as e:
@@ -255,7 +255,7 @@ def _fetch_ollama_models(retries=3, delay=2):
             break
 
     if isinstance(last_exc, config.requests.exceptions.ConnectionError):
-        print(f"\033[91m[PromptCraft] FATAL: Could not connect to Ollama at '{config.OLLAMA_BASE}' after {retries} attempts. Please ensure Ollama is running and the URL is correct.\033[0m")
+        print(f"\033[91m[PromptCrafter] FATAL: Could not connect to Ollama at '{config.OLLAMA_BASE}' after {retries} attempts. Please ensure Ollama is running and the URL is correct.\033[0m")
         return 'connection_error', str(last_exc)
 
     return 'other_error', str(last_exc or "Unknown error during model fetch.")

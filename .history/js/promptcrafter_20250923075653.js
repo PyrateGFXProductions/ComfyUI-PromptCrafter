@@ -1,13 +1,13 @@
 import { app } from "../../../scripts/app.js";
 
 const DYNAMIC_INPUT_NODE_CLASSES = [
-    "PromptCrafter_ImageCreator",
-    "PromptCrafter_VideoCreator",
-    "PromptCrafter_LyricsCreator",
+    "PromptCraft_ImageCreator",
+    "PromptCraft_VideoCreator",
+    "PromptCraft_LyricsCreator",
 ];
 
 app.registerExtension({
-    name: "PromptCrafter.DynamicInputs.Automatic",
+    name: "PromptCraft.DynamicInputs.Automatic",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (DYNAMIC_INPUT_NODE_CLASSES.includes(nodeType.comfyClass)) {
 

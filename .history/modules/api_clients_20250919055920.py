@@ -162,7 +162,7 @@ def _log_api_status():
     """Informs the user which remote APIs are configured and ready to use."""
     configured_apis = [p.upper() for p, c in API_CLIENTS.items() if c.is_configured()]
     if configured_apis:
-        print(f"\033[92m[PromptCraft] API support enabled for: {', '.join(configured_apis)}\033[0m")
+        print(f"\033[92m[PromptCrafter] API support enabled for: {', '.join(configured_apis)}\033[0m")
 
 def _filter_kwargs(func: Callable, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Filters a dictionary of keyword arguments to only include those accepted by a function."""
@@ -211,13 +211,13 @@ def _fetch_ollama_models():
         resp.raise_for_status()
         return 'ok', resp.json().get("models", [])
     except config.requests.exceptions.ConnectionError as e:
-        print(f"\033[93m[PromptCraft] Warning: Could not connect to Ollama. Is it running? Error: {e}\033[0m")
+        print(f"\033[93m[PromptCrafter] Warning: Could not connect to Ollama. Is it running? Error: {e}\033[0m")
         return 'connection_error', str(e)
     except config.requests.exceptions.RequestException as e:
-        print(f"\033[93m[PromptCraft] Warning: Could not fetch Ollama models. Error: {e}\033[0m")
+        print(f"\033[93m[PromptCrafter] Warning: Could not fetch Ollama models. Error: {e}\033[0m")
         return 'other_error', str(e)
     except Exception as e:
-        print(f"\033[93m[PromptCraft] Warning: An unexpected error occurred while fetching Ollama models: {e}\033[0m")
+        print(f"\033[93m[PromptCrafter] Warning: An unexpected error occurred while fetching Ollama models: {e}\033[0m")
         return 'other_error', str(e)
 
 def _get_models_by_type(model_type):

@@ -25,7 +25,7 @@ DEFAULT_CAPTION_PROMPT = textwrap.dedent("""
 # This assumes the custom_nodes folder is directly under ComfyUI
 COMFYUI_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 # Initialize the disk cache directly here to prevent race conditions.
-cache_dir = os.path.join(COMFYUI_ROOT_DIR, "temp", "comfyui-promptcrafter_cache")
+cache_dir = os.path.join(COMFYUI_ROOT_DIR, "temp", "comfyui-PromptCrafterer_cache")
 CACHE = cache.DiskCache(cache_dir=cache_dir, max_size_gb=2.0)
 SHARED_SESSION = None
 

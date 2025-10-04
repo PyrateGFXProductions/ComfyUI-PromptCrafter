@@ -243,7 +243,7 @@ def audio_to_spectrogram(audio_path):
     if not config.LIBROSA_AVAILABLE or not config.MATPLOTLIB_AVAILABLE: return "[Error: librosa or matplotlib not installed]"
     cache_key = _get_cache_key(audio_path, "spectrogram_v1")
     if config.CACHE.has(cache_key):
-        print(f"\033[94m[PromptCraft] Using cached spectrogram for {os.path.basename(audio_path)}.\033[0m")
+        print(f"\033[94m[PromptCrafter] Using cached spectrogram for {os.path.basename(audio_path)}.\033[0m")
         return config.CACHE.get(cache_key)
     try:
         y, sr = librosa.load(audio_path, sr=None)
@@ -325,7 +325,7 @@ def _get_audio_path(folder_path, file_name):
     full_folder_path = folder_path if os.path.isabs(folder_path) else os.path.join(config.COMFYUI_ROOT_DIR, folder_path)
     filepath = os.path.join(full_folder_path, file_name)
     if os.path.exists(filepath): return filepath
-    print(f"\033[93m[PromptCraft] Warning: Audio file not found at '{filepath}'.\033[0m")
+    print(f"\033[93m[PromptCrafter] Warning: Audio file not found at '{filepath}'.\033[0m")
     return None
 
 def _parse_schedule_prompt(prompt):
@@ -404,7 +404,7 @@ def _get_lyrics_from_input(user_text, lyrics_folder_path, lyrics_file, debug_mod
 def _fetch_url_content(url, debug_mode=False):
     """Fetches and cleans text content from a URL, with support for PDF text extraction."""
     try:
-        print(f"\033[94m[PromptCraft] URL detected. Fetching content from: {url}\033[0m")
+        print(f"\033[94m[PromptCrafter] URL detected. Fetching content from: {url}\033[0m")
         response = config.SHARED_SESSION.get(url, timeout=20)
         response.raise_for_status()
         content_type = response.headers.get('content-type', '').lower()
@@ -457,8 +457,8 @@ def _should_perform_web_search(user_query, model, seed, debug_mode, timeout=40):
 def _perform_web_search(query: str, num_results=3, debug_mode=False, fast_search=False):
     """Performs a web search using DuckDuckGo and returns a combined context string."""
     if not config.DUCKDUCKGO_SEARCH_AVAILABLE: return "[Web search is disabled because `duckduckgo-search` is not installed.]"
-    print(f"\033[94m[PromptCraft] Performing web search for: '{query}'\033[0m")
-    if fast_search: print("\033[94m[PromptCraft] Fast search enabled. Using snippets only.\033[0m")
+    print(f"\033[94m[PromptCrafter] Performing web search for: '{query}'\033[0m")
+    if fast_search: print("\033[94m[PromptCrafter] Fast search enabled. Using snippets only.\033[0m")
     search_context = ""
     try:
         with DDGS(timeout=20) as ddgs:
@@ -492,7 +492,7 @@ def _perform_web_search(query: str, num_results=3, debug_mode=False, fast_search
         _debug_print(debug_mode, "Web Search Context", search_context)
         return search_context.strip()
     except Exception as e:
-        print(f"\033[93m[PromptCraft] Warning: An error occurred during web search: {e}\033[0m")
+        print(f"\033[93m[PromptCrafter] Warning: An error occurred during web search: {e}\033[0m")
         return f"[An error occurred during web search: {e}]"
 
 # ------------------------------------------------------------------------------------
@@ -531,7 +531,7 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
     if user_query:
         simple_summarize_queries = ["summarize", "summarize this", "give me a summary", "can you summarize this", "tldr", "tl;dr", "summary"]
         if user_query.lower().strip(" .?!") in simple_summarize_queries:
-            print("\033[94m[PromptCraft] Simple summarize query detected. Switching to faster 'Extractive' strategy.\033[0m")
+            print("\033[94m[PromptCrafter] Simple summarize query detected. Switching to faster 'Extractive' strategy.\033[0m")
             final_strategy = "extractive"
 
     chunk_iterator = _split_text_into_chunks(text, chunk_size_words)
@@ -541,10 +541,10 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
         from . import api_clients
         ok, summary_or_err = api_clients.query_model_auto(model, map_prompt_template.format(chunk=chunk), prefer_chat=True, temperature=temperature, seed=seed, debug_mode=debug_mode, timeout=timeout, debug_title=f"Summarize Chunk {i+1}")
         if ok: return TextCleaner.single_paragraph(summary_or_err)
-        print(f"\033[93m[PromptCraft] Warning: Could not summarize chunk {i+1}. Error: {summary_or_err}\033[0m")
+        print(f"\033[93m[PromptCrafter] Warning: Could not summarize chunk {i+1}. Error: {summary_or_err}\033[0m")
         return None
 
-    print(f"\033[94m[PromptCraft] Starting parallel summarization of text chunks (Map phase)...\033[0m")
+    print(f"\033[94m[PromptCrafter] Starting parallel summarization of text chunks (Map phase)...\033[0m")
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         # Use map to process chunks as they are yielded, improving memory efficiency
         future_summaries = executor.map(map_chunk_to_summary, chunk_iterator, itertools.count(1))
@@ -554,14 +554,14 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
 
     current_summaries, reduce_level, reduce_group_size = successful_summaries, 1, 5
     while len(current_summaries) > 1:
-        print(f"\033[94m[PromptCraft] Combining {len(current_summaries)} summaries in parallel (Reduce level {reduce_level})...\033[0m")
+        print(f"\033[94m[PromptCrafter] Combining {len(current_summaries)} summaries in parallel (Reduce level {reduce_level})...\033[0m")
         groups_to_process = ["\n\n---\n\n".join(current_summaries[i:i + reduce_group_size]) for i in range(0, len(current_summaries), reduce_group_size)]
         
         def reduce_group(group, i):
             from . import api_clients
             ok, summary_or_err = api_clients.query_model_auto(model, f"The following text consists of several summaries of a larger document. Synthesize these summaries into one final, coherent summary of the entire document.\n\nSUMMARIES:\n{group}", prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title=f"Reduce Level {reduce_level} - Group {i+1}/{len(groups_to_process)}")
             if ok: return TextCleaner.single_paragraph(summary_or_err)
-            print(f"\033[93m[PromptCraft] Warning: Reduce step failed for group {i+1} at level {reduce_level}. Error: {summary_or_err}\033[0m")
+            print(f"\033[93m[PromptCrafter] Warning: Reduce step failed for group {i+1} at level {reduce_level}. Error: {summary_or_err}\033[0m")
             return None
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
@@ -573,18 +573,18 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
                 try:
                     ok, summary_or_err = future.result()
                     if ok: results[index] = TextCleaner.single_paragraph(summary_or_err)
-                    else: print(f"\033[93m[PromptCraft] Warning: Reduce step failed for group {index+1} at level {reduce_level}. Error: {summary_or_err}\033[0m")
-                except Exception as exc: print(f"\033[91m[PromptCraft] An unexpected error occurred during reduce step for group {index+1}: {exc}\033[0m")
+                    else: print(f"\033[93m[PromptCrafter] Warning: Reduce step failed for group {index+1} at level {reduce_level}. Error: {summary_or_err}\033[0m")
+                except Exception as exc: print(f"\033[91m[PromptCrafter] An unexpected error occurred during reduce step for group {index+1}: {exc}\033[0m")
         current_summaries = [s for s in results if s] # Filter out failed reductions
         if not current_summaries:
-            print(f"\033[91m[PromptCraft] Error: All groups failed at reduce level {reduce_level}. Returning previous level's summaries.\033[0m")
+            print(f"\033[91m[PromptCrafter] Error: All groups failed at reduce level {reduce_level}. Returning previous level's summaries.\033[0m")
             return "\n\n".join(groups_to_process)
         reduce_level += 1
 
     final_summary = current_summaries[0] if current_summaries else "[Error: Summarization resulted in an empty string.]"
 
     if user_query and user_query.strip() and user_query.strip() != config.DEFAULT_PROMPT_TEXT:
-        print("\033[94m[PromptCraft] Performing final pass to tailor summary to user query...\033[0m")
+        print("\033[94m[PromptCrafter] Performing final pass to tailor summary to user query...\033[0m")
         final_pass_prompt = textwrap.dedent(f"""
             You are a synthesis expert. Based on the following comprehensive summary, provide a concise and direct answer to the user's original query.
             Focus only on the information relevant to the query.
@@ -595,18 +595,18 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
         from . import api_clients
         ok, final_answer = api_clients.query_model_auto(model, final_pass_prompt, prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title="Final Summary Pass")
         if ok: return TextCleaner.single_paragraph(final_answer)
-        else: print(f"\033[93m[PromptCraft] Warning: Final summary pass failed. Returning the general summary. Error: {final_answer}\033[0m")
+        else: print(f"\033[93m[PromptCrafter] Warning: Final summary pass failed. Returning the general summary. Error: {final_answer}\033[0m")
 
     return final_summary
 
 # ------------------------------------------------------------------------------------
 # Advanced Prompt Generation Helpers (moved from nodes.py)
 # ------------------------------------------------------------------------------------
-def _extract_mandatory_tokens_with_model(image_context: str, user_text: str, run_config: 'config.PromptCraftRunConfig'):
+def _extract_mandatory_tokens_with_model(image_context: str, user_text: str, run_config: 'config.PromptCrafterRunConfig'):
     cache_key = _get_cache_key(run_config.model, image_context, run_config.use_chat_api, run_config.temperature, run_config.seed, user_text, "extract_tokens", run_config.debug_mode)
     from . import api_clients
     if config.CACHE.has(cache_key):
-        print("\033[94m[PromptCraft] Using cached token extraction.\033[0m")
+        print("\033[94m[PromptCrafter] Using cached token extraction.\033[0m")
         return True, config.CACHE.get(cache_key)
 
     ok_prim, primary_subjects_or_err = _extract_primary_subjects(user_text, run_config)
@@ -616,7 +616,7 @@ def _extract_mandatory_tokens_with_model(image_context: str, user_text: str, run
 
     ok_sec, secondary_subjects_or_err = _extract_secondary_subjects(image_context, run_config)
     secondary_subjects = secondary_subjects_or_err if ok_sec else []
-    if not ok_sec: print(f"\033[93m[PromptCraft] Warning: Could not extract secondary subjects: {secondary_subjects_or_err}\033[0m")
+    if not ok_sec: print(f"\033[93m[PromptCrafter] Warning: Could not extract secondary subjects: {secondary_subjects_or_err}\033[0m")
 
     primary_lower = {p.lower() for p in primary_subjects_or_err}
     clean_sec = [item for item in secondary_subjects if str(item).lower() not in primary_lower]
@@ -683,12 +683,12 @@ def _deep_think_and_refine(model, generation_prompt_text, max_iterations=3, conf
     state_cache_key = _get_cache_key(model, generation_prompt_text, "deep_think_state_v2")
     current_prompt, history = "", []
     if config.CACHE.has(state_cache_key):
-        print("\033[94m[PromptCraft] Deep Think: Resuming from persistent state.\033[0m")
+        print("\033[94m[PromptCrafter] Deep Think: Resuming from persistent state.\033[0m")
         loaded_state = config.CACHE.get(state_cache_key)
         if isinstance(loaded_state, tuple) and len(loaded_state) == 2:
             current_prompt, history = loaded_state
         else:
-            print("\033[93m[PromptCraft] Warning: Invalid Deep Think state in cache. Starting fresh.\033[0m")
+            print("\033[93m[PromptCrafter] Warning: Invalid Deep Think state in cache. Starting fresh.\033[0m")
 
     for i in range(max_iterations):
         iteration_num = len(history) + 1
@@ -710,7 +710,7 @@ def _deep_think_and_refine(model, generation_prompt_text, max_iterations=3, conf
             ok, critique_json = _run_deep_think_iteration(current_prompt, history, core_objectives, model, **critique_kwargs)
         
         if not ok or not isinstance(critique_json, dict):
-            print(f"\033[93m[PromptCraft] Warning: Deep Think critique failed. Proceeding with current prompt. Error: {critique_json}\033[0m")
+            print(f"\033[93m[PromptCrafter] Warning: Deep Think critique failed. Proceeding with current prompt. Error: {critique_json}\033[0m")
             return (True, current_prompt) if current_prompt else (False, "Deep Think process failed at initial generation.")
         
         confidence_score = critique_json.get("confidence_score", 0.0)
@@ -718,7 +718,7 @@ def _deep_think_and_refine(model, generation_prompt_text, max_iterations=3, conf
         critique = critique_json.get("critique", "No critique provided.")
         
         if not refined_prompt:
-            print("\033[93m[PromptCraft] Warning: Deep Think iteration did not return a refined prompt. Using previous version.\033[0m")
+            print("\033[93m[PromptCrafter] Warning: Deep Think iteration did not return a refined prompt. Using previous version.\033[0m")
             if not current_prompt: return False, "Deep Think process failed to generate an initial prompt."
             refined_prompt = current_prompt
 
@@ -736,7 +736,7 @@ def _deep_think_and_refine(model, generation_prompt_text, max_iterations=3, conf
             return True, refined_prompt
         current_prompt = refined_prompt
     
-    print("\033[93m[PromptCraft] Warning: Deep Think loop finished without high confidence. Returning last prompt.\033[0m")
+    print("\033[93m[PromptCrafter] Warning: Deep Think loop finished without high confidence. Returning last prompt.\033[0m")
     return True, current_prompt
 
 def _summarize_deep_think_objectives(model, initial_prompt_text, **critique_kwargs):
@@ -752,7 +752,7 @@ def _summarize_deep_think_objectives(model, initial_prompt_text, **critique_kwar
     summary_kwargs.pop('debug_title', None)
     ok_summary, core_objectives = api_clients.query_model_auto(model, summarize_template, **summary_kwargs, debug_title="Deep Think - Summarize Objectives")
     if not ok_summary:
-        print("\033[93m[PromptCraft] Warning: Deep Think objective summarization failed. Using full prompt text for critiques.\033[0m")
+        print("\033[93m[PromptCrafter] Warning: Deep Think objective summarization failed. Using full prompt text for critiques.\033[0m")
         return initial_prompt_text
     return core_objectives
 
@@ -839,15 +839,15 @@ def _split_text_into_scenes_with_ai(text, run_config):
     """).strip()
     ok, result_json = api_clients._reason_with_model(run_config.model, prompt_template, run_config.use_chat_api, 0.1, run_config.seed, debug_mode=run_config.debug_mode, debug_title="AI Scene Splitter")
     if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list) and result_json["scenes"]:
-        print(f"\033[92m[PromptCraft] AI successfully split the story into {len(result_json['scenes'])} scenes.\033[0m")
+        print(f"\033[92m[PromptCrafter] AI successfully split the story into {len(result_json['scenes'])} scenes.\033[0m")
         return result_json["scenes"]
-    print("\033[93m[PromptCraft] Warning: AI scene splitting failed. Treating the entire text as a single scene.\033[0m")
+    print("\033[93m[PromptCrafter] Warning: AI scene splitting failed. Treating the entire text as a single scene.\033[0m")
     return [text]
 
 def _generate_storyboard_from_instruction_with_ai(user_request, image_context, primary_subjects, run_config):
     """Uses an LLM to generate a storyboard from a high-level user instruction."""
     from . import api_clients
-    print("\033[94m[PromptCraft] Using AI to generate storyboard from user instruction...\033[0m")
+    print("\033[94m[PromptCrafter] Using AI to generate storyboard from user instruction...\033[0m")
     prompt_template = textwrap.dedent(f"""
         You are an expert film director. Your task is to break down a user's high-level request into a sequence of distinct, cinematic video scenes.
         --- USER REQUEST ---\n{user_request}\n--- KEY SUBJECTS (from reference images) ---\n{json.dumps(primary_subjects)}\n--- INSPIRATIONAL CONTEXT (from reference images) ---\n{image_context}
@@ -859,6 +859,6 @@ def _generate_storyboard_from_instruction_with_ai(user_request, image_context, p
     """).strip()
     ok, result_json = api_clients._reason_with_model(run_config.model, prompt_template, run_config.use_chat_api, 0.2, run_config.seed, debug_mode=run_config.debug_mode, debug_title="AI Storyboard Generation")
     if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list) and result_json["scenes"]:
-        print(f"\033[92m[PromptCraft] AI successfully generated a storyboard with {len(result_json['scenes'])} scenes.\033[0m")
+        print(f"\033[92m[PromptCrafter] AI successfully generated a storyboard with {len(result_json['scenes'])} scenes.\033[0m")
         return result_json["scenes"]
     return []

@@ -170,7 +170,7 @@ def _detect_language(text: str, fallback='English'):
 def _get_and_create_output_dir(output_path: str, debug_mode: bool = False) -> str | None:
     """Constructs, validates, and creates a sanitized output directory, returning the absolute path or None on failure."""
     if not output_path or not isinstance(output_path, str):
-        print(f"\033[91m[PromptCrafter] Error: Invalid output_path provided: {output_path}\033[0m")
+        print(f"\033[91m[PromptCrafterer] Error: Invalid output_path provided: {output_path}\033[0m")
         return None
 
     base_dir = os.path.abspath(os.path.join(config.COMFYUI_ROOT_DIR, "output"))
@@ -185,23 +185,23 @@ def _get_and_create_output_dir(output_path: str, debug_mode: bool = False) -> st
 
     # Security check: ensure the final path is within the intended output directory
     if os.path.commonpath([base_dir]) != os.path.commonpath([base_dir, out_dir]):
-        print(f"\033[91m[PromptCrafter] Error: Invalid output path '{output_path}' attempts to go outside the ComfyUI output directory.\033[0m")
+        print(f"\033[91m[PromptCrafterer] Error: Invalid output path '{output_path}' attempts to go outside the ComfyUI output directory.\033[0m")
         return None
         
     if os.path.exists(out_dir):
         if not os.path.isdir(out_dir):
-            print(f"\033[91m[PromptCrafter] Error: A file exists at the target output path '{out_dir}' and is blocking directory creation.\033[0m")
+            print(f"\033[91m[PromptCrafterer] Error: A file exists at the target output path '{out_dir}' and is blocking directory creation.\033[0m")
             return None
         return out_dir # Directory already exists and is valid.
 
     try:
         os.makedirs(out_dir, exist_ok=True)
-        print(f"\033[92m[PromptCrafter] Created output directory: {os.path.relpath(out_dir, base_dir)}\033[0m")
+        print(f"\033[92m[PromptCrafterer] Created output directory: {os.path.relpath(out_dir, base_dir)}\033[0m")
         return out_dir
     except OSError as e:
         # This handles race conditions where a file is created after the os.path.exists check,
         # as well as permission errors.
-        print(f"\033[91m[PromptCrafter] Error: Could not create output directory at '{out_dir}'. Reason: {e}\033[0m")
+        print(f"\033[91m[PromptCrafterer] Error: Could not create output directory at '{out_dir}'. Reason: {e}\033[0m")
         return None
 
 def _save_output_to_file(filename_prefix, sections, base_filename="prompt"):
@@ -386,7 +386,7 @@ def audio_to_spectrogram(audio_path):
     if not config.LIBROSA_AVAILABLE or not config.MATPLOTLIB_AVAILABLE: return "[Error: librosa or matplotlib not installed]"
     cache_key = _get_cache_key(audio_path, "spectrogram_v1")
     if config.CACHE.has(cache_key):
-        print(f"\033[94m[PromptCrafter] Using cached spectrogram for {os.path.basename(audio_path)}.\033[0m")
+        print(f"\033[94m[PromptCrafterer] Using cached spectrogram for {os.path.basename(audio_path)}.\033[0m")
         return config.CACHE.get(cache_key)
     try:
         y, sr = librosa.load(audio_path, sr=None)
@@ -488,12 +488,12 @@ def _get_verified_path(folder_path, file_name=None, is_dir=False):
     full_folder_path = folder_path if os.path.isabs(folder_path) else os.path.join(config.COMFYUI_ROOT_DIR, folder_path)
     if is_dir:
         if os.path.isdir(full_folder_path): return full_folder_path
-        print(f"\033[93m[PromptCrafter] Warning: Directory not found at '{full_folder_path}'.\033[0m")
+        print(f"\033[93m[PromptCrafterer] Warning: Directory not found at '{full_folder_path}'.\033[0m")
         return None
     else:
         filepath = os.path.join(full_folder_path, file_name)
         if os.path.exists(filepath): return filepath
-        print(f"\033[93m[PromptCrafter] Warning: File not found at '{filepath}'.\033[0m")
+        print(f"\033[93m[PromptCrafterer] Warning: File not found at '{filepath}'.\033[0m")
         return None
 
 def _get_audio_path(folder_path, file_name):
@@ -585,7 +585,7 @@ def _get_lyrics_from_input(user_text, lyrics_folder_path, lyrics_file, debug_mod
 def _fetch_url_content(url, debug_mode=False):
     """Fetches and cleans text content from a URL, with support for PDF text extraction."""
     try:
-        print(f"\033[94m[PromptCrafter] URL detected. Fetching content from: {url}\033[0m")
+        print(f"\033[94m[PromptCrafterer] URL detected. Fetching content from: {url}\033[0m")
         session = getattr(config, "SHARED_SESSION", None)
         if session is None:
             session = requests
@@ -661,8 +661,8 @@ def _should_perform_web_search(user_query, model, seed, debug_mode, timeout=40):
 def _perform_web_search(query: str, num_results=3, debug_mode=False, fast_search=False, max_concurrent_fetches=5):
     """Performs a web search using DuckDuckGo and returns a combined context string."""
     if not config.DUCKDUCKGO_SEARCH_AVAILABLE: return "[Web search is disabled because `duckduckgo-search` is not installed.]"
-    print(f"\033[94m[PromptCrafter] Performing web search for: '{query}'\033[0m")
-    if fast_search: print(f"\033[94m[PromptCrafter] Fast search enabled. Using snippets only.\033[0m")
+    print(f"\033[94m[PromptCrafterer] Performing web search for: '{query}'\033[0m")
+    if fast_search: print(f"\033[94m[PromptCrafterer] Fast search enabled. Using snippets only.\033[0m")
     search_context = ""
     try:
         with DDGS(timeout=20) as ddgs:
@@ -695,7 +695,7 @@ def _perform_web_search(query: str, num_results=3, debug_mode=False, fast_search
         _debug_print(debug_mode, "Web Search Context", search_context)
         return search_context.strip()
     except Exception as e:
-        print(f"\033[93m[PromptCrafter] Warning: An error occurred during web search: {e}\033[0m")
+        print(f"\033[93m[PromptCrafterer] Warning: An error occurred during web search: {e}\033[0m")
         return f"[An error occurred during web search: {e}]"
 
 # ------------------------------------------------------------------------------------
@@ -734,7 +734,7 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
     if user_query:
         simple_summarize_queries = ["summarize", "summarize this", "give me a summary", "can you summarize this", "tldr", "tl;dr", "summary"]
         if user_query.lower().strip(" .?!") in simple_summarize_queries:
-            print("\033[94m[PromptCrafter] Simple summarize query detected. Switching to faster 'Extractive' strategy for initial pass.\033[0m")
+            print("\033[94m[PromptCrafterer] Simple summarize query detected. Switching to faster 'Extractive' strategy for initial pass.\033[0m")
             final_strategy = "extractive"
 
     cpu_count = os.cpu_count()
@@ -745,7 +745,7 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
         map_prompt_template = "Extract the most important sentences from the following text chunk. Return ONLY the extracted sentences.\n\nTEXT CHUNK:\n{chunk}" if final_strategy == "extractive" else "Concisely summarize the key points of the following text chunk. Focus on factual information, names, and key events. Return ONLY the summary.\n\nTEXT CHUNK:\n{chunk}"
         ok, summary_or_err = api_clients.query_model_auto(model, map_prompt_template.format(chunk=chunk), prefer_chat=True, temperature=temperature, seed=seed, debug_mode=debug_mode, timeout=timeout, debug_title=f"Summarize Chunk {i+1}")
         if ok: return TextCleaner.single_paragraph(summary_or_err)
-        print(f"\033[93m[PromptCrafter] Warning: Could not summarize chunk {i+1}. Error: {summary_or_err}\033[0m")
+        print(f"\033[93m[PromptCrafterer] Warning: Could not summarize chunk {i+1}. Error: {summary_or_err}\033[0m")
         return None
 
     def reduce_group(group, i, level, total_groups):
@@ -753,12 +753,12 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
         reduce_prompt = f"The following text consists of several summaries of a larger document. Synthesize these summaries into one final, coherent summary of the entire document.\n\nSUMMARIES:\n{group}"
         ok, summary_or_err = api_clients.query_model_auto(model, reduce_prompt, prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title=f"Reduce Level {level} - Group {i+1}/{total_groups}")
         if ok: return TextCleaner.single_paragraph(summary_or_err)
-        print(f"\033[93m[PromptCrafter] Warning: Reduce step failed for group {i+1} at level {level}. Error: {summary_or_err}\033[0m")
+        print(f"\033[93m[PromptCrafterer] Warning: Reduce step failed for group {i+1} at level {level}. Error: {summary_or_err}\033[0m")
         return None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         # --- Map Phase ---
-        print("\033[94m[PromptCrafter] Starting parallel summarization of text chunks (Map phase)...")
+        print("\033[94m[PromptCrafterer] Starting parallel summarization of text chunks (Map phase)...")
         chunk_iterator = _split_text_into_chunks(text, chunk_size_words)
         # Use a generator expression to filter out failed summaries without creating an intermediate list
         current_summaries = (s for s in executor.map(map_chunk_to_summary, chunk_iterator, itertools.count(0)) if s)
@@ -773,7 +773,7 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
         while len(summaries_list) > 1:
             # Dynamically adjust group size to balance progress and context window limits
             reduce_group_size = max(2, min(5, (len(summaries_list) + max_workers - 1) // max_workers))
-            print(f"\033[94m[PromptCrafter] Combining {len(summaries_list)} summaries into groups of ~{reduce_group_size} (Reduce level {reduce_level})...")
+            print(f"\033[94m[PromptCrafterer] Combining {len(summaries_list)} summaries into groups of ~{reduce_group_size} (Reduce level {reduce_level})...")
             
             groups_to_process = ["\n\n---\n\n".join(summaries_list[i:i + reduce_group_size]) for i in range(0, len(summaries_list), reduce_group_size)]
             
@@ -782,7 +782,7 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
             reduced_summaries = list(s for s in future_reduced_summaries if s)
 
             if not reduced_summaries:
-                print(f"\033[91m[PromptCrafter] Error: All groups failed at reduce level {reduce_level}. Returning previous level's summaries.\033[0m")
+                print(f"\033[91m[PromptCrafterer] Error: All groups failed at reduce level {reduce_level}. Returning previous level's summaries.\033[0m")
                 return "\n\n".join(summaries_list)
             
             summaries_list = reduced_summaries
@@ -792,7 +792,7 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
 
     # Final pass to tailor the summary to the user's query, if one was provided.
     if user_query and user_query.strip() and user_query.strip() != config.DEFAULT_PROMPT_TEXT and final_strategy != 'extractive':
-        print("\033[94m[PromptCrafter] Performing final pass to tailor summary to user query...")
+        print("\033[94m[PromptCrafterer] Performing final pass to tailor summary to user query...")
         final_pass_prompt = textwrap.dedent(f"""
             You are a synthesis expert. Based on the following comprehensive summary, provide a concise and direct answer to the user's original query. Focus only on the information relevant to the query.
 ---
@@ -807,7 +807,7 @@ COMPREHENSIVE SUMMARY ---
         from . import api_clients
         ok, final_answer = api_clients.query_model_auto(model, final_pass_prompt, prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title="Final Summary Pass")
         if ok: return TextCleaner.single_paragraph(final_answer)
-        else: print(f"\033[93m[PromptCrafter] Warning: Final summary pass failed. Returning the general summary. Error: {final_answer}\033[0m")
+        else: print(f"\033[93m[PromptCrafterer] Warning: Final summary pass failed. Returning the general summary. Error: {final_answer}\033[0m")
 
     return final_summary
 
@@ -818,7 +818,7 @@ def _extract_mandatory_tokens_with_model(image_context: str, user_text: str, run
     cache_key = _get_cache_key(run_config.model, image_context, run_config.use_chat_api, run_config.temperature, run_config.seed, user_text, primary_subjects_from_images, "extract_tokens_v2", run_config.debug_mode)
     from . import api_clients
     if config.CACHE.has(cache_key):
-        print("\033[94m[PromptCrafter] Using cached token extraction.\033[0m")
+        print("\033[94m[PromptCrafterer] Using cached token extraction.\033[0m")
         return True, config.CACHE.get(cache_key)
 
     has_user_text = user_text and user_text.strip() and user_text.strip() != config.DEFAULT_PROMPT_TEXT
@@ -833,7 +833,7 @@ def _extract_mandatory_tokens_with_model(image_context: str, user_text: str, run
     else: # No user text, so subjects from images are primary.
         primary_subjects = primary_subjects_from_images or []
         ok_sec, secondary_subjects = _extract_secondary_subjects(image_context, run_config)
-        if not ok_sec: print(f"\033[93m[PromptCrafter] Warning: Could not extract secondary subjects: {secondary_subjects}\033[0m")
+        if not ok_sec: print(f"\033[93m[PromptCrafterer] Warning: Could not extract secondary subjects: {secondary_subjects}\033[0m")
         secondary_subjects = secondary_subjects if ok_sec else []
     if has_user_text and not primary_subjects:
         return False, "Model did not identify any required subjects from your instructions. Please try rephrasing."
@@ -970,7 +970,7 @@ def _summarize_deep_think_objectives(model, initial_prompt_text, **kwargs):
     summary_kwargs.pop('debug_title', None)
     ok_summary, core_objectives = api_clients.query_model_auto(model, summarize_template, **summary_kwargs, debug_title="Deep Think - Summarize Objectives")
     if not ok_summary:
-        print(f"\033[93m[PromptCrafter] Warning: Deep Think objective summarization failed. Using full prompt text for critiques. Error: {core_objectives}\033[0m")
+        print(f"\033[93m[PromptCrafterer] Warning: Deep Think objective summarization failed. Using full prompt text for critiques. Error: {core_objectives}\033[0m")
         return initial_prompt_text
     return core_objectives
 
@@ -1097,15 +1097,15 @@ def _split_text_into_scenes_with_ai(text, run_config):
     )
     ok, result_json = api_clients._reason_with_model(run_config.model, prompt_template, use_chat_api=run_config.use_chat_api, temperature=0.1, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="AI Scene Splitter")
     if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list) and result_json["scenes"]:
-        print(f"\033[92m[PromptCrafter] AI successfully split the story into {len(result_json['scenes'])} scenes.\033[0m")
+        print(f"\033[92m[PromptCrafterer] AI successfully split the story into {len(result_json['scenes'])} scenes.\033[0m")
         return result_json["scenes"]
-    print("\033[93m[PromptCrafter] Warning: AI scene splitting failed. Treating the entire text as a single scene.\033[0m")
+    print("\033[93m[PromptCrafterer] Warning: AI scene splitting failed. Treating the entire text as a single scene.\033[0m")
     return [text]
 
 def _generate_storyboard_from_instruction_with_ai(user_request, image_context, primary_subjects, run_config):
     '''Uses an LLM to generate a storyboard from a high-level user instruction.'''
     from . import api_clients
-    print("\033[94m[PromptCrafter] Using AI to generate storyboard from user instruction...")
+    print("\033[94m[PromptCrafterer] Using AI to generate storyboard from user instruction...")
     prompt_template = textwrap.dedent('''
         You are an expert film director. Your task is to break down a user's high-level request into a sequence of distinct, cinematic video scenes.
         ---
@@ -1130,6 +1130,6 @@ def _generate_storyboard_from_instruction_with_ai(user_request, image_context, p
     )
     ok, result_json = api_clients._reason_with_model(run_config.model, prompt_template, use_chat_api=run_config.use_chat_api, temperature=0.2, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="AI Storyboard Generation")
     if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list) and result_json["scenes"]:
-        print(f"\033[92m[PromptCrafter] AI successfully generated a storyboard with {len(result_json['scenes'])} scenes.\033[0m")
+        print(f"\033[92m[PromptCrafterer] AI successfully generated a storyboard with {len(result_json['scenes'])} scenes.\033[0m")
         return result_json["scenes"]
     return []

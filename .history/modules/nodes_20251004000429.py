@@ -48,7 +48,7 @@ class PromptCrafter_QnA:
                 "enable_web_search": ("BOOLEAN", {"default": True, "tooltip": "Allow the node to perform a web search for questions about recent events or topics requiring current information."} ),
                 "fast_web_search": ("BOOLEAN", {"default": True, "tooltip": "In web search mode, only use search result snippets instead of fetching full page content. Much faster."} ),
                 "folder_path": ("STRING", {"multiline": False, "default": "input", "tooltip": "Folder containing an optional context file (e.g., 'input' or 'input/texts')."}),
-                "filename_prefix": ("STRING", {"multiline": False, "default": "PromptCrafter/QnA", "tooltip": "Subdirectory and prefix for the saved text file."} ),
+                "filename_prefix": ("STRING", {"multiline": False, "default": "PromptCrafterer/QnA", "tooltip": "Subdirectory and prefix for the saved text file."} ),
                 "file_name": ("STRING", {"multiline": False, "default": "<none>", "tooltip": "The name of the text file within the specified folder."} ),
                 "chunk_large_context": ("BOOLEAN", {"default": True, "tooltip": "Automatically chunk and summarize context files that are too large."} ),
                 "chunk_size_words": ("INT", {"default": 2000, "min": 500, "max": 8000, "step": 100, "tooltip": "The approximate size of each chunk in words for summarization."} ),
@@ -61,7 +61,7 @@ class PromptCrafter_QnA:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("response", "history_out")
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafterer"
     
     def execute(self, user_text, model, **kwargs):
         try:
@@ -83,7 +83,7 @@ class PromptCrafter_QnA:
             temperature = kwargs.get("temperature", 0.2)
             safe_mode = kwargs.get("safe_mode", True)
             save_to_txt = kwargs.get("save_to_txt", False)
-            filename_prefix = kwargs.get("filename_prefix", "PromptCrafter/QnA")
+            filename_prefix = kwargs.get("filename_prefix", "PromptCrafterer/QnA")
             
             llm_model = model
             has_image = image is not None
@@ -96,11 +96,11 @@ class PromptCrafter_QnA:
 
                 if has_image and not is_vision_model:
                     fallback = next((m for m in vision_models_list if "llava" in m), vision_models_list[0] if vision_models_list else config.FALLBACK_VISION_MODEL)
-                    print(f"\033[93m[PromptCrafter] Warning: Image provided to QnA node, but '{llm_model}' is not a vision model. Auto-switching to '{fallback}'.\033[0m")
+                    print(f"\033[93m[PromptCrafterer] Warning: Image provided to QnA node, but '{llm_model}' is not a vision model. Auto-switching to '{fallback}'.\033[0m")
                     llm_model = fallback
                 elif not has_image and is_vision_model and not is_text_model:
                     fallback = next((m for m in text_models_list if "llama3" in m), text_models_list[0] if text_models_list else config.FALLBACK_TEXT_MODEL)
-                    print(f"\033[93m[PromptCrafter] Warning: No image provided to QnA node, but '{llm_model}' is a vision-only model. Auto-switching to '{fallback}'.\033[0m")
+                    print(f"\033[93m[PromptCrafterer] Warning: No image provided to QnA node, but '{llm_model}' is a vision-only model. Auto-switching to '{fallback}'.\033[0m")
                     llm_model = fallback
 
             if not llm_model:
@@ -135,13 +135,13 @@ class PromptCrafter_QnA:
             strategy_key = "extractive" if "Extractive" in summarization_strategy else "default"
             if chunk_large_context and context and not context.startswith("[Error"):
                 if len(context.split()) > chunk_size_words:
-                    print(f"\033[94m[PromptCrafter] Context from {context_source} is large. Summarizing...\033[0m")
+                    print(f"\033[94m[PromptCrafterer] Context from {context_source} is large. Summarizing...\033[0m")
                     context = utils._summarize_large_text(raw_context, chunk_size_words, llm_model, temperature, seed, debug_mode, timeout, strategy=strategy_key, user_query=user_text)
                     utils._debug_print(debug_mode, "Summarized Context", context)
 
             final_user_text, raw_user_text = user_text, user_text
             if chunk_large_context and len(user_text.split()) > chunk_size_words and user_text.strip() != config.DEFAULT_PROMPT_TEXT:
-                print(f"\033[94m[PromptCrafter] User text is large. Summarizing...\033[0m")
+                print(f"\033[94m[PromptCrafterer] User text is large. Summarizing...\033[0m")
                 final_user_text = utils._summarize_large_text(user_text, chunk_size_words, llm_model, temperature, seed, debug_mode, timeout, strategy=strategy_key)
                 utils._debug_print(debug_mode, "Summarized User Text", final_user_text)
 
@@ -174,7 +174,7 @@ class PromptCrafter_QnA:
 
             return (response_text, updated_history)
         except Exception as e:
-            print(f"\033[91m[PromptCrafter] Error in QnA node: {e}\033[0m")
+            print(f"\033[91m[PromptCrafterer] Error in QnA node: {e}\033[0m")
             import traceback
             traceback.print_exc()
             return (f"An error occurred: {e}", "")
@@ -215,7 +215,7 @@ class PromptCrafter_Captioner:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("caption",)
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafterer"
 
     def _sanitize_filename(self, text, max_length=150):
         """Sanitizes a string to be a valid filename."""
@@ -244,7 +244,7 @@ class PromptCrafter_Captioner:
             content = utils.safe_read(fpath)
             if not content.startswith("[Error"):
                 trigger_words = [line.strip() for line in content.splitlines() if line.strip()]
-                if trigger_words: print(f"\033[92m[PromptCrafter] Loaded {len(trigger_words)} trigger words from {trigger_words_file}.\033[0m")
+                if trigger_words: print(f"\033[92m[PromptCrafterer] Loaded {len(trigger_words)} trigger words from {trigger_words_file}.\033[0m")
 
         if batch_mode:
             if not input_folder: return ("Batch mode is enabled, but no input folder was provided.",)
@@ -257,7 +257,7 @@ class PromptCrafter_Captioner:
             out_dir = utils._get_and_create_output_dir(output_path)
 
             semaphore = threading.Semaphore(api_concurrency)
-            print(f"\033[94m[PromptCrafter] Batch mode: Limiting concurrent API requests to {api_concurrency} for remote models.\033[0m")
+            print(f"\033[94m[PromptCrafterer] Batch mode: Limiting concurrent API requests to {api_concurrency} for remote models.\033[0m")
 
             processed_count, renamed_count, skipped_count, failed_count = 0, 0, 0, 0
             failed_files = []
@@ -284,7 +284,7 @@ class PromptCrafter_Captioner:
                         if not ok:
                             failed_count += 1
                             failed_files.append(img_filename)
-                            print(f"\033[93m[PromptCrafter] Warning: Failed to caption {img_filename}: {caption_text}\033[0m")
+                            print(f"\033[93m[PromptCrafterer] Warning: Failed to caption {img_filename}: {caption_text}\033[0m")
                             continue
 
                         current_prefix = random.choice(trigger_words) if trigger_words else caption_prefix
@@ -310,17 +310,17 @@ class PromptCrafter_Captioner:
                             
                             os.rename(os.path.join(full_folder_path, img_filename), new_img_path)
                             renamed_count += 1
-                            print(f"\033[92m[PromptCrafter] Renamed & Captioned: {img_filename} -> {os.path.basename(new_img_path)}\033[0m")
+                            print(f"\033[92m[PromptCrafterer] Renamed & Captioned: {img_filename} -> {os.path.basename(new_img_path)}\033[0m")
                         else:
                             if save_caption:
                                 with open(caption_filepath, "w", encoding="utf-8") as f: f.write(final_caption)
                             processed_count += 1
-                            print(f"\033[92m[PromptCrafter] Captioned: {img_filename}\033[0m")
+                            print(f"\033[92m[PromptCrafterer] Captioned: {img_filename}\033[0m")
 
                     except Exception as e:
                         failed_count += 1
                         failed_files.append(img_filename)
-                        print(f"\033[91m[PromptCrafter] An unexpected error occurred for {img_filename}: {e}\033[0m")
+                        print(f"\033[91m[PromptCrafterer] An unexpected error occurred for {img_filename}: {e}\033[0m")
 
             status_message = f"Batch complete. Total: {len(image_files)}."
             if processed_count > 0: status_message += f" Captioned: {processed_count}."
@@ -337,7 +337,7 @@ class PromptCrafter_Captioner:
         else: # Single Mode
             if image is None: return ("No image provided for single captioning mode.",)
             if rename_file_with_caption:
-                print("\033[93m[PromptCrafter] Warning: 'rename_file_with_caption' is only available in batch mode and will be ignored.\033[0m")
+                print("\033[93m[PromptCrafterer] Warning: 'rename_file_with_caption' is only available in batch mode and will be ignored.\033[0m")
 
             ok, caption = self._caption_one_image(image, model, final_caption_prompt, temperature, seed, debug_mode, timeout)
             if not ok: return (caption,)
@@ -361,7 +361,7 @@ class PromptCrafter_Captioner:
 class PromptCrafter_BaseCreator: # noqa
     def _handle_creator_exception(self, e, **kwargs):
         """A centralized exception handler for creator nodes."""
-        print(f"\033[91m[PromptCrafter] An unexpected error occurred in {type(self).__name__}: {e}\033[0m")
+        print(f"\033[91m[PromptCrafterer] An unexpected error occurred in {type(self).__name__}: {e}\033[0m")
         import traceback
         traceback.print_exc()
         
@@ -391,7 +391,7 @@ class PromptCrafter_BaseCreator: # noqa
         try:
             weights = json.loads(image_weights_json)
         except (json.JSONDecodeError, TypeError):
-            print(f"\033[93m[PromptCrafter] Warning: Could not parse image_weights_json. Using default weights. Value: {image_weights_json}\033[0m")
+            print(f"\033[93m[PromptCrafterer] Warning: Could not parse image_weights_json. Using default weights. Value: {image_weights_json}\033[0m")
 
         for i in range(1, image_count + 1):
             image = kwargs.get(f"image_{i}")
@@ -435,14 +435,14 @@ class PromptCrafter_BaseCreator: # noqa
         config_fields = {f.name for f in fields(config.PromptCrafterRunConfig)}
         filtered_params = {k: v for k, v in config_params.items() if k in config_fields}
 
-        run_config = config.PromptCrafterRunConfig(**filtered_params)
+        run_config = config.PromptCraftererRunConfig(**filtered_params)
         
         # --- Centralized Style Profile Selection ---
         # Determine the style profile ONCE and store it in the config.
         style_tags = kwargs.get("style_tags", "").strip()
         if style_tags:
             # New "Style Tags" input takes priority for multi-style blending. # noqa
-            print(f"\033[94m[PromptCrafter] Using style tags for multi-style blending: {style_tags}\033[0m")
+            print(f"\033[94m[PromptCrafterer] Using style tags for multi-style blending: {style_tags}\033[0m")
             tag_names = [tag.strip() for tag in style_tags.split(',')]
             inspirations = []
             # Use the persona from the first valid tag.
@@ -475,7 +475,7 @@ class PromptCrafter_BaseCreator: # noqa
         if has_text and not has_images:
             image_keywords = ["image", "images", "picture", "pictures", "photo", "reference", "input"]
             if any(kw in user_text.lower() for kw in image_keywords):
-                print("\033[94m[PromptCrafter] User text mentions images, but none are connected. Using AI to confirm intent...\033[0m")
+                print("\033[94m[PromptCrafterer] User text mentions images, but none are connected. Using AI to confirm intent...\033[0m")
                 prompt = f"""Analyze the user's request. Does it explicitly mention using input images, reference images, or the provided images?
 - If it says \"using the images\", \"based on the pictures\", etc., answer YES.
 - If it just describes a scene (e.g., \"create an image of a woman\"), answer NO.
@@ -489,7 +489,7 @@ Respond with ONLY a JSON object: {{'requires_images': true/false}}"""
                     return "Your instructions appear to refer to input images, but none were connected. Please connect reference images or rephrase your instructions.", None
 
         elif has_images and not has_text:
-            print("\033[94m[PromptCrafter] Images provided but no text. Engaging creative autopilot to generate instructions...\033[0m")
+            print("\033[94m[PromptCrafterer] Images provided but no text. Engaging creative autopilot to generate instructions...\033[0m")
             image_context, _ = self._describe_images(images_with_weights, run_config)
             prompt = f"""You are a creative director. Analyze the following image descriptions and invent a high-level, single-paragraph instruction for a new, creative scene that uses the subjects from the images.
 - Be imaginative. Suggest a new scenario, interaction, or story.
@@ -502,7 +502,7 @@ Respond with ONLY a JSON object: {{'requires_images': true/false}}"""
 Return ONLY the single-paragraph creative instruction. No commentary.""" # noqa
             ok, new_instruction = api_clients.query_model_auto(run_config.model, prompt, prefer_chat=True, temperature=0.7, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Creative Autopilot", remote_api_model=run_config.remote_api_model)
             if ok and new_instruction:
-                print(f"\033[92m[PromptCrafter] Creative Autopilot generated instruction: {new_instruction}\033[0m")
+                print(f"\033[92m[PromptCrafterer] Creative Autopilot generated instruction: {new_instruction}\033[0m")
                 return None, new_instruction
             else:
                 return "Creative Autopilot failed to generate instructions from the images. Please provide text instructions or check your model.", None
@@ -517,7 +517,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" # noqa
         weights = [w for _, w in images_with_weights]
         cache_key = utils._get_cache_key(images, weights, run_config.model, run_config.use_chat_api, run_config.temperature, run_config.language, run_config.safe_mode, run_config.seed, "describe_images_v4_parallel", run_config.style_profile)
         if config.CACHE.has(cache_key):
-            print("\033[94m[PromptCrafter] Using cached image descriptions and primary subjects.\033[0m")
+            print("\033[94m[PromptCrafterer] Using cached image descriptions and primary subjects.\033[0m")
             return config.CACHE.get(cache_key)
 
         description_objects = []
@@ -611,7 +611,7 @@ The final output must be in {language} only.{safety_rule}"""
         generation_kwargs = {"prefer_chat": run_config.use_chat_api, "temperature": run_config.temperature, "seed": run_config.seed, "timeout": 120, "debug_mode": run_config.debug_mode}
 
         if run_config.use_deep_think:
-            print("\033[94m[PromptCrafter] Deep Think enabled. Starting iterative refinement...\033[0m")
+            print("\033[94m[PromptCrafterer] Deep Think enabled. Starting iterative refinement...\033[0m")
             generation_kwargs["debug_title"] = f"Initial {mode} Prompt (Deep Think)"
             generation_kwargs["images"] = images
             ok, scene_prompt = utils._deep_think_and_refine(run_config.model, merge_prompt, max_iterations=3, confidence_threshold=run_config.deep_think_confidence, **generation_kwargs)
@@ -815,7 +815,7 @@ Example: {{"motion_style": \"dynamic, cinematic\", "camera_movement": \"tracking
             ok, result_json = api_clients._reason_with_model(run_config.model, critique_prompt, use_chat_api=run_config.use_chat_api, temperature=run_config.temperature, seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title=f"Image/Video Refine & Check (Try {i+1})")
 
             if not ok or not isinstance(result_json, dict):
-                print(f"\033[93m[PromptCrafter] Warning: Refinement step failed to return valid JSON. Using previous version. Error: {result_json}\033[0m")
+                print(f"\033[93m[PromptCrafterer] Warning: Refinement step failed to return valid JSON. Using previous version. Error: {result_json}\033[0m")
                 return current_prompt
 
             current_prompt = utils.TextCleaner.single_paragraph(result_json.get("refined_prompt", current_prompt))
@@ -904,19 +904,19 @@ Return ONLY a single JSON object with three keys:
         base_negative_prompt = utils._generate_negative_prompt(user_text, run_config, user_negative_prompt=kwargs.get("negative_prompt", ""))
 
         if '\n\n' in user_text:
-            print("\033[94m[PromptCrafter] Multi-paragraph input detected. Using manual scene breaks.\033[0m")
+            print("\033[94m[PromptCrafterer] Multi-paragraph input detected. Using manual scene breaks.\033[0m")
             scenes = [p.strip() for p in user_text.split('\n\n') if p.strip()]
         else:
             if not user_text or len(user_text.split()) < 20:
                 scenes = utils._generate_storyboard_from_instruction_with_ai(user_text, image_context_for_all, primary_subjects_from_images, run_config)
             else:
-                print("\033[94m[PromptCrafter] Attempting to split single-paragraph story into scenes with AI...\033[0m")
+                print("\033[94m[PromptCrafterer] Attempting to split single-paragraph story into scenes with AI...\033[0m")
                 scenes = utils._split_text_into_scenes_with_ai(user_text, run_config)
 
         if not scenes:
             return ("", "AI failed to generate a storyboard. Please try rephrasing your request or check the model.", "", "")
 
-        print(f"\033[94m[PromptCrafter] Schedule mode enabled. Generating prompts for {len(scenes)} scenes...\033[0m")
+        print(f"\033[94m[PromptCrafterer] Schedule mode enabled. Generating prompts for {len(scenes)} scenes...\033[0m")
 
         generated_prompts: list[str] = [""] * len(scenes)
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(scenes))) as executor:
@@ -928,11 +928,11 @@ Return ONLY a single JSON object with three keys:
                     if result is None:
                         result = ""
                     generated_prompts[index] = str(result)
-                    print(f"\033[92m[PromptCrafter] Finished processing scene {index + 1}/{len(scenes)}.\033[0m")
+                    print(f"\033[92m[PromptCrafterer] Finished processing scene {index + 1}/{len(scenes)}.\033[0m")
                 except Exception as exc:
                     error_msg = f"[Error processing scene {index + 1}: {exc}]"
                     generated_prompts[index] = error_msg
-                    print(f"\033[91m[PromptCrafter] {error_msg}\033[0m")
+                    print(f"\033[91m[PromptCrafterer] {error_msg}\033[0m")
 
         if not any(generated_prompts):
             return ("", "Failed to generate prompts for any of the scenes. Please check the model and logs.", image_context_for_all, base_negative_prompt)
@@ -949,7 +949,7 @@ Return ONLY a single JSON object with three keys:
         config_key_parts = (run_config.model, run_config.language, run_config.temperature, run_config.use_chat_api, run_config.max_length_words, run_config.seed, run_config.max_retries, run_config.critique_strength, run_config.simplify_for_diffusion, run_config.use_deep_think, str(run_config.style_profile))
         cache_key = utils._get_cache_key("gen_prompt_for_scene_v1", scene_text, mode, images_with_weights, image_context_for_all, style_rules, config_key_parts)
         if config.CACHE.has(cache_key):
-            print(f"\033[94m[PromptCrafter] Using cached prompt for scene: '{scene_text[:50]}...'") # noqa
+            print(f"\033[94m[PromptCrafterer] Using cached prompt for scene: '{scene_text[:50]}...'") # noqa
             return config.CACHE.get(cache_key)
 
         images = [img for img, _ in images_with_weights]
@@ -1001,7 +1001,7 @@ class PromptCrafter_ImageCreator(PromptCrafter_BaseCreator):
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
     RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafterer"
 
     def execute(self, user_text, model, negative_prompt="", **kwargs):
         try:
@@ -1062,7 +1062,7 @@ class PromptCrafter_FileOrganizer:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("summary",)
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafterer/Utils"
 
     def _read_metadata(self, image_path):
         """Safely reads PNG info metadata from an image file."""
@@ -1308,7 +1308,7 @@ class PromptCrafter_VideoCreator(PromptCrafter_BaseCreator):
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
     RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafterer"
 
     def execute(self, user_text, model, negative_prompt="", **kwargs):
         try:
@@ -1368,7 +1368,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
     RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafterer"
 
     def execute(self, user_text, model, **kwargs):
         try:
@@ -1400,16 +1400,16 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
 
     def _handle_lyrics_mode(self, lyrics, timed_segments, images_with_weights, user_instructions, lyrics_meta, config, audio_path=None, generate_schedule=False, negative_prompt="", save_to_txt=False, filename_prefix=""): # noqa
         if config.use_audio_alignment and audio_path and lyrics and not lyrics.startswith("[Error"):
-            print("\033[94m[PromptCrafter] Audio file provided. Performing audio-lyric alignment (this is experimental)...\033[0m")
+            print("\033[94m[PromptCrafterer] Audio file provided. Performing audio-lyric alignment (this is experimental)...\033[0m")
             spectrogram_img = utils.audio_to_spectrogram(audio_path)
             if isinstance(spectrogram_img, Image.Image):
                 corrected_lyrics = self._validate_lyrics_against_audio(lyrics, spectrogram_img, config)
                 if corrected_lyrics.strip() and corrected_lyrics.strip() != lyrics.strip():
-                    print("\033[92m[PromptCrafter] Lyrics corrected based on audio analysis.\033[0m")
+                    print("\033[92m[PromptCrafterer] Lyrics corrected based on audio analysis.\033[0m")
                     lyrics = corrected_lyrics
                     lyrics, timed_segments = utils._process_lyrics_content(lyrics)
             else:
-                print(f"\033[93m[PromptCrafter] Warning: Could not generate spectrogram. Error: {spectrogram_img}\033[0m")
+                print(f"\033[93m[PromptCrafterer] Warning: Could not generate spectrogram. Error: {spectrogram_img}\033[0m")
 
         if not lyrics or not lyrics.strip(): return ("No lyrics provided.", "", "No reference images provided.", "")
         if lyrics.startswith("[Error"):
@@ -1438,7 +1438,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
     # // This creates more meaningful chunks (verse, chorus, etc.) than simple line-by-line processing.
     def _group_lyrics_into_scenes(self, lyrics, run_config):
         """Groups raw lyrics into narratively coherent scenes using an AI model."""
-        print("\033[94m[PromptCrafter] Grouping lyrics into logical scenes using AI...\033[0m")
+        print("\033[94m[PromptCrafterer] Grouping lyrics into logical scenes using AI...\033[0m")
         prompt = textwrap.dedent(f"""
             You are a literary analyst. Your task is to read the following song lyrics and group them into logical scenes or sections (like Verse 1, Chorus, Bridge, etc.).
             Each scene should represent a distinct part of the narrative or a shift in mood.
@@ -1465,10 +1465,10 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
         ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Lyric Scene Grouping")
         
         if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list):
-            print(f"\033[92m[PromptCrafter] Successfully grouped lyrics into {len(result_json['scenes'])} scenes.\033[0m")
+            print(f"\033[92m[PromptCrafterer] Successfully grouped lyrics into {len(result_json['scenes'])} scenes.\033[0m")
             return result_json["scenes"]
         else:
-            print(f"\033[93m[PromptCrafter] Warning: AI-based lyric grouping failed. Falling back to line-by-line processing. Error: {result_json}\033[0m")
+            print(f"\033[93m[PromptCrafterer] Warning: AI-based lyric grouping failed. Falling back to line-by-line processing. Error: {result_json}\033[0m")
             return None # Fallback signal
 
     def _validate_lyrics_against_audio(self, lyrics_text, audio_img, run_config): # noqa
@@ -1552,7 +1552,7 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
 
         if not segments: return "Could not segment lyrics into processable lines or sections."
 
-        print(f"\033[94m[PromptCrafter] Generating storyboard for {len(segments)} scenes iteratively...\033[0m")
+        print(f"\033[94m[PromptCrafterer] Generating storyboard for {len(segments)} scenes iteratively...\033[0m")
         processed_prompts: list[str] = [""] * len(segments)
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(segments))) as executor:
             # Submit all jobs to the executor
@@ -1566,10 +1566,10 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
                 segment_name, _ = segments[index]
                 try:
                     processed_prompts[index] = future.result()
-                    print(f"\033[92m[PromptCrafter] Finished processing '{segment_name}'.\033[0m")
+                    print(f"\033[92m[PromptCrafterer] Finished processing '{segment_name}'.\033[0m")
                 except Exception as exc:
                     error_message = f"Scene '{segment_name}' generated an exception: {exc}"
-                    print(f'\033[91m[PromptCrafter] {error_message}\033[0m')
+                    print(f'\033[91m[PromptCrafterer] {error_message}\033[0m')
                     processed_prompts[index] = f"[Error: {error_message}]"
         
         return processed_prompts
@@ -1606,7 +1606,7 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
 
         if not concept_ok:
             error_msg = f"Failed to generate concept for '{scene_name}': {shot_concept}"
-            print(f"\033[93m[PromptCrafter] Warning: {error_msg}\033[0m")
+            print(f"\033[93m[PromptCrafterer] Warning: {error_msg}\033[0m")
             return f"[Error: {error_msg}]"
 
         # --- STEP 2: Refine the Concept into a Final Prompt ---
@@ -1636,7 +1636,7 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
         
         if not final_ok:
             error_msg = f"Failed to refine prompt for '{scene_name}': {final_prompt}"
-            print(f"\033[93m[PromptCrafter] Warning: {error_msg}\033[0m")
+            print(f"\033[93m[PromptCrafterer] Warning: {error_msg}\033[0m")
             return f"[Error: {error_msg}]"
 
         return utils.TextCleaner.slim_prompt_text(utils.TextCleaner.single_paragraph(final_prompt))
@@ -1668,7 +1668,7 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
         return utils._create_schedule_from_items(storyboard_prompts, max_frames, 0, config.interpolate_keyframes, config.interpolation_frame_interval)
 
     def _create_schedule_from_srt(self, storyboard_prompts, timed_segments, fps, run_config): # noqa
-        print("\033[94m[PromptCrafter] SRT file detected. Generating timed schedule...\033[0m")
+        print("\033[94m[PromptCrafterer] SRT file detected. Generating timed schedule...\033[0m")
         if len(storyboard_prompts) != len(timed_segments):
             return f"[Error: Mismatch between SRT segments ({len(timed_segments)}) and generated prompts ({len(storyboard_prompts)}).]"
         schedule = collections.OrderedDict()
@@ -1697,13 +1697,13 @@ class PromptCrafter_ClearCache:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("status",)
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafterer/Utils"
 
     def execute(self, action):
         if action == "Clear Cache":
             removed_count = config.CACHE.clear()
             status_message = f"Cache cleared. Removed {removed_count} items."
-            print(f"\033[92m[PromptCrafter] {status_message}\033[0m")
+            print(f"\033[92m[PromptCrafterer] {status_message}\033[0m")
         else:
             status_message = f"Cache contains {config.CACHE.size} of {config.CACHE.max_size} items."
         return (status_message,)
@@ -1719,11 +1719,11 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_QnA": f"PromptCrafter QnA",
-    "PromptCrafter_Captioner": f"PromptCrafter Image Captioner",
-    "PromptCrafter_ImageCreator": f"PromptCrafter Image Prompt Creator",
-    "PromptCrafter_VideoCreator": f"PromptCrafter Video Prompt Creator",
-    "PromptCrafter_LyricsCreator": f"PromptCrafter Lyrics-to-Prompt Creator",
-    "PromptCrafter_ClearCache": f"PromptCrafter Cache Utility",
-    "PromptCrafter_FileOrganizer": f"PromptCrafter File Organizer",
+    "PromptCrafter_QnA": f"PromptCrafterer QnA",
+    "PromptCrafter_Captioner": f"PromptCrafterer Image Captioner",
+    "PromptCrafter_ImageCreator": f"PromptCrafterer Image Prompt Creator",
+    "PromptCrafter_VideoCreator": f"PromptCrafterer Video Prompt Creator",
+    "PromptCrafter_LyricsCreator": f"PromptCrafterer Lyrics-to-Prompt Creator",
+    "PromptCrafter_ClearCache": f"PromptCrafterer Cache Utility",
+    "PromptCrafter_FileOrganizer": f"PromptCrafterer File Organizer",
 }
