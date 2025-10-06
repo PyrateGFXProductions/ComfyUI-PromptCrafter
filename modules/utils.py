@@ -20,6 +20,7 @@ import requests
 # Local module imports
 from . import config
 from . import api_clients
+from . import json_utils
 
 # --- Dependency-specific imports ---
 if config.PYPDF_AVAILABLE: from pypdf import PdfReader
@@ -216,8 +217,29 @@ def _save_output_to_file(filename_prefix, sections, base_filename="prompt"):
                 if i < len(sections) - 1: f.write("\n")
 
 # ------------------------------------------------------------------------------------
+# File System Utilities
+# ------------------------------------------------------------------------------------
+
+def _get_unique_filepath(directory, base_name, extension):
+    """
+    Generates a unique file path by appending a counter if the file already exists.
+    """
+    counter = 1
+    new_path = os.path.join(directory, f"{base_name}{extension}")
+    original_base_name = base_name
+    while os.path.exists(new_path):
+        base_name = f"{original_base_name}_{counter}"
+        new_path = os.path.join(directory, f"{base_name}{extension}")
+        counter += 1
+    return new_path, base_name
+
+# ------------------------------------------------------------------------------------
 # Text & JSON Processing
 # ------------------------------------------------------------------------------------
+
+# Make the JSON parsing functions available through the 'utils' module for other files that use them.
+JSONParsingError = json_utils.JSONParsingError
+_extract_and_parse_json = json_utils._extract_and_parse_json
 
 class TextCleaner:
     """A utility class for various text cleaning and formatting operations."""
@@ -249,111 +271,6 @@ class TextCleaner:
         t = re.sub(r",\s*,+", ",", t)
         return re.sub(r"\s+", " ", t).strip()
 
-class JSONParsingError(ValueError):
-    """Custom exception for errors during JSON extraction and parsing."""
-    def __init__(self, message, text=None, original_exception=None):
-        self.text = text
-        self.original_exception = original_exception
-        full_message = message
-        if text:
-            pos = getattr(original_exception, 'pos', None)
-            if pos is not None:
-                start, end = max(0, pos - 40), min(len(text), pos + 40)
-                snippet, pointer = text[start:end].replace('\n', '\\n'), " " * (pos - start) + "^"
-                full_message += f"\nContext around error (pos {pos}):\n{snippet}\n{pointer}"
-            else:
-                full_message += f"\nText snippet: {text[:200]}..."
-        if original_exception: full_message += f"\nOriginal error: {original_exception}"
-        super().__init__(full_message)
-
-def _find_json_candidate(text: str) -> str | None:
-    """Finds the most likely JSON string candidate from raw text returned by an LLM."""
-    # 1. Prioritize markdown code blocks, which are explicitly formatted.
-    # This regex correctly handles both JSON objects `{...}` and arrays `[...]`.
-    match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```", text, re.DOTALL)
-    if match:
-        return match.group(1)
-
-    # 2. Fallback: Find the last-starting, first-ending balanced JSON object/array.
-    # This is more robust for conversational text where the JSON is often at the end.
-    last_brace = text.rfind('{')
-    last_bracket = text.rfind('[')
-
-    if last_brace == -1 and last_bracket == -1:
-        return None
-
-    start_pos = max(last_brace, last_bracket)
-    start_char = text[start_pos]
-    end_char = '}' if start_char == '{' else ']'
-
-    balance, in_string = 1, False
-    # Start searching from the character *after* the opening bracket.
-    for i in range(start_pos + 1, len(text)):
-        char = text[i]
-
-        if char == '"' and (i == 0 or text[i-1] != '\\'):
-            in_string = not in_string
-        
-        if not in_string:
-            if char == start_char: balance += 1
-            elif char == end_char: balance -= 1
-
-        if balance == 0:
-            return text[start_pos : i + 1]
-            
-    return None
-
-def _clean_json_string(json_str: str) -> str:
-    """Cleans a JSON string candidate to fix common, non-standard syntax produced by LLMs."""
-    # Remove XML-like <ref> tags that some models output during self-correction.
-    cleaned_str = re.sub(r'</?ref>', '', json_str)
-    
-    cleaned_str = re.sub(r"^\s*//.*$", "", json_str, flags=re.MULTILINE)
-    cleaned_str = re.sub(r'/\*[\s\S]*?\*/', '', cleaned_str)
-    
-    cleaned_str = re.sub(r"([{,]\\s*)([a-zA-Z0-9_.-]+)(\\s*:)", r'\1"\2"\3', cleaned_str)
-    cleaned_str = re.sub(r'(:\s*)\'([^\']*)\'', r'\1"\2"', cleaned_str)
-
-    cleaned_str = re.sub(r",\s*([}\]])", r"\1", cleaned_str) # Remove trailing commas
-    cleaned_str = re.sub(r'\bTrue\b', 'true', cleaned_str, flags=re.IGNORECASE)
-    cleaned_str = re.sub(r'\bFalse\b', 'false', cleaned_str, flags=re.IGNORECASE)
-    cleaned_str = re.sub(r'\bNone\b', 'null', cleaned_str, flags=re.IGNORECASE)
-    
-    # Safely handle unescaped newlines inside strings
-    return "".join(_escape_newlines_in_strings(cleaned_str)).strip()
-
-def _extract_and_parse_json(text: str):
-    """Extracts and parses a JSON object from a string that may contain other text."""
-    if not text or not text.strip(): raise JSONParsingError("Input text is empty or contains only whitespace.")
-    json_str_candidate = _find_json_candidate(text)
-    text_to_parse, source_label = (json_str_candidate, "extracted JSON candidate") if json_str_candidate else (text, "full text response")
-    cleaned_json_str = _clean_json_string(text_to_parse)
-    try:
-        return json.loads(cleaned_json_str)
-    except json.JSONDecodeError as json_err:
-        try:
-            pythonic_str = cleaned_json_str.replace('true', 'True').replace('false', 'False').replace('null', 'None')
-            return ast.literal_eval(pythonic_str)
-        except (ValueError, SyntaxError, MemoryError, TypeError, RecursionError) as ast_err:
-            raise JSONParsingError(f"Failed to parse {source_label} as JSON or Python literal.", text=cleaned_json_str, original_exception=ast_err) from ast_err
-
-def _escape_newlines_in_strings(text: str):
-    """A generator that yields characters, escaping newlines only when inside a string."""
-    in_string, is_escaped = False, False
-    for char in text:
-        if char == '"' and not is_escaped:
-            in_string = not in_string
-        
-        if in_string and not is_escaped:
-            if char == '\n':
-                yield '\\n'
-                continue
-            if char == '\r':
-                continue
-        
-        yield char
-        is_escaped = (char == '\\' and not is_escaped)
-
 # ------------------------------------------------------------------------------------
 # Image & Audio Processing
 # ------------------------------------------------------------------------------------
@@ -380,6 +297,79 @@ def encode_image(img):
     buf = io.BytesIO()
     pil.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+def _add_metadata_to_image(image_path, caption_text):
+    """
+    Adds the provided caption text to the image's metadata and saves it in place.
+    Supports PNG (tEXt chunk) and JPEG (EXIF UserComment).
+    """
+    if not config.PIEXIF_AVAILABLE:
+        print("\033[93m[PromptCrafter] Warning: Cannot add metadata. `piexif` library is not installed.\033[0m")
+        return False
+
+    try:
+        img = Image.open(image_path)
+        img_format = img.format.upper()
+
+        if img_format == 'PNG':
+            from PIL.PngImagePlugin import PngInfo
+            metadata = PngInfo()
+            # Use the 'Description' key, which is a standard for captions.
+            metadata.add_text("Description", caption_text)
+            img.save(image_path, pnginfo=metadata)
+            return True
+        elif img_format in ['JPEG', 'JPG']:
+            import piexif
+            import piexif.helper
+            # Load existing EXIF data or create a new dictionary
+            exif_data = img.info.get('exif', b'')
+            exif_dict = piexif.load(exif_data)
+            
+            # Set the UserComment tag, which is flexible and supports unicode.
+            user_comment = piexif.helper.UserComment.dump(caption_text, encoding="unicode")
+            exif_dict['Exif'][piexif.ExifIFD.UserComment] = user_comment
+            
+            exif_bytes = piexif.dump(exif_dict)
+            img.save(image_path, exif=exif_bytes)
+            return True
+        else:
+            return False # Format not supported for metadata writing
+    except Exception as e:
+        print(f"\033[91m[PromptCrafter] Error adding metadata to {os.path.basename(image_path)}: {e}\033[0m")
+        return False
+
+def _read_image_description(image_path):
+    """
+    Reads a descriptive text string from standard image metadata fields.
+    Supports PNG (tEXt Description) and JPEG (EXIF UserComment).
+    Returns the description string or None if not found.
+    """
+    if not os.path.exists(image_path):
+        return None
+
+    try:
+        img = Image.open(image_path)
+        # Ensure we load the metadata, some lazy-loading might skip it.
+        img.load() 
+        img_format = getattr(img, 'format', '').upper()
+
+        if img_format == 'PNG':
+            # PIL stores tEXt chunks like 'Description' in the .info dictionary
+            return img.info.get("Description")
+        
+        elif img_format in ['JPEG', 'JPG']:
+            if not config.PIEXIF_AVAILABLE: return None
+            import piexif
+            import piexif.helper
+            
+            exif_data = img.info.get('exif')
+            if not exif_data: return None
+            
+            exif_dict = piexif.load(exif_data)
+            user_comment_bytes = exif_dict.get('Exif', {}).get(piexif.ExifIFD.UserComment)
+            return piexif.helper.UserComment.load(user_comment_bytes) if user_comment_bytes else None
+    except Exception:
+        return None # Fail silently if image is corrupt or metadata is unreadable
 
 def audio_to_spectrogram(audio_path):
     """Converts an audio file into a Mel spectrogram image."""
@@ -978,10 +968,13 @@ def _run_deep_think_iteration(current_prompt, history, core_objectives, model, *
     from . import api_clients
     history_log = ""
     if history:
-        history_log = """--- REFINEMENT HISTORY (for context)---
-"""
-        for j, (p, c) in enumerate(history[-2:]): history_log += f"Critique of previous version: {c}\n"
-        history_log += "---\n"
+        history_log_parts = ["--- REFINEMENT HISTORY (for context) ---"]
+        # Provide a more structured history to the model
+        for i, (prev_prompt, critique) in enumerate(history[-3:], 1): # Show up to the last 3 critiques
+            history_log_parts.append(f"Critique of Version {i}: {critique}")
+            if prev_prompt:
+                history_log_parts.append(f"Prompt of Version {i}:\n{prev_prompt}\n---")
+        history_log = "\n".join(history_log_parts)
     
     critique_template = textwrap.dedent(f"""
         You are a meticulous prompt editor. Your task is to critique and refine a generated prompt based on a set of core objectives.
@@ -1023,17 +1016,25 @@ def _generate_negative_prompt(scene_prompt, run_config, user_negative_prompt="")
 
     # 3. Use LLM to generate context-specific negative keywords
     ai_prompt = textwrap.dedent(f"""
-        Analyze the following image prompt. Based on its content, style, and subject matter, generate a list of specific negative keywords to avoid common issues and unwanted elements.
-        - If the prompt is for a person, add terms to prevent bad anatomy.
-        - If a specific style is mentioned (e.g., "photorealistic"), add terms for other styles (e.g., "anime, cartoon").
-        - If the scene is a landscape, add terms for unwanted objects (e.g., "people, cars").
+        You are an expert prompt analyst. Your task is to select relevant negative keywords for the given prompt from the provided categories.
+
+        **Analyze the PROMPT and determine its primary subject type and style.**
+        - Is the main subject a `person` or `animal`? If so, you should include the `anatomy` keywords.
+        - Is the style `photograph` or `photorealistic`? If so, you should include the `photograph` counter-style keywords.
+        - Is the scene a `landscape`? If so, you should include the `landscape` keywords.
+
+        **Keyword Categories:**
+        - `anatomy`: {json.dumps(config.NEGATIVE_KEYWORDS["anatomy"])}
+        - `photograph`: {json.dumps(config.NEGATIVE_KEYWORDS["contextual"]["photograph"])}
+        - `landscape`: {json.dumps(config.NEGATIVE_KEYWORDS["contextual"]["landscape"])}
+
         ---
         PROMPT: "{scene_prompt}"
         ---
-        Return ONLY a JSON array of strings: ["keyword1", "keyword2", ...].
+        Return ONLY a JSON array of strings containing the keywords from the categories you selected based on your analysis.
     """).strip()
 
-    ok, ai_keywords = api_clients._reason_with_model(run_config.model, ai_prompt, use_chat_api=run_config.use_chat_api, temperature=0.1, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="AI Negative Prompt Generation", remote_api_model=run_config.remote_api_model)
+    ok, ai_keywords = api_clients._reason_with_model(run_config.model, ai_prompt, use_chat_api=run_config.use_chat_api, temperature=0.1, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="AI Negative Prompt Generation")
     if ok and isinstance(ai_keywords, list):
         keywords.update([str(kw).strip() for kw in ai_keywords if kw])
 
@@ -1059,7 +1060,7 @@ def _simplify_for_diffusion(prompt_text, user_text, run_config):
         1. **Analyze Core Request:** The `USER'S CORE REQUEST` is the source of truth. Identify the most critical, non-negotiable subjects and attributes.
         2. **Structure for Complex Scenes:** If there are multiple subjects, describe their interactions and spatial relationships.
         3. **Prioritize and Weight:** Create a new prompt starting with the main subject. Use HEAVY weighting like `(description:1.5)` on the most critical attributes from step 1 to FORCE the model's attention.
-        4. **Clarify and Synthesize:** Rephrase the rest of the prompt into clear, comma-separated clauses. Remove narrative fluff.
+        4. **Clarify and Synthesize:** Rephrase the rest of the prompt into clear, comma-separated clauses. Remove narrative fluff (e.g., "the man walked over to the car" becomes "man walking to a car").
         **Part 2: Negative Prompt Generation**
         5. **Extract Negative Constraints:** Analyze the `USER'S CORE REQUEST` for explicit negative instructions (e.g., "no buildings").
         6. **Generate Counter-Negatives:** Based on the core positive attributes, identify their direct opposites (e.g., if "white dress" is requested, a counter-negative is "black dress").

@@ -23,6 +23,8 @@ from . import api_clients
 from . import config
 from . import style_profiles
 from . import utils
+from . import organization_profiles
+from . import captioner_profiles
 
 # ------------------------------------------------------------------------------------
 # PromptCrafter_QnA Node
@@ -196,13 +198,15 @@ class PromptCrafter_Captioner:
                 "batch_mode": ("BOOLEAN", {"default": False, "tooltip": "Enable batch processing of an entire folder."} ),
                 "input_folder": ("STRING", {"default": "input/captions_todo", "tooltip": "Directory of images to process in batch mode (relative to ComfyUI root)."}),
                 "skip_existing": ("BOOLEAN", {"default": True, "tooltip": "In batch mode, skip images that already have a corresponding .txt caption file."} ),
+                "captioner_profile": (captioner_profiles.get_captioner_profile_options(), {"default": "Default (Training Style)", "tooltip": "Select a pre-configured captioning prompt. Overrides the manual prompt text box."}),
                 "max_workers": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1, "tooltip": "Number of parallel threads for batch processing."} ),
-                "api_concurrency": ("INT", {"default": 5, "min": 1, "max": 16, "step": 1, "tooltip": "Max concurrent API requests for remote models (OpenAI, Anthropic, etc.) to avoid rate limiting."} ),
                 "caption_prompt": ("STRING", {"multiline": True, "default": config.DEFAULT_CAPTION_PROMPT, "tooltip": "The prompt template used to guide the captioning model."} ),
                 "caption_prefix": ("STRING", {"multiline": False, "default": "", "tooltip": "A single trigger word to add to every caption. Overridden by the trigger words file."} ),
                 "trigger_words_folder_path": ("STRING", {"multiline": False, "default": "input", "tooltip": "Folder containing an optional file of trigger words (one per line)."}),
                 "trigger_words_file": ("STRING", {"multiline": False, "default": "<none>", "tooltip": "File with a list of trigger words to be randomly chosen from for each caption."} ),
                 "save_caption": ("BOOLEAN", {"default": True, "tooltip": "Save the caption to a text file."} ),
+                "save_in_input_folder": ("BOOLEAN", {"default": True, "tooltip": "If True, saves the .txt caption file in the batch mode input folder alongside the image. If False, saves to the output_path."}),
+                "add_caption_to_metadata": ("BOOLEAN", {"default": True, "tooltip": "Write the caption to the image's metadata (e.g., EXIF). Requires `piexif` library."} ),
                 "rename_file_with_caption": ("BOOLEAN", {"default": False, "tooltip": "In batch mode, rename the image file based on the generated caption. Makes files searchable."}),
                 "output_path": ("STRING", {"default": "captions", "tooltip": "Subdirectory within ComfyUI/output to save caption files."} ),
                 "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Controls creativity. Lower is more deterministic."} ),
@@ -215,7 +219,7 @@ class PromptCrafter_Captioner:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("caption",)
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
 
     def _sanitize_filename(self, text, max_length=150):
         """Sanitizes a string to be a valid filename."""
@@ -232,9 +236,16 @@ class PromptCrafter_Captioner:
         ok, caption = api_clients.query_model_auto(vision_model, prompt=final_caption_prompt, images=[first_image], prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title="Image Caption Prompt")
         return (True, utils.TextCleaner.single_paragraph(caption)) if ok else (False, f"Model error: {caption}")
     
-    def execute(self, vision_model, image=None, batch_mode=False, input_folder=None, skip_existing=True, max_workers=4, api_concurrency=5, caption_prompt=config.DEFAULT_CAPTION_PROMPT, caption_prefix="", trigger_words_folder_path="input", trigger_words_file="<none>", save_caption=True, rename_file_with_caption=False, output_path="captions", filename="", temperature=0.2, debug_mode=False, safe_mode=True, seed=-1, timeout=120, **kwargs):
+    def execute(self, vision_model, image=None, batch_mode=False, input_folder=None, skip_existing=True, captioner_profile="Default (Training Style)", max_workers=4, caption_prompt=config.DEFAULT_CAPTION_PROMPT, caption_prefix="", trigger_words_folder_path="input", trigger_words_file="<none>", save_caption=True, save_in_input_folder=True, add_caption_to_metadata=True, rename_file_with_caption=False, output_path="captions", filename="", temperature=0.2, debug_mode=False, safe_mode=True, seed=-1, timeout=120, **kwargs):
         model = vision_model or config.FALLBACK_VISION_MODEL
-        final_caption_prompt = caption_prompt
+        
+        final_caption_prompt = caption_prompt # Default to manual input
+        if captioner_profile != "None (Manual Prompt)":
+            profile = captioner_profiles.NAMED_CAPTIONER_PROFILES.get(captioner_profile)
+            if profile and "prompt" in profile:
+                final_caption_prompt = profile["prompt"]
+                print(f"\033[92m[PromptCrafter] Using captioner profile: '{captioner_profile}'\033[0m")
+
         if safe_mode and config.SAFE_MODE_RULE not in final_caption_prompt:
             final_caption_prompt = f"{final_caption_prompt}\n{config.SAFE_MODE_RULE}"
 
@@ -254,10 +265,12 @@ class PromptCrafter_Captioner:
             image_files = [f for f in os.listdir(full_folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp'))]
             if not image_files: return (f"No images found in {full_folder_path}",)
 
-            out_dir = utils._get_and_create_output_dir(output_path)
-
-            semaphore = threading.Semaphore(api_concurrency)
-            print(f"\033[94m[PromptCrafter] Batch mode: Limiting concurrent API requests to {api_concurrency} for remote models.\033[0m")
+            # Determine the output directory for caption files
+            if save_in_input_folder:
+                out_dir = full_folder_path
+            else:
+                out_dir = utils._get_and_create_output_dir(output_path)
+                if not out_dir: return (f"Could not create or access output path: {output_path}",)
 
             processed_count, renamed_count, skipped_count, failed_count = 0, 0, 0, 0
             failed_files = []
@@ -265,22 +278,22 @@ class PromptCrafter_Captioner:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_img = {executor.submit(self._caption_one_image, comfy.utils.pil2tensor(Image.open(os.path.join(full_folder_path, img)).convert("RGB")), model, final_caption_prompt, temperature, seed, debug_mode, timeout): img for img in image_files}
 
-                for future in concurrent.futures.as_completed(futures):
-                    img_filename = futures[future]
+                for future in concurrent.futures.as_completed(future_to_img):
+                    img_filename = future_to_img[future]
                     try:
                         base_fname, img_ext = os.path.splitext(img_filename)
-                        caption_filepath = os.path.join(out_dir, f"{base_fname}.txt")
+                        
+                        # The path for the caption file depends on where we are saving it
+                        if save_in_input_folder:
+                            caption_filepath = os.path.join(full_folder_path, f"{base_fname}.txt")
+                        else:
+                            caption_filepath = os.path.join(out_dir, f"{base_fname}.txt")
 
                         if skip_existing and os.path.exists(caption_filepath):
                             skipped_count += 1
                             continue
 
-                        if semaphore: semaphore.acquire()
-                        try:
-                            ok, caption_text = future.result()
-                        finally:
-                            if semaphore: semaphore.release()
-
+                        ok, caption_text = future.result()
                         if not ok:
                             failed_count += 1
                             failed_files.append(img_filename)
@@ -295,26 +308,26 @@ class PromptCrafter_Captioner:
                             if not sanitized_base_name:
                                 sanitized_base_name = f"caption_{int(time.time()*1000)}"
 
-                            new_caption_path = os.path.join(out_dir, f"{sanitized_base_name}.txt")
-                            new_img_path = os.path.join(full_folder_path, f"{sanitized_base_name}{img_ext}")
+                            # When renaming, the new image and caption always live in the input folder
+                            # Use the new utility to get a unique path
+                            new_img_path, final_sanitized_name = utils._get_unique_filepath(full_folder_path, sanitized_base_name, img_ext)
+                            sanitized_base_name = final_sanitized_name # Update base name to the unique version
+                            new_caption_path = os.path.join(full_folder_path, f"{sanitized_base_name}.txt")
                             
-                            counter = 1
-                            while os.path.exists(new_img_path) or os.path.exists(new_caption_path):
-                                new_sanitized_name = f"{sanitized_base_name}_{counter}"
-                                new_img_path = os.path.join(full_folder_path, f"{new_sanitized_name}{img_ext}")
-                                new_caption_path = os.path.join(out_dir, f"{new_sanitized_name}.txt")
-                                counter += 1
-
                             if save_caption:
                                 with open(new_caption_path, "w", encoding="utf-8") as f: f.write(final_caption)
                             
                             os.rename(os.path.join(full_folder_path, img_filename), new_img_path)
+                            if add_caption_to_metadata:
+                                utils._add_metadata_to_image(new_img_path, final_caption)
                             renamed_count += 1
                             print(f"\033[92m[PromptCrafter] Renamed & Captioned: {img_filename} -> {os.path.basename(new_img_path)}\033[0m")
                         else:
                             if save_caption:
                                 with open(caption_filepath, "w", encoding="utf-8") as f: f.write(final_caption)
                             processed_count += 1
+                            if add_caption_to_metadata:
+                                utils._add_metadata_to_image(os.path.join(full_folder_path, img_filename), final_caption)
                             print(f"\033[92m[PromptCrafter] Captioned: {img_filename}\033[0m")
 
                     except Exception as e:
@@ -348,10 +361,16 @@ class PromptCrafter_Captioner:
             if save_caption:
                 out_dir = utils._get_and_create_output_dir(output_path)
                 fname = filename.strip() or f"caption_{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time()*1000)%1000}"
-                fname = re.sub(r'[\\/*?:\"<>|]', "", fname)
+                fname = self._sanitize_filename(fname, max_length=200)
                 with open(os.path.join(out_dir, f"{fname}.txt"), "w", encoding="utf-8") as f:
                     f.write(final_caption)
             
+            # This part is tricky for single mode as we don't have the original file path.
+            # This implementation assumes the user will save the image manually, and the metadata
+            # won't be added. A more advanced implementation would require a file path input.
+            if add_caption_to_metadata:
+                print("\033[93m[PromptCrafter] Warning: 'add_caption_to_metadata' is only fully supported in batch mode where file paths are known. Metadata was not written in single mode.\033[0m")
+
             return (final_caption,)
 
 
@@ -500,7 +519,7 @@ Respond with ONLY a JSON object: {{'requires_images': true/false}}"""
 {image_context}
 ---
 Return ONLY the single-paragraph creative instruction. No commentary.""" # noqa
-            ok, new_instruction = api_clients.query_model_auto(run_config.model, prompt, prefer_chat=True, temperature=0.7, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Creative Autopilot", remote_api_model=run_config.remote_api_model)
+            ok, new_instruction = api_clients.query_model_auto(run_config.model, prompt, prefer_chat=True, temperature=0.7, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Creative Autopilot")
             if ok and new_instruction:
                 print(f"\033[92m[PromptCrafter] Creative Autopilot generated instruction: {new_instruction}\033[0m")
                 return None, new_instruction
@@ -610,12 +629,16 @@ The final output must be in {language} only.{safety_rule}"""
         merge_prompt = self._build_initial_merge_prompt(mode, user_instructions, user_context, image_context, mandatory_tokens, images, run_config, primary_subjects_from_images)
         generation_kwargs = {"prefer_chat": run_config.use_chat_api, "temperature": run_config.temperature, "seed": run_config.seed, "timeout": 120, "debug_mode": run_config.debug_mode}
 
-        if run_config.use_deep_think:
+        refinements = getattr(run_config, 'deep_think_refinements', 3)
+
+        if run_config.use_deep_think and refinements > 0:
             print("\033[94m[PromptCrafter] Deep Think enabled. Starting iterative refinement...\033[0m")
             generation_kwargs["debug_title"] = f"Initial {mode} Prompt (Deep Think)"
             generation_kwargs["images"] = images
-            ok, scene_prompt = utils._deep_think_and_refine(run_config.model, merge_prompt, max_iterations=3, confidence_threshold=run_config.deep_think_confidence, **generation_kwargs)
+            ok, scene_prompt = utils._deep_think_and_refine(run_config.model, merge_prompt, max_iterations=refinements, confidence_threshold=run_config.deep_think_confidence, **generation_kwargs)
         else:
+            if run_config.use_deep_think and refinements == 0:
+                print("\033[94m[PromptCrafter] Deep Think disabled by setting refinements to 0.\033[0m")
             generation_kwargs["debug_title"] = f"Initial {mode} Prompt"
             ok, scene_prompt = api_clients.query_model_auto(run_config.model, merge_prompt, **generation_kwargs)
 
@@ -880,7 +903,10 @@ Return ONLY a single JSON object with three keys:
         )
 
     def _finalize_visual_prompt_output(self, scene_prompt, image_context, user_text, mandatory_tokens, run_config, save_to_txt, filename_prefix, user_negative_prompt=""): # noqa
-        final_negative_prompt = utils._generate_negative_prompt(scene_prompt, run_config, user_negative_prompt=user_negative_prompt)
+        ai_negative_prompt = utils._generate_negative_prompt(scene_prompt, run_config, user_negative_prompt="")
+        parts = [p for p in [user_negative_prompt, ai_negative_prompt] if p and p.strip()]
+        final_negative_prompt = ", ".join(parts)
+
         if save_to_txt and scene_prompt and scene_prompt.strip():
             sections = [("IMAGE CONTEXT", image_context)]
             if user_text and user_text.strip() and user_text.strip() != config.DEFAULT_PROMPT_TEXT:
@@ -901,7 +927,10 @@ Return ONLY a single JSON object with three keys:
         else:
             image_context_for_all, primary_subjects_from_images = describe_result
         style_rules = self._build_style_and_composition_rules(mode, images, run_config, user_text, "", image_context_for_all)
-        base_negative_prompt = utils._generate_negative_prompt(user_text, run_config, user_negative_prompt=kwargs.get("negative_prompt", ""))
+        user_negative_prompt = kwargs.get("negative_prompt", "")
+        ai_negative_prompt = utils._generate_negative_prompt(user_text, run_config, user_negative_prompt="")
+        parts = [p for p in [user_negative_prompt, ai_negative_prompt] if p and p.strip()]
+        base_negative_prompt = ", ".join(parts)
 
         if '\n\n' in user_text:
             print("\033[94m[PromptCrafter] Multi-paragraph input detected. Using manual scene breaks.\033[0m")
@@ -979,6 +1008,7 @@ class PromptCrafter_ImageCreator(PromptCrafter_BaseCreator):
                 "max_length_words": ("INT", {"default": 0, "min": 0, "max": 400, "step": 10}),
                 "style_override": (style_profiles.get_style_override_options("Image"), {"default": "None"}),
                 "critique_strength": (["Subtle", "Normal", "Heavy"], {"default": "Normal"}),
+                "deep_think_refinements": ("INT", {"default": 3, "min": 0, "max": 10, "step": 1, "tooltip": "Number of iterative refinement steps for the Deep Think process. 0 disables it."}),
                 "simplify_for_diffusion": ("BOOLEAN", {"default": True}),
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 600, "step": 10}),
                 "max_retries": ("INT", {"default": 2, "min": 0, "max": 10}),
@@ -1044,25 +1074,33 @@ class PromptCrafter_FileOrganizer:
                 "model": (api_clients.get_all_models(), {"tooltip": "The language model to use for all analysis and generation. Vision-capable models are required if using images."} ),
                 "input_folder": ("STRING", {"default": "output/unorganized", "tooltip": "The folder containing the files you want to organize (relative to ComfyUI root)."}),
                 "output_folder": ("STRING", {"default": "output/organized", "tooltip": "The root folder where organized subdirectories will be created (relative to ComfyUI root)."}),
+                "organization_profile": (organization_profiles.get_organization_profile_options(), {"default": "None (Manual Scheme)", "tooltip": "Select a pre-configured organization scheme. Overrides the manual scheme text box."}),
                 "organization_scheme": ("STRING", {
                     "multiline": True,
-                    "default": "# Define rules, one per line. The first match will be used.\n# Format: CRITERION: VALUE -> FOLDER_NAME\n# New Criteria: captionfile_contains, filename_contains\n# Old Criteria: metadata_contains, prompt_keyword, content_keyword\n\ncaptionfile_contains: cat -> By_Caption/Cats\nfilename_contains: dog -> By_Filename/Dogs\nmetadata_contains: AnimateDiff -> Animations\nprompt_keyword: cyberpunk -> By_Theme/Cyberpunk\ncontent_keyword: car -> By_Content/Vehicles",
-                    "tooltip": "Rules for organizing files. 'captionfile_contains' reads associated .txt files. 'filename_contains' checks the filename. 'metadata_contains' checks workflow. 'prompt_keyword' checks prompts. 'content_keyword' uses a VLM."
+                    "default": "# Define rules, one per line. The first match will be used.\n# Format: CRITERION: VALUE -> FOLDER_NAME\n# Criteria: image_resolution, image_description_contains, captionfile_contains, filename_contains, metadata_contains, content_keyword\n\nimage_resolution: >1920x1080 -> High_Resolution/4K_ish\nimage_resolution: ==512x512 -> Square_Images/512x512\nimage_description_contains: cat -> By_Embedded_Caption/Cats\ncaptionfile_contains: dog -> By_Text_File/Dogs\nfilename_contains: car -> By_Filename/Cars\nmetadata_contains: AnimateDiff -> By_Workflow/Animations\ncontent_keyword: landscape -> By_VLM_Content/Landscapes",
+                    "tooltip": "Rules for organizing files. 'image_resolution' checks dimensions (e.g., >1024x768). 'image_description_contains' reads embedded EXIF/PNG descriptions. 'captionfile_contains' reads .txt files. 'filename_contains' checks the filename. 'metadata_contains' checks the ComfyUI workflow."
                 }),
                 "action": (["Copy", "Move"], {"default": "Copy", "tooltip": "Copy files (safer) or move them to the new location."}),
+                "dry_run": ("BOOLEAN", {"default": False, "tooltip": "Simulate the organization process and report actions without moving or copying files."}),
                 "analysis_priority": (["Metadata First", "Content First", "Metadata Only"], {"default": "Metadata First", "tooltip": "The order of analysis. 'Metadata First' is fastest."}),
                 "fallback_folder": ("STRING", {"default": "_unorganized", "tooltip": "Subfolder for files that do not match any rule."}),
+                "auto_generate_scheme": ("BOOLEAN", {"default": False, "tooltip": "Automatically generate an organization scheme by analyzing a sample of files. Overrides the manual scheme."}),
             },
             "optional": {
                 "run_organization": ("BOOLEAN", {"default": False, "tooltip": "Toggle to True to start the organization process. It will run once per execution."}),
                 "max_workers": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1, "tooltip": "Number of parallel threads for processing files." }),
+                "recursive": ("BOOLEAN", {"default": False, "tooltip": "Process files in all subdirectories of the input folder as well."}),
+                "create_log_file": ("BOOLEAN", {"default": False, "tooltip": "Create a text log file summarizing all operations in the output folder."}),
+                "log_filename": ("STRING", {"default": "organization_log.txt", "tooltip": "The name of the log file to be created in the output folder."}),
+                "delete_source_folder_on_move": ("BOOLEAN", {"default": False, "tooltip": "After a successful 'Move' operation, delete the original input folder if it's empty. Use with caution."}),
             }
         }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("summary",)
+    
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("summary", "dry_run_plan", "generated_scheme_out")
     FUNCTION = "execute"
     CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    OUTPUT_NODE = True
 
     def _read_metadata(self, image_path):
         """Safely reads PNG info metadata from an image file."""
@@ -1077,12 +1115,41 @@ class PromptCrafter_FileOrganizer:
             return None
         return None
 
-    def _recursively_find_value(self, data, search_value):
+    def _check_resolution_rule(self, image_size, rule_value):
+        """Parses a resolution rule and checks if the image size matches."""
+        # image_size is a tuple (width, height)
+        # rule_value is a string like ">1024x768" or "==512x512"
+        match = re.match(r"([<>=!]{1,2})\s*(\d+)[xX](\d+)", rule_value.strip())
+        if not match:
+            return False
+
+        op, target_w_str, target_h_str = match.groups()
+        img_w, img_h = image_size
+        target_w, target_h = int(target_w_str), int(target_h_str)
+
+        # Define a mapping from operator string to a lambda function
+        ops = {
+            ">": lambda a, b: a > b,
+            "<": lambda a, b: a < b,
+            ">=": lambda a, b: a >= b,
+            "<=": lambda a, b: a <= b,
+            "==": lambda a, b: a == b,
+            "!=": lambda a, b: a != b,
+        }
+
+        op_func = ops.get(op)
+        if not op_func:
+            return False
+
+        # The rule matches if BOTH width and height satisfy the condition
+        return op_func(img_w, target_w) and op_func(img_h, target_h)
+
+    def _recursively_find_value(self, data, search_value, case_sensitive=False):
         """Iteratively search for a value within a nested dict/list structure."""
         stack = collections.deque([data])
-        search_value_lower = search_value.lower()
         if not isinstance(search_value, str):
             return False
+        search_key = search_value if case_sensitive else search_value.lower()
 
         while stack:
             current_item = stack.pop()
@@ -1091,43 +1158,57 @@ class PromptCrafter_FileOrganizer:
             elif isinstance(current_item, list):
                 stack.extend(current_item)
             elif isinstance(current_item, str):
-                if search_value_lower in current_item.lower():
+                current_val = current_item if case_sensitive else current_item.lower()
+                if search_key in current_val:
                     return True
         return False
 
-    def _get_target_for_file(self, file_path, rules, vision_model, analysis_priority):
+    def _get_target_for_file(self, file_path, rules, vision_model, analysis_priority, file_info_cache):
         """Analyzes a single file and returns the target subfolder name."""
         base_name, _ = os.path.splitext(os.path.basename(file_path))
-        
+        file_info = file_info_cache.get(file_path, {})
+        # --- Resolution Analysis (perform once if needed) ---
+        image_size = None
+        has_resolution_rules = any(r[0] == 'image_resolution' for r in rules)
+
+        if has_resolution_rules and file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+            try:
+                with Image.open(file_path) as img:
+                    image_size = img.size
+                for criterion, value, folder in rules:
+                    if criterion == "image_resolution" and self._check_resolution_rule(image_size, value):
+                        return folder
+            except Exception: pass # Fail silently if image is not readable
+
         # --- File-based Analysis (Filename and Caption File) ---
         if analysis_priority != "Content First":
             # 1. Check filename
             for criterion, value, folder in rules:
-                if criterion == "filename_contains" and value.lower() in base_name.lower():
-                    return folder
+                if criterion == "filename_contains":
+                    if value.lower() in base_name.lower():
+                        return folder
             
-            # 2. Check for and read caption file
-            caption_path = os.path.splitext(file_path)[0] + ".txt"
-            caption_content = None
-            if os.path.exists(caption_path):
-                try:
-                    with open(caption_path, 'r', encoding='utf-8') as f:
-                        caption_content = f.read()
-                except Exception as e:
-                    print(f"\033[93m[FileOrganizer] Warning: Could not read caption file {caption_path}: {e}\033[0m")
-            
+            # 2. Check for embedded image description (PNG Description or EXIF UserComment)
+            image_description = file_info.get("image_description")
+            if image_description:
+                for criterion, value, folder in rules:
+                    if criterion == "image_description_contains" and value.lower() in image_description.lower():
+                        return folder
+
+            # 3. Check for and read companion caption file (.txt)
+            caption_content = file_info.get("caption_content")
             if caption_content:
                 for criterion, value, folder in rules:
                     if criterion == "captionfile_contains" and value.lower() in caption_content.lower():
                         return folder
 
-        # --- Embedded Metadata Analysis ---
+        # --- Embedded ComfyUI Workflow Metadata Analysis ---
         if analysis_priority != "Content First":
-            metadata = self._read_metadata(file_path)
+            metadata = file_info.get("metadata")
             if metadata:
                 for criterion, value, folder in rules:
                     if criterion == "metadata_contains":
-                        if self._recursively_find_value(metadata, value):
+                        if self._recursively_find_value(metadata, value, case_sensitive=False):
                             return folder
                     elif criterion == "prompt_keyword":
                         for node in metadata.get("nodes", []):
@@ -1155,18 +1236,85 @@ class PromptCrafter_FileOrganizer:
 
         return None
 
-    def _group_files_by_basename(self, directory, extensions, time_threshold_seconds=5):
+    def _generate_scheme_with_ai(self, file_groups, model, max_workers, debug_mode=False):
+        """Analyzes a sample of files and uses an LLM to generate an organization scheme."""
+        print(f"\033[94m[FileOrganizer] Auto-generating organization scheme by analyzing a sample of files...\033[0m")
+        
+        # Take a sample of up to 15 file groups to analyze
+        sample_groups = file_groups[:15]
+        file_profiles = []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_profile = {
+                executor.submit(self._summarize_file_for_scheme, self._get_representative_file(group)): group
+                for group in sample_groups
+            }
+            for future in concurrent.futures.as_completed(future_to_profile):
+                profile = future.result()
+                if profile:
+                    file_profiles.append(profile)
+
+        if not file_profiles:
+            return None, "Could not generate summaries for any sample files. Unable to create a scheme."
+
+        # Convert the list of profile dicts into a nicely formatted JSON string for the prompt
+        profiles_json_text = json.dumps(file_profiles, indent=2)
+        
+        prompt = textwrap.dedent(f"""
+            You are an expert data analyst and file organization assistant. Your task is to create a logical organization scheme based on a sample of file profiles.
+
+            **Available Rule Criteria & Syntax:**
+            - `image_resolution`: Checks image dimensions. Use operators `==`, `>`, `<`. Example: `image_resolution: >1024x1024 -> High_Resolution`
+            - `image_description_contains`: Checks embedded metadata (EXIF/PNG). Most reliable for content. Example: `image_description_contains: cat -> By_Subject/Cats`
+            - `captionfile_contains`: Checks an associated `.txt` file. Example: `captionfile_contains: dog -> By_Text_File/Dogs`
+            - `filename_contains`: Checks the file's name. Good for types like 'screenshot'. Example: `filename_contains: screenshot -> By_Type/Screenshots`
+
+            --- FILE PROFILES (Sample Data) ---
+            {profiles_json_text}
+            ---
+
+            INSTRUCTIONS:
+            1.  **Analyze & Correlate:** Read all file profiles. Identify common themes, subjects, styles, AND image resolutions.
+            2.  **Select Best Criterion:** For each theme you identify, determine the BEST rule criterion to use.
+                - If you see common resolutions (e.g., many `512x512` images), create an `image_resolution` rule.
+                - For content themes, prefer `image_description_contains` if available, otherwise use `captionfile_contains`.
+            3.  **Create Rules:** Generate 5-10 powerful rules based on your analysis. The format is `criterion: keyword -> Folder/Subfolder`.
+            4.  **Be Smart:** Create logical, hierarchical folder structures (e.g., `By_Style/Anime`, `By_Subject/Cats`). Use lowercase keywords.
+            5.  **Prioritize:** Focus on rules that will categorize the most files.
+
+            Return ONLY the rules, one per line. Do not include commentary or code blocks.
+
+            Example Output:
+            image_resolution: ==512x512 -> By_Resolution/Square_512
+            image_description_contains: cat -> By_Subject/Cats
+            image_description_contains: dog -> By_Subject/Dogs
+            captionfile_contains: cyberpunk -> By_Theme/Cyberpunk
+            filename_contains: screenshot -> By_Type/Screenshots
+        """).strip()
+
+        ok, scheme = api_clients.query_model_auto(model, prompt, prefer_chat=True, temperature=0.1, seed=1, timeout=120, debug_mode=debug_mode, debug_title="Auto-Generate Scheme")
+        return (scheme, None) if ok else (None, f"AI scheme generation failed: {scheme}")
+
+    def _group_files_by_basename(self, directory, extensions, recursive=False):
         """
         Groups files in a directory by their base name, ensuring associated files (like image.png and image.txt) are processed together.
+        Can optionally process subdirectories recursively.
         """
         initial_groups = collections.defaultdict(list)
-        for f in os.listdir(directory):
-            if f.lower().endswith(extensions):
-                full_path = os.path.join(directory, f)
-                if os.path.isfile(full_path):
-                    base_name, _ = os.path.splitext(f)
-                    initial_groups[base_name].append(full_path)
-            
+        
+        if recursive:
+            for root, _, files in os.walk(directory):
+                for f in files:
+                    if f.lower().endswith(extensions):
+                        full_path = os.path.join(root, f)
+                        base_name_path, _ = os.path.splitext(full_path)
+                        initial_groups[base_name_path].append(full_path)
+        else:
+            for f in os.listdir(directory):
+                if f.lower().endswith(extensions) and os.path.isfile(os.path.join(directory, f)):
+                    base_name_path, _ = os.path.splitext(os.path.join(directory, f))
+                    initial_groups[base_name_path].append(os.path.join(directory, f))
+
         return list(initial_groups.values())
 
     def _get_representative_file(self, file_group):
@@ -1180,70 +1328,153 @@ class PromptCrafter_FileOrganizer:
         if image_files: return image_files[0]
         return file_group[0] if file_group else None
 
-    def _process_file_group(self, file_group, rules, vision_model, analysis_priority, fallback_folder, full_output_path, action):
+    def _process_file_group(self, file_group, rules, vision_model, analysis_priority, fallback_folder, full_input_path, full_output_path, action, file_info_cache, dry_run=False, create_log_file=False):
         """
         Determines the target folder for a group of files and performs the move/copy action.
         This function is designed to be run in a thread pool.
+        Returns a tuple: (status, processed_count, log_messages)
         """
         if not file_group:
-            return "skipped_empty", 0
+            return "skipped_empty", 0, []
 
-        representative_file = self._get_representative_file(file_group)
-        target_subfolder = self._get_target_for_file(representative_file, rules, vision_model, analysis_priority)
+        representative_file = self._get_representative_file(file_group) # noqa
+        target_subfolder = self._get_target_for_file(representative_file, rules, vision_model, analysis_priority, file_info_cache)
         
         if target_subfolder is None:
             target_subfolder = fallback_folder
         
         dest_dir = os.path.join(full_output_path, target_subfolder)
-        
-        # This check is important for thread safety.
-        if not os.path.isdir(dest_dir):
-            try:
-                os.makedirs(dest_dir, exist_ok=True)
-            except OSError as e:
-                # Handles race condition where another thread creates the directory between the check and the call.
-                if not os.path.isdir(dest_dir):
-                    raise e
+
+        if not dry_run:
+            # This check is important for thread safety.
+            if not os.path.isdir(dest_dir):
+                try:
+                    os.makedirs(dest_dir, exist_ok=True)
+                except OSError as e:
+                    # Handles race condition where another thread creates the directory between the check and the call.
+                    if not os.path.isdir(dest_dir):
+                        raise e
 
         processed_count = 0
+        log_messages = []
         for file_path in file_group:
             if not os.path.exists(file_path): continue
             
             dest_path = os.path.join(dest_dir, os.path.basename(file_path))
             
-            # To prevent race conditions with file existence checks, we can attempt the operation
-            # and handle the potential error, which is more atomic.
-            try:
-                if os.path.abspath(file_path) == os.path.abspath(dest_path):
-                    continue
-
-                if action == "Move":
-                    shutil.move(file_path, dest_path)
-                else: # Copy
-                    shutil.copy2(file_path, dest_path)
-                processed_count += 1
-            except FileExistsError:
-                # This is an expected outcome if the file is already there.
+            if os.path.abspath(file_path) == os.path.abspath(dest_path):
                 continue
-            except Exception as e:
-                # Catch other potential errors during file operation.
-                print(f"\033[91m[FileOrganizer] Error processing file {file_path}: {e}\033[0m")
-                return "failed", 0
 
-        return "moved" if action == "Move" else "copied", processed_count
+            if dry_run:
+                action_verb = "MOVE" if action == "Move" else "COPY"
+                relative_file_path = os.path.relpath(file_path, full_input_path)
+                log_msg = f"[Dry Run] Would {action_verb} '{relative_file_path}' to '{os.path.relpath(dest_dir, full_output_path)}'"
+                print(f"\033[96m{log_msg}\033[0m")
+                if create_log_file: log_messages.append(log_msg)
+                processed_count += 1
+            else:
+                try:
+                    if action == "Move":
+                        shutil.move(file_path, dest_path)
+                    else: # Copy
+                        shutil.copy2(file_path, dest_path)
+                    if create_log_file:
+                        action_verb_past = "Moved" if action == "Move" else "Copied"
+                        log_messages.append(f"OK: {action_verb_past} '{os.path.relpath(file_path, full_input_path)}' to '{os.path.relpath(dest_dir, full_output_path)}'")
+                    processed_count += 1
+                except FileExistsError:
+                    # This is an expected outcome if the file is already there.
+                    continue
+                except Exception as e:
+                    # Catch other potential errors during file operation.
+                    print(f"\033[91m[FileOrganizer] Error processing file {file_path}: {e}\033[0m")
+                    if create_log_file: log_messages.append(f"FAIL: Error processing '{os.path.relpath(file_path, full_input_path)}': {e}")
+                    return "failed", 0, log_messages
 
-    def execute(self, model, input_folder, output_folder, organization_scheme, action, analysis_priority, fallback_folder, run_organization=False, max_workers=4):
+        status = "moved" if action == "Move" else "copied"
+        return status, processed_count, log_messages
+
+    def _summarize_file_for_scheme(self, file_path):
+        """Generates a structured summary of a file's text-based metadata for scheme generation."""
+        if not file_path:
+            return None
+
+        profile = {
+            "filename": os.path.basename(file_path),
+            "image_resolution": None,
+            "image_description": None,
+            "caption_content": None,
+        }
+
+        # Read image resolution if it's an image file
+        if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+            try:
+                with Image.open(file_path) as img:
+                    profile["image_resolution"] = f"{img.width}x{img.height}"
+            except Exception:
+                pass # Fail silently if image is unreadable
+
+        # Read embedded image description (from EXIF/PNG)
+        image_description = utils._read_image_description(file_path)
+        if image_description:
+            profile["image_description"] = image_description.strip()
+
+        # Read companion .txt file
+        caption_path = os.path.splitext(file_path)[0] + ".txt"
+        if os.path.exists(caption_path):
+            try:
+                with open(caption_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if content:
+                        profile["caption_content"] = content
+            except Exception:
+                pass
+        return profile
+
+    def execute(self, model, input_folder, output_folder, organization_profile, organization_scheme, action, dry_run, analysis_priority, fallback_folder, auto_generate_scheme=False, run_organization=False, max_workers=4, recursive=False, create_log_file=False, log_filename="organization_log.txt", delete_source_folder_on_move=False, **kwargs):
         if not run_organization:
-            return ("Organization not started. Set 'run_organization' to True.",)
+            return ("Organization not started. Set 'run_organization' to True.", "", "")
 
         full_input_path = utils._get_verified_path(input_folder, is_dir=True)
         if not full_input_path:
-            return (f"Error: Input folder not found at '{input_folder}'.",)
+            return (f"Error: Input folder not found at '{input_folder}'.", "", "")
         
         full_output_path = utils._get_and_create_output_dir(output_folder)
         
+        log_messages = []
+        if create_log_file:
+            log_messages.append(f"--- PromptCrafter File Organizer Log ---")
+            log_messages.append(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            log_messages.append(f"Input Folder: {full_input_path}")
+            log_messages.append(f"Output Folder: {full_output_path}")
+            log_messages.append(f"Action: {action} | Recursive: {recursive}")
+            log_messages.append("-" * 40)
+
+        if dry_run:
+            print("\033[96m[FileOrganizer] DRY RUN MODE ENABLED. No files will be moved or copied.\033[0m")
+        
+        supported_ext = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov', '.txt')
+        file_groups = self._group_files_by_basename(full_input_path, supported_ext, recursive=recursive)
+
+        if not file_groups: return ("No supported files found in the input folder.", "", "")
+
+        final_scheme = organization_scheme
+        generated_scheme_out = ""
+        if auto_generate_scheme:
+            generated_scheme, error = self._generate_scheme_with_ai(file_groups, model, max_workers, debug_mode=kwargs.get("debug_mode", False))
+            if error:
+                return (f"Error during auto-scheme generation: {error}", "", "")
+            final_scheme = generated_scheme
+            print(f"\033[92m[FileOrganizer] Using auto-generated scheme:\n{final_scheme}\033[0m")
+        elif organization_profile != "None (Manual Scheme)":
+            profile = organization_profiles.NAMED_ORGANIZATION_PROFILES.get(organization_profile)
+            if profile and "scheme" in profile:
+                final_scheme = profile["scheme"]
+                print(f"\033[92m[FileOrganizer] Using scheme from profile: '{organization_profile}'\033[0m")
+
+        generated_scheme_out = final_scheme if auto_generate_scheme else ""
         rules = []
-        for line in organization_scheme.splitlines():
+        for line in final_scheme.splitlines():
             line = line.strip()
             if line.startswith("#") or "->" not in line: continue
             try:
@@ -1253,41 +1484,91 @@ class PromptCrafter_FileOrganizer:
             except ValueError:
                 print(f"\033[93m[FileOrganizer] Warning: Skipping invalid rule: {line}\033[0m")
         
-        if not rules: return ("Error: No valid organization rules were defined.",)
-
-        supported_ext = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov', '.txt')
-        # We group by basename to ensure that an image and its caption/video file are processed together
-        file_groups = self._group_files_by_basename(full_input_path, supported_ext)
-
-        if not file_groups: return ("No supported files found in the input folder.",)
+        if not rules: return ("Error: No valid organization rules were defined.", "", generated_scheme_out)
 
         counts = collections.Counter()
         total_files_processed = 0
+        all_op_logs = []
+
+        # Pre-cache file info to avoid redundant reads in parallel
+        file_info_cache = {}
+        print(f"\033[94m[FileOrganizer] Pre-analyzing {len(file_groups)} file groups...\033[0m")
+        for group in file_groups:
+            rep_file = self._get_representative_file(group)
+            if rep_file:
+                file_info_cache[rep_file] = self._summarize_file_for_scheme(rep_file)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Create a future for each file group
             future_to_group = {
-                executor.submit(self._process_file_group, group, rules, model, analysis_priority, fallback_folder, full_output_path, action): group
+                executor.submit(self._process_file_group, group, rules, model, analysis_priority, fallback_folder, full_input_path, full_output_path, action, file_info_cache, dry_run, create_log_file): group
                 for group in file_groups
             }
 
+            completed_count = 0
             for future in concurrent.futures.as_completed(future_to_group):
+                completed_count += 1
+                print(f"\033[92m[FileOrganizer] Processing... ({completed_count}/{len(file_groups)})\033[0m", end='\r')
                 group = future_to_group[future]
                 try:
-                    status, num_processed = future.result()
+                    status, num_processed, op_logs = future.result()
+                    if op_logs: all_op_logs.extend(op_logs)
                     counts[status] += num_processed
                     total_files_processed += num_processed
                 except Exception as e:
                     counts["failed"] += len(group)
                     print(f"\033[91m[FileOrganizer] Error processing group for {os.path.basename(group[0])}: {e}\033[0m")
+        print("\n\033[92m[FileOrganizer] Processing complete.\033[0m")
 
         total_groups = len(file_groups)
-        summary = f"Organization Complete! Processed {total_files_processed} files across {total_groups} groups.\n"
+        summary_prefix = "Dry Run Complete!" if dry_run else "Organization Complete!"
+        summary = f"{summary_prefix} Processed {total_files_processed} files across {total_groups} groups.\n"
+        if dry_run:
+            summary += f"Actions that would be taken:\n"
+
         if counts['copied'] > 0: summary += f"- Copied: {counts['copied']} files\n"
         if counts['moved'] > 0: summary += f"- Moved: {counts['moved']} files\n"
         if counts['failed'] > 0: summary += f"- Failed: {counts['failed']} files\n"
-        
-        return (summary,)
+        summary = summary.strip()
+
+        # --- Delete source folder if requested and conditions are met ---
+        if delete_source_folder_on_move and not recursive and action == "Move" and not dry_run and counts['failed'] == 0 and counts['moved'] > 0:
+            try:
+                # Safety check: only delete if the folder is now empty.
+                if not os.listdir(full_input_path):
+                    shutil.rmtree(full_input_path)
+                    delete_msg = f"\nSuccessfully deleted empty source folder: {input_folder}"
+                    print(f"\033[92m[FileOrganizer]{delete_msg}\033[0m")
+                    summary += delete_msg.strip()
+                else:
+                    delete_msg = f"\nSource folder '{input_folder}' was not deleted because it is not empty after the move operation."
+                    print(f"\033[93m[FileOrganizer] Warning:{delete_msg}\033[0m")
+                    summary += delete_msg.strip()
+            except Exception as e:
+                delete_msg = f"\nError deleting source folder '{input_folder}': {e}"
+                print(f"\033[91m[FileOrganizer]{delete_msg}\033[0m")
+                summary += delete_msg.strip()
+        elif delete_source_folder_on_move and recursive:
+            delete_msg = "\n'delete_source_folder_on_move' is disabled when 'recursive' is enabled to prevent accidental deletion of parent folders."
+            print(f"\033[93m[FileOrganizer] Info:{delete_msg}\033[0m")
+            summary += delete_msg.strip()
+
+        if create_log_file:
+            log_messages.extend(sorted(all_op_logs))
+            log_messages.append("-" * 40)
+            log_messages.append(summary.replace('\n', '\n' + ' ' * 4)) # Indent summary for readability
+            
+            log_file_path = os.path.join(full_output_path, log_filename)
+            try:
+                with open(log_file_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(log_messages))
+                print(f"\033[92m[FileOrganizer] Operation log saved to: {log_file_path}\033[0m")
+            except Exception as e:
+                print(f"\033[91m[FileOrganizer] Error writing log file: {e}\033[0m")
+
+        dry_run_plan_str = "\n".join(sorted(all_op_logs)) if dry_run else ""
+
+        return (summary, dry_run_plan_str, generated_scheme_out)
 
 
 class PromptCrafter_VideoCreator(PromptCrafter_BaseCreator):
@@ -1425,7 +1706,9 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             return (storyboard_prompts or "Failed to generate storyboard prompts.", "", image_context, "")
 
         storyboard_text_for_neg_prompt = "\n\n---\n\n".join(storyboard_prompts)
-        final_negative_prompt = utils._generate_negative_prompt(storyboard_text_for_neg_prompt, config, user_negative_prompt=negative_prompt)
+        ai_negative_prompt = utils._generate_negative_prompt(storyboard_text_for_neg_prompt, config, user_negative_prompt="")
+        parts = [p for p in [negative_prompt, ai_negative_prompt] if p and p.strip()]
+        final_negative_prompt = ", ".join(parts)
 
         final_output = self._create_final_lyrics_output(storyboard_prompts=storyboard_prompts, timed_segments=timed_segments, generate_schedule=generate_schedule, fps=config.fps, song_length_seconds=config.song_length_seconds, config=config)
         

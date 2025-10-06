@@ -1,7 +1,7 @@
 import os
 import requests
 
-from .modules import config, api_clients, nodes, style_profiles
+from .modules import config, api_clients, nodes, style_profiles, organization_profiles, captioner_profiles
 
 # Initialize SHARED_SESSION for API clients
 config.SHARED_SESSION = requests.Session()
@@ -47,8 +47,31 @@ except ImportError:
     config.MATPLOTLIB_AVAILABLE = False
     print("\033[93m[PromptCrafter] Warning: `matplotlib` not found. Audio alignment features will be disabled. Run `pip install matplotlib` to enable this feature.\033[0m")
 
+try:
+    import piexif
+    import piexif.helper
+    config.PIEXIF_AVAILABLE = True
+except ImportError:
+    config.PIEXIF_AVAILABLE = False
+    print("\033[93m[PromptCrafter] Warning: `piexif` not found. Adding captions to image metadata will be disabled. Run `pip install piexif` to enable this feature.\033[0m")
+
 # Load style profiles
 style_profiles._load_style_profiles()
+
+# Load organization profiles
+organization_profiles._load_organization_profiles()
+
+# Load captioner profiles
+captioner_profiles._load_captioner_profiles()
+
+# Perform a non-blocking check for local server status at startup
+try:
+    # This check is now handled inside the api_clients module itself
+    # to ensure it's always non-blocking.
+    # The call is kept here to trigger the check at startup.
+    api_clients.check_local_server_status() 
+except Exception as e:
+    print(f"\033[91m[PromptCrafter] A critical error occurred during startup server checks: {e}\033[0m")
 
 # Node mappings for ComfyUI
 from .modules.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS

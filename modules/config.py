@@ -9,8 +9,8 @@ from . import cache
 
 # --- Constants ---
 DEFAULT_PROMPT_TEXT = "Describe your idea here. You can use multiple paragraphs to define scenes for a schedule."
-FALLBACK_TEXT_MODEL = "llama3:latest"
-FALLBACK_VISION_MODEL = "llava:latest"
+FALLBACK_TEXT_MODEL = "llama3:latest" # A sensible default for text-only tasks
+FALLBACK_VISION_MODEL = "qwen2.5vl:7b" # The recommended model for this node pack
 DEFAULT_CAPTION_PROMPT = textwrap.dedent("""
     Create a concise, descriptive caption for this image, suitable for training an AI model.
     - Be factual and literal. Describe only what is visible.
@@ -35,29 +35,22 @@ PYPDF_AVAILABLE = False
 DUCKDUCKGO_SEARCH_AVAILABLE = False
 LIBROSA_AVAILABLE = False
 MATPLOTLIB_AVAILABLE = False
+PIEXIF_AVAILABLE = False
 
 # --- API Configuration ---
-OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-
-API_CONFIG = {
-    "openai": {
-        "api_key": os.getenv("OPENAI_API_KEY"),
-        "base_url": os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1"),
-        "vision_models": ["gpt-4o", "gpt-4-turbo"],
-        "text_models": ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
+LOCAL_SERVER_CONFIG = {
+    "ollama": {
+        "base_url": os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+        "enabled": True,
     },
-    "anthropic": {
-        "api_key": os.getenv("ANTHROPIC_API_KEY"),
-        "base_url": "https://api.anthropic.com/v1",
-        "vision_models": ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"],
-        "text_models": ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"],
+    "lmstudio": {
+        "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234"),
+        "enabled": False, # Users can enable this if they use LM Studio
     },
-    "google": {
-        "api_key": os.getenv("GOOGLE_API_KEY"),
-        "base_url": "https://generativelanguage.googleapis.com/v1beta",
-        "vision_models": ["gemini-1.5-pro-latest"],
-        "text_models": ["gemini-1.5-pro-latest"],
-    },
+    "text-generation-webui": {
+        "base_url": os.getenv("OOBABOOGA_BASE_URL", "http://127.0.0.1:5000"),
+        "enabled": False, # Users can enable this if they use text-generation-webui
+    }
 }
 # --- Style and Prompting Configuration ---
 
@@ -102,7 +95,6 @@ class PromptCrafterRunConfig:
     deep_think_confidence: float = 0.8
     negative_concepts: str = ""
     style_profile: dict = field(default_factory=dict)
-    remote_api_model: dict | None = None
 
     # Lyrics-specific params
     interpolate_keyframes: bool = False

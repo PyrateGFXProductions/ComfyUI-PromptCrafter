@@ -1,0 +1,37 @@
+[
+    {
+        "name": "1. Default (Training Tags)",
+        "description": "Concise, comma-separated tags suitable for training AI models like LoRAs.",
+        "prompt": "Create a concise, descriptive caption for this image, suitable for training an AI model.\n- Be factual and literal. Describe only what is visible.\n- Start with the main subject.\n- Use comma-separated phrases or tags.\n- Do not mention artist names, brand names, or copyrighted characters.\n- Example: a photo of a black cat, sitting on a red couch, in a dimly lit room, high quality."
+    },
+    {
+        "name": "2. General Purpose Sorter",
+        "description": "A balanced profile that generates tags for subject, style, and composition. Works well with the 'Simple Subject Sorting' and 'Comprehensive Library' organization profiles.",
+        "prompt": "Analyze the image and generate a comma-separated list of tags for training and organization. \n\nInstructions:\n1.  **Identify the main subject(s):** Use specific terms like `1girl`, `1boy`, `cat`, `dog`, `car`.\n2.  **Identify the composition:** Use terms like `portrait`, `close-up`, `full body shot`, `wide shot`, `landscape`.\n3.  **Identify the artistic style:** Use terms like `photo`, `painting`, `anime`, `sketch`, `realistic`.\n4.  **Describe key attributes:** Include clothing, actions, and setting details.\n\nCombine all of these into a single, comma-separated string."
+    },
+    {
+        "name": "3. Dataset Pro (for LoRA Training)",
+        "description": "Generates highly detailed tags for composition, subject count, and style. Designed to work perfectly with the 'Dataset Creation' organization profile.",
+        "prompt": "You are an expert dataset tagger for AI training. Analyze the image and generate a precise, comma-separated list of tags.\n\nCRITICAL INSTRUCTIONS:\n1.  **Composition First:** Start with the most accurate composition tag: `portrait`, `close-up shot`, `cowboy shot`, `full body`, `wide shot`.\n2.  **Subject Count:** Specify the number of subjects (e.g., `1girl`, `2boys`, `1boy 1girl`).\n3.  **Detailed Description:** Describe the subject's appearance, clothing, hair color, expression, and action.\n4.  **Background:** Briefly describe the setting.\n5.  **Style:** End with the artistic style (e.g., `anime`, `realistic`, `painting`).\n\nReturn ONLY the comma-separated tags."
+    },
+    {
+        "name": "4. Project Tagger (Template)",
+        "description": "A template to automatically add a project-specific keyword to every caption. Edit the prompt to set your project keyword.",
+        "prompt": "You are a project assistant. Your task is to caption this image and prepend it with a specific project tag.\n\n**YOUR PROJECT TAG:** `proj_neokyoto`\n\nInstructions:\n1.  Start the caption with your project tag, followed by a comma.\n2.  Then, create a concise, comma-separated list of descriptive tags for the image content.\n\nExample Output: `proj_neokyoto, a cyborg in a neon-lit alley, rain-slicked streets, futuristic city`\n\n**EDIT THIS PROMPT** to change `proj_neokyoto` to your desired project tag before running."
+    },
+    {
+        "name": "5. Detailed Scene Description",
+        "description": "A more narrative, paragraph-style description of the entire scene, including mood and atmosphere.",
+        "prompt": "Describe this image in a detailed, narrative paragraph. Capture the overall scene, the mood, the lighting, and the interaction between subjects. Go beyond simple tags and tell a small story about what is happening in this moment."
+    },
+    {
+        "name": "6. Simple Object Tags",
+        "description": "A very simple, comma-separated list of all objects and subjects present in the image.",
+        "prompt": "Identify every object and subject in this image. Return ONLY a comma-separated list of these items. Example: cat, couch, lamp, window, plant."
+    },
+    {
+        "name": "7. CLIP Interrogator Style",
+        "description": "Mimics the style of classic CLIP interrogators, focusing on artists, styles, and platforms.",
+        "prompt": "Analyze this image and describe it in the style of a CLIP interrogator. Identify potential artistic styles, artist influences (e.g., 'by Greg Rutkowski'), platforms (e.g., 'artstation'), and descriptive tags. Combine them into a single prompt string."
+    }
+]
