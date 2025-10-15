@@ -35,7 +35,9 @@
 
 This section provides a detailed overview of each node's capabilities and options. This same information is available inside ComfyUI via the `?` help button in the top-right corner of each node.
 
-### `PromptCrafter_ImageCreator`
+<details>
+<summary><code>PromptCrafter_ImageCreator</code></summary>
+
 **Purpose:** Generates high-quality, detailed prompts for creating static images.
 **How to Use:** Provide a high-level idea in `user_text` and optionally connect reference `image` inputs. The node analyzes your inputs, determines a creative style, and generates a polished prompt.
 * **`user_text`**: Your main instruction. Describe the scene, subjects, and mood.
@@ -50,7 +52,11 @@ This section provides a detailed overview of each node's capabilities and option
 * **`seed`**: Seed for reproducible results.
 * **`generate_schedule`**: If enabled, it will treat multi-paragraph text in `user_text` as a sequence of scenes, generating a schedule of prompts for animations or slideshows.
 
-### `PromptCrafter_VideoCreator`
+</details>
+
+<details>
+<summary><code>PromptCrafter_VideoCreator</code></summary>
+
 **Purpose:** Similar to the Image Creator, but specifically tuned for generating cinematic video prompts for models like AnimateDiff.
 **How to Use:** The workflow is the same as the Image Creator, but the output prompt will be structured to emphasize **action, motion, and camera movement**.
 * **`user_text`**: Your main instruction for the video scene. Describe subjects, setting, mood, and desired actions.
@@ -66,7 +72,11 @@ This section provides a detailed overview of each node's capabilities and option
 * **`generate_schedule`**: If enabled, it will treat multi-paragraph text in `user_text` as a sequence of scenes, generating a schedule of prompts for animations.
 * **Key Difference:** This node's AI persona is a "film director" and it will automatically suggest motion styles (e.g., "smooth, flowing") and camera movements (e.g., "tracking shot") to create more dynamic results.
 
-### `PromptCrafter_LyricsCreator`
+</details>
+
+<details>
+<summary><code>PromptCrafter_LyricsCreator</code></summary>
+
 **Purpose:** A powerful and unique node for creating a complete visual storyboard from song lyrics.
 **How to Use:** Provide lyrics via the `user_text` input or a `.srt`/`.lrc` file. The AI will automatically group lyrics into logical scenes (verses, choruses) and generate a prompt for each.
 * **Creative Autopilot:** If you only provide lyrics, the AI will act as a creative director, inventing a visual theme, characters, and setting from scratch based on the song's mood.
@@ -76,7 +86,11 @@ This section provides a detailed overview of each node's capabilities and option
 * **`use_audio_alignment`**: (Experimental) If an audio file is provided, the AI will attempt to cross-reference the audio with the lyrics to correct potential errors.
 * **`generate_schedule`**: Should almost always be **True**. This formats the output for animation nodes.
 
-### `PromptCrafter_QnA`
+</details>
+
+<details>
+<summary><code>PromptCrafter_QnA</code></summary>
+
 **Purpose:** A conversational AI assistant that can answer questions and use external information for context.
 **How to Use:** Ask a question in `user_text`. You can chain the `history_out` to `history_in` on a new node to continue the conversation.
 * **`user_text`**: Your question or instruction for the model.
@@ -88,7 +102,11 @@ This section provides a detailed overview of each node's capabilities and option
 * **`auto_select_model`**: Automatically switches to a vision model if an image is connected, or a text model if not.
 * **`history_in` / `clear_history`**: Use these to manage conversational memory between runs.
 
-### `PromptCrafter_Captioner`
+</details>
+
+<details>
+<summary><code>PromptCrafter_Captioner</code></summary>
+
 **Purpose:** Automatically generates descriptive captions for images, ideal for dataset creation or organizing your library.
 **How to Use:** Can be used in single mode (one image) or batch mode (an entire folder).
 * **`vision_model`**: **(Required)** The vision language model (VLM) to use for captioning.
@@ -100,7 +118,11 @@ This section provides a detailed overview of each node's capabilities and option
 * **`rename_file_with_caption`**: A powerful feature that renames your image file based on the generated caption (e.g., `a_photo_of_a_cat.png`), making your collection instantly searchable.
 * **`add_caption_to_metadata`**: Writes the caption directly into the image's EXIF/PNG metadata.
 
-### `PromptCrafter_FileOrganizer`
+</details>
+
+<details>
+<summary><code>PromptCrafter_FileOrganizer</code></summary>
+
 **Purpose:** A powerful utility to automatically sort your images and other files into folders based on a flexible ruleset.
 **How to Use:** Point it to an `input_folder`, define your rules in `organization_scheme`, and set `run_organization` to True.
 * **`model`**: The language model to use for content-based analysis.
@@ -114,11 +136,15 @@ This section provides a detailed overview of each node's capabilities and option
 * **`dry_run`**: A safe way to test your rules. It will print what it *would* do without actually moving any files.
 * **`recursive`**: Process files in all subdirectories of the input folder.
 
-### `PromptCrafter_CacheUtility`
+</details>
+
+<details>
+<summary><code>PromptCrafter_CacheUtility</code></summary>
+
 **Purpose:** A simple utility to manage the node pack's internal cache.
 **How to Use:** If you find a node is not updating its output after you change an input (e.g., you edited a text file it's reading), run this node with the "Clear Cache" action. This forces all nodes to re-evaluate their inputs from scratch.
 
----
+</details>---
 
 ## ⚙️ Core Concepts
 
@@ -151,7 +177,8 @@ If you encounter issues, here are some common solutions:
 
 You can easily add your own custom styles and organization schemes to the dropdown menus in the nodes. This is done by editing the `.json` files in the `ComfyUI-PromptCrafter` directory.
 
-#### Adding Custom Organization Schemes
+<details>
+<summary><strong>Adding Custom Organization Schemes</strong></summary>
 
 You can add your own pre-configured rule sets to the `PromptCrafter_FileOrganizer` node's `organization_profile` dropdown.
 
@@ -160,7 +187,8 @@ You can add your own pre-configured rule sets to the `PromptCrafter_FileOrganize
 2.  **Understand the Structure**: The file is a JSON array `[...]` containing multiple profile objects `{...}`. Each object has three parts:
     *   `"name"`: The name that will appear in the dropdown menu (e.g., "My Custom Sorting").
     *   `"description"`: A short explanation of what your profile does.
-    *   `"scheme"`: A string containing your organization rules. **Important:** Rules must be separated by a newline character (`\n`).
+    *   `"scheme"`: A string containing your organization rules. **Important:** Rules must be separated by a newline character (`
+`).
 
 3.  **Add Your Profile**:
     *   Copy an existing profile object (from `{` to `}`).
@@ -173,16 +201,24 @@ You can add your own pre-configured rule sets to the `PromptCrafter_FileOrganize
 {
     "name": "Sort by Checkpoint Model",
     "description": "Sorts images into folders based on the checkpoint model used.",
-    "scheme": "# This scheme uses metadata to find the model name.\nmetadata_contains: Juggernaut.safetensors -> By_Model/Juggernaut\nmetadata_contains: Dreamshaper.safetensors -> By_Model/Dreamshaper\n# Add more model rules here"
+    "scheme": "# This scheme uses metadata to find the model name.
+metadata_contains: Juggernaut.safetensors -&gt; By_Model/Juggernaut
+metadata_contains: Dreamshaper.safetensors -&gt; By_Model/Dreamshaper
+# Add more model rules here"
 }
 ```
 
 **Important Notes:**
 *   **Valid JSON**: Ensure the file remains valid JSON after your edits. A missing or extra comma is a common source of errors. You can use an online JSON validator to check your file if you have issues.
-*   **Newline Characters (`\n`)**: In the `"scheme"` string, each rule **must** be separated by `\n`. This is how you create new lines within a JSON string.
+*   **Newline Characters (`
+`)**: In the `"scheme"` string, each rule **must** be separated by `
+`. This is how you create new lines within a JSON string.
 *   **Restart ComfyUI**: After saving your changes to `organization_profiles.json`, you must restart ComfyUI for the new profiles to appear in the dropdown menu.
 
-#### Adding Custom Style Profiles
+</details>
+
+<details>
+<summary><strong>Adding Custom Style Profiles</strong></summary>
 
 You can add your own creative styles to the `style_override` dropdown in the creator nodes (`ImageCreator`, `VideoCreator`, `LyricsCreator`).
 
@@ -216,7 +252,10 @@ You can add your own creative styles to the `style_override` dropdown in the cre
 *   **Restart ComfyUI**: After saving your changes to `style_profiles.json`, you must restart ComfyUI for the new styles to appear in the dropdown menus.
 *   **JSON Validity**: Always ensure your file is valid JSON. Use an online validator if you're unsure.
 
-#### Adding Custom Captioner Profiles
+</details>
+
+<details>
+<summary><strong>Adding Custom Captioner Profiles</strong></summary>
 
 You can add your own custom captioning prompts to the `captioner_profile` dropdown in the `PromptCrafter_Captioner` node.
 
@@ -225,7 +264,8 @@ You can add your own custom captioning prompts to the `captioner_profile` dropdo
 2.  **Understand the Structure**: The file is an array of profile objects. Each object defines a unique captioning style with three key parts:
     *   `"name"`: The name of the profile that will appear in the dropdown menu (e.g., "My Custom Tagger").
     *   `"description"`: A short explanation of what your profile does.
-    *   `"prompt"`: The full prompt that will be sent to the AI model to generate the caption. You can use `\n` for newlines to structure your prompt clearly.
+    *   `"prompt"`: The full prompt that will be sent to the AI model to generate the caption. You can use `
+` for newlines to structure your prompt clearly.
 
 3.  **Add Your Profile**:
     *   Copy an existing profile object (from `{` to `}`).
@@ -245,6 +285,8 @@ You can add your own custom captioning prompts to the `captioner_profile` dropdo
 **Important Notes:**
 *   **Restart ComfyUI**: After saving your changes to `captioner_profiles.json`, you must restart ComfyUI for the new styles to appear in the dropdown menu.
 *   **JSON Validity**: Always ensure your file is valid JSON. Use an online validator if you're unsure.
+
+</details>
 
 ---
 
