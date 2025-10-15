@@ -27,9 +27,40 @@ from . import organization_profiles
 from . import captioner_profiles
 
 # ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        help_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        pattern = re.compile(rf"## `{node_name}`\n(.*?)(?=\n## `|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(1).strip()
+        else:
+            # Fallback for the custom profiles section
+            if node_name == "Customizing Profiles":
+                 pattern = re.compile(r"## Customizing Profiles\n(.*)", re.DOTALL)
+                 match = pattern.search(content)
+                 if match:
+                     return match.group(1).strip()
+            return f"No description found in HELP.md for {node_name}."
+
+    except Exception as e:
+        return f"Error reading help file: {e}"
+
+# ------------------------------------------------------------------------------------
 # PromptCrafter_QnA Node
 # ------------------------------------------------------------------------------------
 class PromptCrafter_QnA:
+    DESCRIPTION = get_node_description("PromptCrafter_QnA")
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -185,6 +216,7 @@ class PromptCrafter_QnA:
 # PromptCrafter_Captioner Node
 # ------------------------------------------------------------------------------------
 class PromptCrafter_Captioner:
+    DESCRIPTION = get_node_description("PromptCrafter_Captioner")
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -198,16 +230,16 @@ class PromptCrafter_Captioner:
                 "batch_mode": ("BOOLEAN", {"default": False, "tooltip": "Enable batch processing of an entire folder."} ),
                 "input_folder": ("STRING", {"default": "input/captions_todo", "tooltip": "Directory of images to process in batch mode (relative to ComfyUI root)."}),
                 "skip_existing": ("BOOLEAN", {"default": True, "tooltip": "In batch mode, skip images that already have a corresponding .txt caption file."} ),
-                "captioner_profile": (captioner_profiles.get_captioner_profile_options(), {"default": "Default (Training Style)", "tooltip": "Select a pre-configured captioning prompt. Overrides the manual prompt text box."}),
+                "captioner_profile": (captioner_profiles.get_captioner_profile_options(), {"default": "Default (Training Style)", "tooltip": "Select a pre-configured captioning prompt. Overrides the manual prompt text box."} ),
                 "max_workers": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1, "tooltip": "Number of parallel threads for batch processing."} ),
                 "caption_prompt": ("STRING", {"multiline": True, "default": config.DEFAULT_CAPTION_PROMPT, "tooltip": "The prompt template used to guide the captioning model."} ),
                 "caption_prefix": ("STRING", {"multiline": False, "default": "", "tooltip": "A single trigger word to add to every caption. Overridden by the trigger words file."} ),
                 "trigger_words_folder_path": ("STRING", {"multiline": False, "default": "input", "tooltip": "Folder containing an optional file of trigger words (one per line)."}),
                 "trigger_words_file": ("STRING", {"multiline": False, "default": "<none>", "tooltip": "File with a list of trigger words to be randomly chosen from for each caption."} ),
                 "save_caption": ("BOOLEAN", {"default": True, "tooltip": "Save the caption to a text file."} ),
-                "save_in_input_folder": ("BOOLEAN", {"default": True, "tooltip": "If True, saves the .txt caption file in the batch mode input folder alongside the image. If False, saves to the output_path."}),
+                "save_in_input_folder": ("BOOLEAN", {"default": True, "tooltip": "If True, saves the .txt caption file in the batch mode input folder alongside the image. If False, saves to the output_path."} ),
                 "add_caption_to_metadata": ("BOOLEAN", {"default": True, "tooltip": "Write the caption to the image's metadata (e.g., EXIF). Requires `piexif` library."} ),
-                "rename_file_with_caption": ("BOOLEAN", {"default": False, "tooltip": "In batch mode, rename the image file based on the generated caption. Makes files searchable."}),
+                "rename_file_with_caption": ("BOOLEAN", {"default": False, "tooltip": "In batch mode, rename the image file based on the generated caption. Makes files searchable."} ),
                 "output_path": ("STRING", {"default": "captions", "tooltip": "Subdirectory within ComfyUI/output to save caption files."} ),
                 "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Controls creativity. Lower is more deterministic."} ),
                 "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff, "step": 1, "tooltip": "Seed for reproducible results. -1 for random."} ),
@@ -226,7 +258,7 @@ class PromptCrafter_Captioner:
         # Replace spaces and common delimiters with underscores
         text = re.sub(r'[\s,]+', '_', text)
         # Remove any characters that are not valid in filenames
-        text = re.sub(r'[\\/*?:"<>|]', '', text)
+        text = re.sub(r'[\\/*?:"<<>>|]', '', text)
         # Remove leading/trailing underscores and truncate
         return text.strip('_')[:max_length]
 
@@ -360,7 +392,7 @@ class PromptCrafter_Captioner:
 
             if save_caption:
                 out_dir = utils._get_and_create_output_dir(output_path)
-                fname = filename.strip() or f"caption_{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time()*1000)%1000}"
+                fname = filename.strip() or f"caption_{{time.strftime('%Y%m%d_%H%M%S')}}_{int(time.time()*1000)%1000}}"
                 fname = self._sanitize_filename(fname, max_length=200)
                 with open(os.path.join(out_dir, f"{fname}.txt"), "w", encoding="utf-8") as f:
                     f.write(final_caption)
@@ -465,7 +497,7 @@ class PromptCrafter_BaseCreator: # noqa
             tag_names = [tag.strip() for tag in style_tags.split(',')]
             inspirations = []
             # Use the persona from the first valid tag.
-            first_persona = "You are an expert art historian." 
+            first_persona = "You are an expert art historian."
             
             for i, name in enumerate(tag_names):
                 profile = style_profiles.NAMED_STYLE_PROFILES.get(name)
@@ -477,7 +509,7 @@ class PromptCrafter_BaseCreator: # noqa
             run_config.style_profile = {"persona": first_persona, "inspiration": "\n- ".join(filter(None, inspirations))}
         elif run_config.style_override and run_config.style_override != "None":
             # User has overridden the style.
-            original_name = re.sub(r'^\(.*\)\s', '', run_config.style_override)
+            original_name = re.sub(r'^\(.*?\)\s', '', run_config.style_override)
             if original_name in style_profiles.NAMED_STYLE_PROFILES:
                 run_config.style_profile = style_profiles.NAMED_STYLE_PROFILES[original_name]
         else:
@@ -729,11 +761,11 @@ The final output must be in {language} only.{safety_rule}"""
             {user_text}
 
             --- ANALYSIS ---
-            Does the user want to combine features from one subject onto another (e.g., "an eagle with antlers", "a woman wearing a dress made of flowers")?
+            Does the user want to combine features from one subject onto another (e.g., \"an eagle with antlers\", \"a woman wearing a dress made of flowers\")?
 
-            Respond with ONLY a JSON object containing a single boolean key "blending_requested".
-            Example: {{"blending_requested": true}}
-        """).strip()
+            Respond with ONLY a JSON object containing a single boolean key \"blending_requested\".
+            Example: {{'blending_requested': true}}
+        """ ).strip()
         ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Blending Intent Check")
         return ok and isinstance(result_json, dict) and result_json.get("blending_requested", False)
 
@@ -748,11 +780,11 @@ The final output must be in {language} only.{safety_rule}"""
             {user_text}
 
             --- ANALYSIS ---
-            Does the user want to replace a subject from the images with a new one from their instructions (e.g., "replace the man with a robot", "instead of a car, make it a spaceship")?
+            Does the user want to replace a subject from the images with a new one from their instructions (e.g., \"replace the man with a robot\", \"instead of a car, make it a spaceship\")?
 
-            Respond with ONLY a JSON object containing a single boolean key "replacement_requested".
-            Example: {{"replacement_requested": true}}
-        """).strip()
+            Respond with ONLY a JSON object containing a single boolean key \"replacement_requested\".
+            Example: {{'replacement_requested': true}}
+        """ ).strip()
         ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Replacement Intent Check")
         return ok and isinstance(result_json, dict) and result_json.get("replacement_requested", False)
 
@@ -800,7 +832,7 @@ Part 2: Based on your choice, suggest ONE specific camera movement from this lis
 - \"static shot\", \"slow pan left\", \"slow pan right\", \"tilt up\", \"tilt down\", \"dolly zoom\", \"tracking shot\", \"handheld shaky cam\", \"crane shot\".
 
 Return ONLY a JSON object with your choices.
-Example: {{"motion_style": \"dynamic, cinematic\", "camera_movement": \"tracking shot\"}}"""
+Example: {{'motion_style': \"dynamic, cinematic\", 'camera_movement': \"tracking shot\"}}"""
         ok, result_json = api_clients._reason_with_model(run_config.model, motion_analysis_prompt, use_chat_api=run_config.use_chat_api, temperature=0.1, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Video Motion Style Analysis")
 
         motion_type_adjective = "subtle, natural"
@@ -824,7 +856,7 @@ Example: {{"motion_style": \"dynamic, cinematic\", "camera_movement": \"tracking
         current_prompt = draft_prompt
         
         # Extract the subject names from the tagged list
-        primary_items_list = [re.sub(r'^\[PRIMARY\]\s*', '', t) for t in (mandatory_tokens or {}).get("primary", [])]
+        primary_items_list = [re.sub(r'^\ Electrochemical_cell_diagram_with_labels_and_explanation_of_components_and_reactions_in_a_clear_and_concise_manner', '', t) for t in (mandatory_tokens or {}).get("primary", [])]
 
         if not primary_items_list:
             critique_prompt = self._build_refinement_prompt(current_prompt, mode, [], [], style_rules, run_config, ask_for_json=False)
@@ -866,12 +898,13 @@ Return ONLY a single JSON object with three keys:
 - `refined_prompt`: (string) The improved version of the prompt.
 - `missing_items`: (array of strings) A list of any **MANDATORY SUBJECTS** that are still missing. Should be `[]` on success.
 - `hallucinated_items`: (array of strings) A list of any subjects you included that were NOT in the original **ALLOWED SUBJECTS** list. Should be `[]` on success.
---- END JSON RESPONSE INSTRUCTIONS ---""") # noqa
+--- END JSON RESPONSE INSTRUCTIONS ---""" ) # noqa
         text_return_format = f"INSTRUCTIONS:\n{critique_instruction}\n\nReturn ONLY the final, improved prompt. No commentary."
         final_instructions = json_return_format if ask_for_json else text_return_format
 
         # Base template
-        refine_template = textwrap.dedent("""You are a master prompt critic and editor. Your task is to review and enhance the following DRAFT PROMPT.
+        refine_template = textwrap.dedent("""
+You are a master prompt critic and editor. Your task is to review and enhance the following DRAFT PROMPT.
 
 --- DRAFT PROMPT ---
 {prompt_to_review}
@@ -995,6 +1028,7 @@ Return ONLY a single JSON object with three keys:
         return new_positive
 
 class PromptCrafter_ImageCreator(PromptCrafter_BaseCreator):
+    DESCRIPTION = get_node_description("PromptCrafter_ImageCreator")
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -1008,7 +1042,7 @@ class PromptCrafter_ImageCreator(PromptCrafter_BaseCreator):
                 "max_length_words": ("INT", {"default": 0, "min": 0, "max": 400, "step": 10}),
                 "style_override": (style_profiles.get_style_override_options("Image"), {"default": "None"}),
                 "critique_strength": (["Subtle", "Normal", "Heavy"], {"default": "Normal"}),
-                "deep_think_refinements": ("INT", {"default": 3, "min": 0, "max": 10, "step": 1, "tooltip": "Number of iterative refinement steps for the Deep Think process. 0 disables it."}),
+                "deep_think_refinements": ("INT", {"default": 3, "min": 0, "max": 10, "step": 1, "tooltip": "Number of iterative refinement steps for the Deep Think process. 0 disables it."} ),
                 "simplify_for_diffusion": ("BOOLEAN", {"default": True}),
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 600, "step": 10}),
                 "max_retries": ("INT", {"default": 2, "min": 0, "max": 10}),
@@ -1019,7 +1053,7 @@ class PromptCrafter_ImageCreator(PromptCrafter_BaseCreator):
             },
             "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO", "negative_prompt": "STRING"},
             "optional": {
-                "style_tags": ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."}),
+                "style_tags": ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."} ),
                 "generate_schedule": ("BOOLEAN", {"default": False}),
                 "max_frames": ("INT", {"default": 240, "min": 1, "max": 99999}),
                 "interpolate_keyframes": ("BOOLEAN", {"default": True}),
@@ -1067,6 +1101,7 @@ class PromptCrafter_ImageCreator(PromptCrafter_BaseCreator):
 # PromptCrafter_FileOrganizer Node
 # ------------------------------------------------------------------------------------
 class PromptCrafter_FileOrganizer:
+    DESCRIPTION = get_node_description("PromptCrafter_FileOrganizer")
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -1074,25 +1109,25 @@ class PromptCrafter_FileOrganizer:
                 "model": (api_clients.get_all_models(), {"tooltip": "The language model to use for all analysis and generation. Vision-capable models are required if using images."} ),
                 "input_folder": ("STRING", {"default": "output/unorganized", "tooltip": "The folder containing the files you want to organize (relative to ComfyUI root)."}),
                 "output_folder": ("STRING", {"default": "output/organized", "tooltip": "The root folder where organized subdirectories will be created (relative to ComfyUI root)."}),
-                "organization_profile": (organization_profiles.get_organization_profile_options(), {"default": "None (Manual Scheme)", "tooltip": "Select a pre-configured organization scheme. Overrides the manual scheme text box."}),
+                "organization_profile": (organization_profiles.get_organization_profile_options(), {"default": "None (Manual Scheme)", "tooltip": "Select a pre-configured organization scheme. Overrides the manual scheme text box."} ),
                 "organization_scheme": ("STRING", {
                     "multiline": True,
                     "default": "# Define rules, one per line. The first match will be used.\n# Format: CRITERION: VALUE -> FOLDER_NAME\n# Criteria: image_resolution, image_description_contains, captionfile_contains, filename_contains, metadata_contains, content_keyword\n\nimage_resolution: >1920x1080 -> High_Resolution/4K_ish\nimage_resolution: ==512x512 -> Square_Images/512x512\nimage_description_contains: cat -> By_Embedded_Caption/Cats\ncaptionfile_contains: dog -> By_Text_File/Dogs\nfilename_contains: car -> By_Filename/Cars\nmetadata_contains: AnimateDiff -> By_Workflow/Animations\ncontent_keyword: landscape -> By_VLM_Content/Landscapes",
                     "tooltip": "Rules for organizing files. 'image_resolution' checks dimensions (e.g., >1024x768). 'image_description_contains' reads embedded EXIF/PNG descriptions. 'captionfile_contains' reads .txt files. 'filename_contains' checks the filename. 'metadata_contains' checks the ComfyUI workflow."
                 }),
-                "action": (["Copy", "Move"], {"default": "Copy", "tooltip": "Copy files (safer) or move them to the new location."}),
-                "dry_run": ("BOOLEAN", {"default": False, "tooltip": "Simulate the organization process and report actions without moving or copying files."}),
-                "analysis_priority": (["Metadata First", "Content First", "Metadata Only"], {"default": "Metadata First", "tooltip": "The order of analysis. 'Metadata First' is fastest."}),
-                "fallback_folder": ("STRING", {"default": "_unorganized", "tooltip": "Subfolder for files that do not match any rule."}),
-                "auto_generate_scheme": ("BOOLEAN", {"default": False, "tooltip": "Automatically generate an organization scheme by analyzing a sample of files. Overrides the manual scheme."}),
+                "action": (["Copy", "Move"], {"default": "Copy", "tooltip": "Copy files (safer) or move them to the new location."} ),
+                "dry_run": ("BOOLEAN", {"default": False, "tooltip": "Simulate the organization process and report actions without moving or copying files."} ),
+                "analysis_priority": (["Metadata First", "Content First", "Metadata Only"], {"default": "Metadata First", "tooltip": "The order of analysis. 'Metadata First' is fastest."} ),
+                "fallback_folder": ("STRING", {"default": "_unorganized", "tooltip": "Subfolder for files that do not match any rule."} ),
+                "auto_generate_scheme": ("BOOLEAN", {"default": False, "tooltip": "Automatically generate an organization scheme by analyzing a sample of files. Overrides the manual scheme."} ),
             },
             "optional": {
-                "run_organization": ("BOOLEAN", {"default": False, "tooltip": "Toggle to True to start the organization process. It will run once per execution."}),
-                "max_workers": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1, "tooltip": "Number of parallel threads for processing files." }),
-                "recursive": ("BOOLEAN", {"default": False, "tooltip": "Process files in all subdirectories of the input folder as well."}),
-                "create_log_file": ("BOOLEAN", {"default": False, "tooltip": "Create a text log file summarizing all operations in the output folder."}),
-                "log_filename": ("STRING", {"default": "organization_log.txt", "tooltip": "The name of the log file to be created in the output folder."}),
-                "delete_source_folder_on_move": ("BOOLEAN", {"default": False, "tooltip": "After a successful 'Move' operation, delete the original input folder if it's empty. Use with caution."}),
+                "run_organization": ("BOOLEAN", {"default": False, "tooltip": "Toggle to True to start the organization process. It will run once per execution."} ),
+                "max_workers": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1, "tooltip": "Number of parallel threads for processing files."} ),
+                "recursive": ("BOOLEAN", {"default": False, "tooltip": "Process files in all subdirectories of the input folder as well."} ),
+                "create_log_file": ("BOOLEAN", {"default": False, "tooltip": "Create a text log file summarizing all operations in the output folder."} ),
+                "log_filename": ("STRING", {"default": "organization_log.txt", "tooltip": "The name of the log file to be created in the output folder."} ),
+                "delete_source_folder_on_move": ("BOOLEAN", {"default": False, "tooltip": "After a successful 'Move' operation, delete the original input folder if it's empty. Use with caution."} ),
             }
         }
     
@@ -1290,7 +1325,7 @@ class PromptCrafter_FileOrganizer:
             image_description_contains: dog -> By_Subject/Dogs
             captionfile_contains: cyberpunk -> By_Theme/Cyberpunk
             filename_contains: screenshot -> By_Type/Screenshots
-        """).strip()
+        """ ).strip()
 
         ok, scheme = api_clients.query_model_auto(model, prompt, prefer_chat=True, temperature=0.1, seed=1, timeout=120, debug_mode=debug_mode, debug_title="Auto-Generate Scheme")
         return (scheme, None) if ok else (None, f"AI scheme generation failed: {scheme}")
@@ -1411,8 +1446,7 @@ class PromptCrafter_FileOrganizer:
             try:
                 with Image.open(file_path) as img:
                     profile["image_resolution"] = f"{img.width}x{img.height}"
-            except Exception:
-                pass # Fail silently if image is unreadable
+            except Exception: pass # Fail silently if image is unreadable
 
         # Read embedded image description (from EXIF/PNG)
         image_description = utils._read_image_description(file_path)
@@ -1427,8 +1461,7 @@ class PromptCrafter_FileOrganizer:
                     content = f.read().strip()
                     if content:
                         profile["caption_content"] = content
-            except Exception:
-                pass
+            except Exception: pass
         return profile
 
     def execute(self, model, input_folder, output_folder, organization_profile, organization_scheme, action, dry_run, analysis_priority, fallback_folder, auto_generate_scheme=False, run_organization=False, max_workers=4, recursive=False, create_log_file=False, log_filename="organization_log.txt", delete_source_folder_on_move=False, **kwargs):
@@ -1572,6 +1605,7 @@ class PromptCrafter_FileOrganizer:
 
 
 class PromptCrafter_VideoCreator(PromptCrafter_BaseCreator):
+    DESCRIPTION = get_node_description("PromptCrafter_VideoCreator")
     @classmethod
     def INPUT_TYPES(cls):
         types = copy.deepcopy(PromptCrafter_ImageCreator.INPUT_TYPES())
@@ -1582,7 +1616,7 @@ class PromptCrafter_VideoCreator(PromptCrafter_BaseCreator):
             del types["optional"]["image_weights_json"]
         # Add style_tags if it's not there from the parent
         if "style_tags" not in types["optional"]:
-             types["optional"]["style_tags"] = ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."})
+             types["optional"]["style_tags"] = ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."} )
         return types
 
     MAX_IMAGES = 5
@@ -1621,6 +1655,7 @@ class PromptCrafter_VideoCreator(PromptCrafter_BaseCreator):
             return self._handle_creator_exception(e)
 
 class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
+    DESCRIPTION = get_node_description("PromptCrafter_LyricsCreator")
     @classmethod
     def INPUT_TYPES(cls):
         types = copy.deepcopy(PromptCrafter_ImageCreator.INPUT_TYPES())
@@ -1631,7 +1666,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
         types["required"]["simplify_for_diffusion"] = ("BOOLEAN", {"default": False})
         types["required"]["filename_prefix"] = ("STRING", {"default": "lyrics_prompts"})
         types["optional"].update({
-            "style_tags": ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."}),
+            "style_tags": ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."} ),
             "audio_folder_path": ("STRING", {"multiline": False, "default": "input/audio"}),
             "audio_file": ("STRING", {"multiline": False, "default": "<none>"}),
             "lyrics_folder_path": ("STRING", {"multiline": False, "default": "input/lyrics"}),
@@ -1681,7 +1716,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
 
     def _handle_lyrics_mode(self, lyrics, timed_segments, images_with_weights, user_instructions, lyrics_meta, config, audio_path=None, generate_schedule=False, negative_prompt="", save_to_txt=False, filename_prefix=""): # noqa
         if config.use_audio_alignment and audio_path and lyrics and not lyrics.startswith("[Error"):
-            print("\033[94m[PromptCrafter] Audio file provided. Performing audio-lyric alignment (this is experimental)...\033[0m")
+            print("\033[94m[PromptCrafter] Audio file provided. Performing audio-lyric alignment (this is experimental)...")
             spectrogram_img = utils.audio_to_spectrogram(audio_path)
             if isinstance(spectrogram_img, Image.Image):
                 corrected_lyrics = self._validate_lyrics_against_audio(lyrics, spectrogram_img, config)
@@ -1738,12 +1773,12 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             Example Output:
             {{
                 "scenes": [
-                    "First line of verse 1\\nSecond line of verse 1",
-                    "First line of the chorus\\nSecond line of the chorus",
-                    "First line of verse 2\\nSecond line of verse 2"
+                    "First line of verse 1\nSecond line of verse 1",
+                    "First line of the chorus\nSecond line of the chorus",
+                    "First line of verse 2\nSecond line of verse 2"
                 ]
             }}
-        """).strip()
+        """ ).strip()
 
         ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Lyric Scene Grouping")
         
@@ -1880,7 +1915,7 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
             - Keep the concept description to a single, simple sentence (under 20 words).
 
             Return ONLY the shot concept sentence.
-        """).strip()
+        """ ).strip()
 
         concept_ok, shot_concept = api_clients.query_model_auto(
             run_config.model, concept_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature,
@@ -1910,7 +1945,7 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
             3.  Ensure the final prompt is clear, focused, and remains concise.
 
             Return ONLY the final, polished prompt.
-        """).strip()
+        """ ).strip()
 
         final_ok, final_prompt = api_clients.query_model_auto(
             run_config.model, refine_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature,
@@ -1971,7 +2006,8 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
             sections.append(("LYRICS SOURCE FILE", f"folder: {lyrics_meta[0]}\nfile: {lyrics_meta[1]}"))
         sections.extend([("IMAGE CONTEXT", image_context or "No reference images provided."), ("LYRICS", (lyrics or "").strip()), ("NEGATIVE PROMPT", final_negative_prompt or ""), ("OUTPUT", final_output)])
         utils._save_output_to_file(filename_prefix, sections, base_filename="lyrics_prompts")
-class PromptCrafter_ClearCache:
+class PromptCrafter_CacheUtility:
+    DESCRIPTION = get_node_description("PromptCrafter_CacheUtility")
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {"action": (["Clear Cache", "Check Size"], {"default": "Clear Cache"})}}
@@ -1997,7 +2033,7 @@ NODE_CLASS_MAPPINGS = {
     "PromptCrafter_ImageCreator": PromptCrafter_ImageCreator,
     "PromptCrafter_VideoCreator": PromptCrafter_VideoCreator,
     "PromptCrafter_LyricsCreator": PromptCrafter_LyricsCreator,
-    "PromptCrafter_ClearCache": PromptCrafter_ClearCache,
+    "PromptCrafter_CacheUtility": PromptCrafter_CacheUtility,
     "PromptCrafter_FileOrganizer": PromptCrafter_FileOrganizer,
 }
 
@@ -2007,6 +2043,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_ImageCreator": f"PromptCrafter Image Prompt Creator",
     "PromptCrafter_VideoCreator": f"PromptCrafter Video Prompt Creator",
     "PromptCrafter_LyricsCreator": f"PromptCrafter Lyrics-to-Prompt Creator",
-    "PromptCrafter_ClearCache": f"PromptCrafter Cache Utility",
+    "PromptCrafter_CacheUtility": f"PromptCrafter Cache Utility",
     "PromptCrafter_FileOrganizer": f"PromptCrafter File Organizer",
 }
