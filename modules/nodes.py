@@ -1593,7 +1593,8 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 generate_schedule=kwargs.get("generate_schedule", False),
                 fps=config.fps,
                 song_length_seconds=config.song_length_seconds,
-                config=config
+                config=config,
+                max_frames=kwargs.get("max_frames", 240) # Pass max_frames directly
             )
             
             prompt_out, schedule_out = ("", final_output) if kwargs.get("generate_schedule", False) else (final_output, "")
@@ -1823,11 +1824,11 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
             {length_rule}
         """ ).strip()
 
-    def _create_final_lyrics_output(self, storyboard_prompts, timed_segments, generate_schedule, fps, song_length_seconds, config): # noqa
+    def _create_final_lyrics_output(self, storyboard_prompts, timed_segments, generate_schedule, fps, song_length_seconds, config, max_frames): # noqa
         if not generate_schedule: return "\n\n---\n\n".join(storyboard_prompts)
         if timed_segments: return self._create_schedule_from_srt(storyboard_prompts, timed_segments, fps, config)
-        max_frames = int(song_length_seconds * fps) if song_length_seconds > 0 else config.max_frames
-        return utils._create_schedule_from_items(storyboard_prompts, max_frames, 0, config.interpolate_keyframes, config.interpolation_frame_interval)
+        final_max_frames = int(song_length_seconds * fps) if song_length_seconds > 0 else max_frames
+        return utils._create_schedule_from_items(storyboard_prompts, final_max_frames, 0, config.interpolate_keyframes, config.interpolation_frame_interval)
 
     def _create_schedule_from_srt(self, storyboard_prompts, timed_segments, fps, run_config): # noqa
         print("\033[94m[PromptCrafter] SRT file detected. Generating timed schedule...\033[0m")
