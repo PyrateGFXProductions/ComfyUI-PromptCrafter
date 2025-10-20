@@ -17,6 +17,14 @@ app.registerExtension({
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (DYNAMIC_INPUT_NODE_CLASSES_EXT1.includes(nodeType.comfyClass)) {
 
+            let numStandardOutputs;
+            if (nodeType.comfyClass === "PromptCrafter_VisualCreator") {
+                numStandardOutputs = 6;
+            } else if (nodeType.comfyClass === "PromptCrafter_LyricsCreator") {
+                numStandardOutputs = 8;
+            } else {
+                numStandardOutputs = 6; // Default value
+            }
             const updateWeightsJSON = function(node) {
                 const weights = {};
                 for (const w of node.widgets) {
@@ -26,7 +34,6 @@ app.registerExtension({
                 }
                 const jsonWidget = node.widgets.find(w => w.name === "image_weights_json");
                 if (jsonWidget) {
-                    jsonWidget.value = JSON.stringify(weights);
                 }
             };
 
