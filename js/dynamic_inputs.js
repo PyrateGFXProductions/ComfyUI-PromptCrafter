@@ -43,7 +43,6 @@ app.registerExtension({
                 const inputPrefix = "image_";
                 const weightPrefix = "image_weight_";
                 const outputPrefix = "reference_image_";
-                const numStandardOutputs = 7;
 
                 const currentInputs = this.inputs?.filter(input => /^image_\d+$/.test(input.name)) || [];
                 let currentInputCount = currentInputs.length;
@@ -101,6 +100,7 @@ app.registerExtension({
 
                 const imageCountWidget = this.widgets.find(w => w.name === "image_count");
 
+                const numStandardOutputs = this.numStandardOutputs;
                 this.addWidget("button", "Update Image Inputs", null, () => {
                     if (imageCountWidget) {
                         updateNodeImageInputs.call(this, imageCountWidget.value);
@@ -121,6 +121,7 @@ app.registerExtension({
                 }
             };
 
+
             const onConfigure = nodeType.prototype.onConfigure;
             nodeType.prototype.onConfigure = function() {
                 onConfigure?.apply(this, arguments);
@@ -133,6 +134,12 @@ app.registerExtension({
                     }, 10);
                 }
             };
+
+            nodeType.prototype.numStandardOutputs = numStandardOutputs;
+
+            
+
+
         }
     },
 });
