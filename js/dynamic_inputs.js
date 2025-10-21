@@ -36,7 +36,7 @@ app.registerExtension({
                 const inputPrefix = "image_";
                 const weightPrefix = "image_weight_";
                 const outputPrefix = "reference_image_";
-                const numStandardOutputs = 6;
+                const numStandardOutputs = 7;
 
                 const currentInputs = this.inputs?.filter(input => /^image_\d+$/.test(input.name)) || [];
                 let currentInputCount = currentInputs.length;
