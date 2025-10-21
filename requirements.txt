@@ -6,3 +6,5 @@ duckduckgo-search
 pypdf
 librosa
 matplotlib
+faster-whisper
+insanely-fast-whisper

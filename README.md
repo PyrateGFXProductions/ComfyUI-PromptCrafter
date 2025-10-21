@@ -8,11 +8,12 @@
 
 ## ✨ Key Features
 
-- **🎬 Advanced Prompt Engineering**: Dynamic **Style Engine**, "Deep Think" self-critique, and anti-hallucination checks for polished, cinematic prompts.
-- **🎵 Lyrics-to-Video Storyboarding**: Convert song lyrics or SRT files into a series of consistent, thematically-linked video prompts, with AI-powered scene grouping.
+- **🎬 Advanced Prompt Engineering**: A unified **Visual Creator** node with a dynamic **Style Engine**, "Deep Think" self-critique, and anti-hallucination checks for polished, cinematic prompts for both images and videos.
+- **🎵 Lyrics-to-Video Storyboarding**: Convert song lyrics or SRT files into a series of consistent, thematically-linked video prompts. Features **Audio Mood Analysis**, multiple transcription engines, and AI-powered scene grouping.
 - **✍️ Image & Video Storyboarding**: Generate a sequence of prompts from a multi-paragraph story for image series or multi-shot video scenes.
 - **🗂️ Intelligent File Organization**: Caption, rename, and organize your image library with customizable rules based on `filename`, `caption text`, `metadata`, `resolution`, and `AI content analysis`.
 - **💬 Conversational Q&A**: Have a continuous conversation with the AI using text files, PDFs, or web search results as context.
+- **🛠️ Modular Utilities**: Includes a flexible **Text Formatter** for building reusable prompt structures and a powerful **Save Text File** node with dynamic, template-based naming.
 
 ---
 
@@ -36,16 +37,17 @@
 This section provides a detailed overview of each node's capabilities and options. This same information is available inside ComfyUI via the `?` help button in the top-right corner of each node.
 
 <details>
-<summary><code>PromptCrafter_ImageCreator</code></summary>
+<summary><code>PromptCrafter_VisualCreator</code></summary>
 
-**Purpose:** Generates high-quality, detailed prompts for creating static images.
-**How to Use:** Provide a high-level idea in `user_text` and optionally connect reference `image` inputs. The node analyzes your inputs, determines a creative style, and generates a polished prompt.
+**Purpose:** A unified node to create advanced prompts for images or short videos by analyzing user text and optional reference images.
+**How to Use:** Provide a high-level idea in `user_text` and optionally connect reference `image` inputs. Select the desired `pipeline_mode` ("Image" or "Video"). The node analyzes your inputs, determines a creative style, and generates a polished prompt.
+* **`pipeline_mode`**: Choose between "Image" for static images or "Video" for animated sequences. This adjusts the AI's focus and output structure.
 * **`user_text`**: Your main instruction. Describe the scene, subjects, and mood.
 * **`model`**: The language model to use for all analysis and generation.
 * **`image_count`**: Sets the number of available `image` and `image_weight` inputs.
-* **`image_weight`**: Controls the influence of a specific reference image.
 * **`style_override`**: Force a specific artistic style (e.g., "Cyberpunk", "Fantasy Battle") instead of letting the AI decide.
 * **`style_tags`**: A comma-separated list of style names to blend together. Overrides the `style_override` dropdown.
+* **`target_model_format`**: Format the prompt for a specific target model like "Fooocus" or "Stable Diffusion 3".
 * **`critique_strength`**: Controls how heavily the AI will revise its own prompt draft ("Subtle", "Normal", "Heavy").
 * **`deep_think_refinements`**: Number of iterative refinement steps for the "Deep Think" process. `0` disables it.
 * **`temperature`**: Controls creativity. Lower is more deterministic.
@@ -55,36 +57,30 @@ This section provides a detailed overview of each node's capabilities and option
 </details>
 
 <details>
-<summary><code>PromptCrafter_VideoCreator</code></summary>
+<summary><code>PromptCrafter_LyricsCreator</code></summary>
 
-**Purpose:** Similar to the Image Creator, but specifically tuned for generating cinematic video prompts for models like AnimateDiff.
-**How to Use:** The workflow is the same as the Image Creator, but the output prompt will be structured to emphasize **action, motion, and camera movement**.
-* **`user_text`**: Your main instruction for the video scene. Describe subjects, setting, mood, and desired actions.
-* **`model`**: The language model to use for all analysis and generation.
-* **`image_count`**: Sets the number of available `image` and `image_weight` inputs.
-* **`image_weight`**: Controls the influence of a specific reference image.
-* **`style_override`**: Force a specific cinematic style (e.g., "Epic Fantasy", "Found Footage") instead of letting the AI decide.
-* **`style_tags`**: A comma-separated list of style names to blend together. Overrides the `style_override` dropdown.
-* **`critique_strength`**: Controls how heavily the AI will revise its own prompt draft ("Subtle", "Normal", "Heavy").
-* **`deep_think_refinements`**: Number of iterative refinement steps for the "Deep Think" process. `0` disables it.
-* **`temperature`**: Controls creativity. Higher values are better for creative video concepts.
-* **`seed`**: Seed for reproducible results.
-* **`generate_schedule`**: If enabled, it will treat multi-paragraph text in `user_text` as a sequence of scenes, generating a schedule of prompts for animations.
-* **Key Difference:** This node's AI persona is a "film director" and it will automatically suggest motion styles (e.g., "smooth, flowing") and camera movements (e.g., "tracking shot") to create more dynamic results.
+**Purpose:** A powerful and unique node for creating a complete visual storyboard from song lyrics, now with audio analysis and transcription.
+**How to Use:** Provide an `audio_file` to enable the full workflow. The node will transcribe the lyrics, analyze the music's mood, and output a timed animation schedule, clean lyrics, and a subtitle file.
+* **Audio Mood Analysis**: The node automatically analyzes the audio's tempo and feel to determine mood keywords (e.g., "upbeat," "melancholic," "energetic").
+* **Dual Transcription Engines**: Choose between `faster-whisper` and the highly optimized `insanely-fast-whisper` for transcription.
+* **Outputs**: The node outputs the prompt schedule, `clean_lyrics_txt`, and a synchronized subtitle file (`lyrics_srt`).
+* **Saving**: To save any of the text outputs, connect them to the `PromptCrafter_SaveTextFile` node.
 
 </details>
 
 <details>
-<summary><code>PromptCrafter_LyricsCreator</code></summary>
+<summary><code>PromptCrafter_Formatter</code></summary>
 
-**Purpose:** A powerful and unique node for creating a complete visual storyboard from song lyrics.
-**How to Use:** Provide lyrics via the `user_text` input or a `.srt`/`.lrc` file. The AI will automatically group lyrics into logical scenes (verses, choruses) and generate a prompt for each.
-* **Creative Autopilot:** If you only provide lyrics, the AI will act as a creative director, inventing a visual theme, characters, and setting from scratch based on the song's mood.
-* **`style_tags`**: A comma-separated list of style names to blend together. Overrides the `style_override` dropdown.
-* **`lyrics_file`**: Use this to load a timed `.srt` or `.lrc` file. This will generate a schedule where prompts are perfectly synced to the lyrics.
-* **`audio_file`**: (Experimental) Provide the song's audio file.
-* **`use_audio_alignment`**: (Experimental) If an audio file is provided, the AI will attempt to cross-reference the audio with the lyrics to correct potential errors.
-* **`generate_schedule`**: Should almost always be **True**. This formats the output for animation nodes.
+**Purpose:** A simple utility to format text by inserting variables into a template.
+**How to Use:** Write a template in the `template_text` box using placeholders like `{a}`, `{b}`, `{c}`, and `{d}`. Connect text to the `var_a`, `var_b`, etc. inputs to replace the placeholders. This is useful for building complex, reusable prompt structures like adding LORAs or artist names to a base prompt.
+
+</details>
+
+<details>
+<summary><code>PromptCrafter_SaveTextFile</code></summary>
+
+**Purpose:** A powerful and flexible node for saving any text output to a file with dynamic naming.
+**How to Use:** Connect any text output (like a prompt or lyrics) to the `text_to_save` input. Use the `filename_template` to create a custom file naming scheme using variables like `{seed}` and `{model_name}`, which you can connect from the creator nodes' new `model_out` and `seed_out` outputs.
 
 </details>
 
@@ -163,7 +159,7 @@ If you encounter issues, here are some common solutions:
 
 ### Local Model (Ollama) Issues
 
--   **"Connection Error" or "Model not found"**: Make sure the Ollama application is running and that you have pulled the required model (e.g., `ollama pull Qwen2.5vl:7b`). The first time you use a model, it may take a moment to load into memory.
+-   **"Connection Error" or "Model not found"**: Make sure the Ollama application is running and that you have pulled the required model (e.g., `ollama pull llava:latest`). The first time you use a model, it may take a moment to load into memory.
 
 ### General Issues
 
@@ -202,8 +198,8 @@ You can add your own pre-configured rule sets to the `PromptCrafter_FileOrganize
     "name": "Sort by Checkpoint Model",
     "description": "Sorts images into folders based on the checkpoint model used.",
     "scheme": "# This scheme uses metadata to find the model name.
-metadata_contains: Juggernaut.safetensors -&gt; By_Model/Juggernaut
-metadata_contains: Dreamshaper.safetensors -&gt; By_Model/Dreamshaper
+metadata_contains: Juggernaut.safetensors -> By_Model/Juggernaut
+metadata_contains: Dreamshaper.safetensors -> By_Model/Dreamshaper
 # Add more model rules here"
 }
 ```
@@ -220,7 +216,7 @@ metadata_contains: Dreamshaper.safetensors -&gt; By_Model/Dreamshaper
 <details>
 <summary><strong>Adding Custom Style Profiles</strong></summary>
 
-You can add your own creative styles to the `style_override` dropdown in the creator nodes (`ImageCreator`, `VideoCreator`, `LyricsCreator`).
+You can add your own creative styles to the `style_override` dropdown in the creator nodes (`VisualCreator`, `LyricsCreator`).
 
 1.  **Locate the File**: Open the `style_profiles.json` file located in your `ComfyUI/custom_nodes/ComfyUI-PromptCrafter/` directory.
 
@@ -288,6 +284,27 @@ You can add your own custom captioning prompts to the `captioner_profile` dropdo
 
 </details>
 
+---
+
+## ❤️ Support the Project
+
+Hours of passion and code go into developing and maintaining PromptCrafter. If you find these tools useful, inspiring, or if they've saved you some time, please consider supporting the project. Your help allows me to dedicate more time to creating new features, fixing bugs, and making more tutorials.
+
+### How You Can Help
+
+* **[Buy me a coffee on Ko-fi!](https://ko-fi.com/pyrategfxproductions)** ☕
+    Your direct support is the most impactful way to fuel development and is hugely appreciated!
+
+* **[Subscribe on YouTube!](https://www.youtube.com/@PyrateGFXProductions)** 📺
+    I post creative projects using these nodes. Subscribing is a fantastic and free way to show your support. Check out my other channel, **[@TwigandBerries](https://www.youtube.com/@TwigandBerries)**, too!
+
+* **Star the Repo on GitHub** ⭐
+    If you find this project useful, giving it a star on GitHub helps with visibility and lets me know you appreciate the work.
+
+* **Check out my work on Civitai!** 🎨
+    You can find models, images, and more on my **[Civitai Profile](https://civitai.com/user/PyrateGFXProductions)**.
+
+Every bit of support, whether it's a coffee or a click, makes a real difference. Thank you!
 ---
 
 ## 📜 License

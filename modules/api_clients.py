@@ -70,7 +70,8 @@ class OllamaClient:
     def _make_request(self, url, headers, payload, timeout):
         """A shared helper for making POST requests and handling common HTTP/network errors."""
         try:
-            response = config.SHARED_SESSION.post(url, headers=headers, json=payload, timeout=timeout)
+            session = config.SHARED_SESSION if config.SHARED_SESSION is not None else requests
+            response = session.post(url, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()
             return True, response.json(), response.status_code
         except requests.exceptions.RequestException as e:

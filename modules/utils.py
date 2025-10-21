@@ -31,7 +31,11 @@ if config.MATPLOTLIB_AVAILABLE:
         import matplotlib
         import matplotlib.pyplot as plt
     except ImportError:
+        matplotlib = None
         plt = None
+else:
+    matplotlib = None
+    plt = None
 
 # ------------------------------------------------------------------------------------
 # General Utilities
@@ -208,6 +212,9 @@ def _get_and_create_output_dir(output_path: str, debug_mode: bool = False) -> st
 def _save_output_to_file(filename_prefix, sections, base_filename="prompt"):
     """Saves generated content sections to a timestamped text file."""
     out_dir = _get_and_create_output_dir(filename_prefix)
+    if out_dir is None:
+        print(f"\033[91m[PromptCrafter] Error: Could not determine output directory for saving file.\033[0m")
+        return
     fname = f"{base_filename}_{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000}.txt"
     fpath = os.path.join(out_dir, fname)
     with open(fpath, "w", encoding="utf-8") as f:
@@ -271,6 +278,16 @@ class TextCleaner:
         t = re.sub(r",\s*,+", ",", t)
         return re.sub(r"\s+", " ", t).strip()
 
+    @staticmethod
+    def sanitize_filename(text, max_length=150):
+        """Sanitizes a string to be a valid filename."""
+        # Replace spaces and common delimiters with underscores
+        text = re.sub(r'[\s,]+', '_', text)
+        # Remove any characters that are not valid in filenames
+        text = re.sub(r'[\\/*?:"<>|]', '', text)
+        # Remove leading/trailing underscores and truncate
+        return text.strip('_')[:max_length]
+
 # ------------------------------------------------------------------------------------
 # Image & Audio Processing
 # ------------------------------------------------------------------------------------
@@ -309,7 +326,7 @@ def _add_metadata_to_image(image_path, caption_text):
 
     try:
         img = Image.open(image_path)
-        img_format = img.format.upper()
+        img_format = img.format.upper() if img.format else ""
 
         if img_format == 'PNG':
             from PIL.PngImagePlugin import PngInfo
@@ -379,9 +396,13 @@ def audio_to_spectrogram(audio_path):
         print(f"\033[94m[PromptCrafter] Using cached spectrogram for {os.path.basename(audio_path)}.\033[0m")
         return config.CACHE.get(cache_key)
     try:
+        import librosa
+        import librosa.display
         y, sr = librosa.load(audio_path, sr=None)
-        S = librosa.feature.melspectrogram(y=y, sr=sr)
+        S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
         S_dB = librosa.power_to_db(S, ref=np.max)
+        if plt is None:
+            return "[Error: matplotlib.pyplot is not available.]"
         fig, ax = plt.subplots(figsize=(10, 4))
         librosa.display.specshow(S_dB, sr=sr, x_axis='time', y_axis='mel', ax=ax)
         ax.set(title=f'Mel spectrogram: {os.path.basename(audio_path)}')
@@ -481,6 +502,8 @@ def _get_verified_path(folder_path, file_name=None, is_dir=False):
         print(f"\033[93m[PromptCrafter] Warning: Directory not found at '{full_folder_path}'.\033[0m")
         return None
     else:
+        if file_name is None:
+            return None
         filepath = os.path.join(full_folder_path, file_name)
         if os.path.exists(filepath): return filepath
         print(f"\033[93m[PromptCrafter] Warning: File not found at '{filepath}'.\033[0m")
@@ -634,7 +657,7 @@ def _should_perform_web_search(user_query, model, seed, debug_mode, timeout=40):
 
         ---
         USER QUERY:
-        {query}
+        {user_query}
         ---
 
         Based on your analysis, respond with ONLY a JSON object.
@@ -854,7 +877,7 @@ def _extract_subjects(source_text, source_label, instruction_text, run_config, d
     return True, _post_process_extracted_subjects(items_or_err, post_process_func)
 
 def _extract_primary_subjects(user_text, run_config):
-    instruction = "From the USER INSTRUCTIONS, extract a literal list of all visual subjects, characters, and specific named objects the user explicitly wants to see in the final scene. IGNORE musical instruments, audio descriptions, tempo notes, and genre descriptions."
+    instruction = "From the USER INSTRUCTIONS, extract a literal list of all visual subjects, characters, and specific named objects the user explicitly wants to see in the final scene. IGNORE musical instruments, audio descriptions, tempo notes, and genre descriptions. CRITICALLY: Pay close attention to the user's specific inputs (e.g., text under 'Character:' or 'Style/Theme:'). IGNORE any subjects mentioned only in example prompts or generic instructional text."
     def clean_func(item_text):
         cleaned = re.sub(r'\s*\bfrom image \d+\b\s*', ' ', item_text, flags=re.I).strip()
         stop_phrases = {"main subjects", "the subjects", "the characters", "subjects from the image", "characters from the image", "an epic scene", "a scene", "main subject", "the main subject", "the main subjects in the images", "subjects in the images"}

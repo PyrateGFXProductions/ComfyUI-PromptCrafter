@@ -14,6 +14,7 @@ import textwrap
 # Third-party imports
 import torch
 from PIL import Image
+import librosa
 
 # ComfyUI imports
 import comfy.utils
@@ -72,7 +73,6 @@ class PromptCrafter_QnA:
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 600, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors."} ),
                 "safe_mode": ("BOOLEAN", {"default": True, "tooltip": "Enforce SFW rules to prevent NSFW, violent, or controversial content."} ),
                 "debug_mode": ("BOOLEAN", {"default": False, "tooltip": "Print all intermediate prompts to the console for debugging."} ),
-                "save_to_txt": ("BOOLEAN", {"default": False, "tooltip": "Save the full Q&A context and response to a text file in the ComfyUI/output directory."} ),
             },
             "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
             "optional": {
@@ -81,7 +81,6 @@ class PromptCrafter_QnA:
                 "enable_web_search": ("BOOLEAN", {"default": True, "tooltip": "Allow the node to perform a web search for questions about recent events or topics requiring current information."} ),
                 "fast_web_search": ("BOOLEAN", {"default": True, "tooltip": "In web search mode, only use search result snippets instead of fetching full page content. Much faster."} ),
                 "folder_path": ("STRING", {"multiline": False, "default": "input", "tooltip": "Folder containing an optional context file (e.g., 'input' or 'input/texts')."}),
-                "filename_prefix": ("STRING", {"multiline": False, "default": "PromptCrafter/QnA", "tooltip": "Subdirectory and prefix for the saved text file."} ),
                 "file_name": ("STRING", {"multiline": False, "default": "<none>", "tooltip": "The name of the text file within the specified folder."} ),
                 "chunk_large_context": ("BOOLEAN", {"default": True, "tooltip": "Automatically chunk and summarize context files that are too large."} ),
                 "chunk_size_words": ("INT", {"default": 2000, "min": 500, "max": 8000, "step": 100, "tooltip": "The approximate size of each chunk in words for summarization."} ),
@@ -94,7 +93,7 @@ class PromptCrafter_QnA:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("response", "history_out")
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
     
     def execute(self, user_text, model, **kwargs):
         try:
@@ -115,8 +114,6 @@ class PromptCrafter_QnA:
             chunk_size_words = kwargs.get("chunk_size_words", 2000)
             temperature = kwargs.get("temperature", 0.2)
             safe_mode = kwargs.get("safe_mode", True)
-            save_to_txt = kwargs.get("save_to_txt", False)
-            filename_prefix = kwargs.get("filename_prefix", "PromptCrafter/QnA")
             
             llm_model = model
             has_image = image is not None
@@ -150,7 +147,9 @@ class PromptCrafter_QnA:
                     context = raw_context
                     context_source = f"File ({file_name})"
                 else:
-                    context = f"[Error: File not found at '{os.path.join(folder_path, file_name)}'.]"
+                    safe_folder = folder_path if folder_path is not None else ""
+                    safe_file = file_name if file_name is not None else ""
+                    context = f"[Error: File not found at '{os.path.join(safe_folder, safe_file)}'.]"
                     raw_context = context
                     context_source = f"File ({file_name}) - Not Found"
             elif enable_web_search:
@@ -193,18 +192,6 @@ class PromptCrafter_QnA:
             new_history_entry = f"User: {final_user_text}\nAssistant: {response_text}"
             updated_history = f"{history_text}\n{new_history_entry}".strip() if history_text else new_history_entry
 
-            if save_to_txt and response_text.strip():
-                sections = []
-                if history_text: sections.append(("CONVERSATION HISTORY", history_text))
-                sections.append(("CONTEXT SOURCE", context_source))
-                if raw_context:
-                    sections.append(("CONTEXT (RAW)", raw_context))
-                    if raw_context != context: sections.append(("CONTEXT (SUMMARIZED)", context))
-                sections.append(("USER QUERY (RAW)" if raw_user_text != final_user_text else "USER QUERY", user_text))
-                if raw_user_text != final_user_text: sections.append(("USER QUERY (SUMMARIZED)", final_user_text))
-                sections.append(("RESPONSE", response_text))
-                utils._save_output_to_file(filename_prefix, sections, base_filename="qna")
-
             return (response_text, updated_history)
         except Exception as e:
             print(f"\033[91m[PromptCrafter] Error in QnA node: {e}\033[0m")
@@ -218,7 +205,7 @@ class PromptCrafter_QnA:
 class PromptCrafter_Captioner:
     DESCRIPTION = get_node_description("PromptCrafter_Captioner")
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "vision_model": (api_clients.get_all_models(), {"tooltip": "The vision language model (VLM) to use for captioning."}),
@@ -294,7 +281,7 @@ class PromptCrafter_Captioner:
             full_folder_path = utils._get_verified_path(input_folder, is_dir=True)
             if not full_folder_path: return (f"Input folder not found: {input_folder}",)
 
-            image_files = [f for f in os.listdir(full_folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp'))]
+            image_files = [f for f in os.listdir(full_folder_path) if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp"))]
             if not image_files: return (f"No images found in {full_folder_path}",)
 
             # Determine the output directory for caption files
@@ -307,8 +294,22 @@ class PromptCrafter_Captioner:
             processed_count, renamed_count, skipped_count, failed_count = 0, 0, 0, 0
             failed_files = []
 
+            # --- FIX 1: Corrected ThreadPoolExecutor Dictionary Syntax ---
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_img = {executor.submit(self._caption_one_image, comfy.utils.pil2tensor(Image.open(os.path.join(full_folder_path, img)).convert("RGB")), model, final_caption_prompt, temperature, seed, debug_mode, timeout): img for img in image_files}
+                future_to_img = {
+                    executor.submit(
+                        self._caption_one_image, 
+                        comfy.utils.pil2tensor(Image.open(os.path.join(full_folder_path, img))).convert("RGB"), 
+                        model, 
+                        final_caption_prompt, 
+                        temperature, 
+                        seed, 
+                        debug_mode, 
+                        timeout
+                    ): img 
+                    for img in image_files
+                }
+                # -----------------------------------------------------------
 
                 for future in concurrent.futures.as_completed(future_to_img):
                     img_filename = future_to_img[future]
@@ -337,8 +338,11 @@ class PromptCrafter_Captioner:
 
                         if rename_file_with_caption:
                             sanitized_base_name = self._sanitize_filename(caption_text)
+                            
+                            # --- FIX 3: Corrected f-string for batch mode fallback ---
                             if not sanitized_base_name:
-                                sanitized_base_name = f"caption_{int(time.time()*1000)}"
+                                sanitized_base_name = f"caption_{int(time.time()*1000)}" 
+                            # -------------------------------------------------------
 
                             # When renaming, the new image and caption always live in the input folder
                             # Use the new utility to get a unique path
@@ -392,9 +396,21 @@ class PromptCrafter_Captioner:
 
             if save_caption:
                 out_dir = utils._get_and_create_output_dir(output_path)
-                fname = filename.strip() or f"caption_{{time.strftime('%Y%m%d_%H%M%S')}}_{int(time.time()*1000)%1000}}"
+                # Ensure out_dir is valid; fall back to creating the requested output_path or use CWD
+                if not out_dir:
+                    try:
+                        os.makedirs(output_path, exist_ok=True)
+                        out_dir = os.path.abspath(output_path)
+                    except Exception:
+                        out_dir = os.getcwd()
+                        print(f"\033[93m[PromptCrafter] Warning: Could not create output path '{output_path}', falling back to current working directory: {out_dir}\033[0m")
+
+                # --- FIX 2: Corrected f-string for single mode filename ---
+                fname = filename.strip() or f"caption_{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time()*1000)%1000}"
+                # -------------------------------------------------------
                 fname = self._sanitize_filename(fname, max_length=200)
-                with open(os.path.join(out_dir, f"{fname}.txt"), "w", encoding="utf-8") as f:
+                file_path = os.path.join(out_dir, f"{fname}.txt")
+                with open(file_path, "w", encoding="utf-8") as f:
                     f.write(final_caption)
             
             # This part is tricky for single mode as we don't have the original file path.
@@ -405,35 +421,159 @@ class PromptCrafter_Captioner:
 
             return (final_caption,)
 
-
 # ------------------------------------------------------------------------------------
 # PromptCrafter Creator Nodes (Base, Image, Video, Lyrics)
 # ------------------------------------------------------------------------------------
 class PromptCrafter_BaseCreator: # noqa
-    def _handle_creator_exception(self, e, **kwargs):
-        """A centralized exception handler for creator nodes."""
-        print(f"\033[91m[PromptCrafter] An unexpected error occurred in {type(self).__name__}: {e}\033[0m")
-        import traceback
-        traceback.print_exc()
-        
-        # Get the specific return types for the calling class instance.
-        # This makes the handler generic and future-proof for new creator nodes
-        # with different return signatures.
-        return_types = getattr(self, 'RETURN_TYPES', [])
+    def _is_speech_prompt_request(self, user_text, run_config):
+        """Analyzes user text to determine if it's a request for a speech/dialogue prompt."""
+        # Keywords and patterns that strongly suggest a speech prompt format
+        speech_keywords = ["speech prompt", "saying:", "exclaiming", "dialogue"]
+        # Regex to find <S>...<E> or similar tags
+        speech_tag_pattern = re.compile(r'<S>.*<E>', re.IGNORECASE | re.DOTALL)
 
-        error_string = f"Error in {type(self).__name__}: {e}"
-        return_values = [error_string]
+        if any(keyword in user_text.lower() for keyword in speech_keywords) or speech_tag_pattern.search(user_text):
+            utils._debug_print(run_config.debug_mode, "Speech Prompt Check", "Pattern match found, confirming with AI.")
+            prompt = textwrap.dedent(f'''
+                Analyze the user's request. Is the user asking to create a text prompt that includes dialogue, speech, or specific text to be spoken by a subject, often using tags like <S> and <E>?
+
+                --- USER REQUEST ---
+                {user_text}
+                ---
+
+                Respond with ONLY a JSON object: {{"is_speech_request": true/false}}
+            ''').strip()
+            
+            ok, result = api_clients._reason_with_model(
+                run_config.model, 
+                prompt, 
+                use_chat_api=run_config.use_chat_api, 
+                temperature=0.0, 
+                seed=run_config.seed, 
+                debug_mode=run_config.debug_mode, 
+                debug_title="Speech Intent Check"
+            )
+            
+            if ok and isinstance(result, dict) and result.get("is_speech_request"):
+                return True
         
-        # For the rest of the outputs, provide safe defaults based on their type.
-        # Start from the second output, as the first is always the error message.
-        for i in range(1, len(return_types)):
-            return_type = return_types[i]
-            if return_type == "STRING":
-                return_values.append("")  # Empty string is safer than None for text inputs.
+        return False
+
+    def _handle_speech_prompt_request(self, user_text, images_with_weights, run_config):
+            """Handles the specific case of generating a formatted speech prompt."""
+            print("\033[94m[PromptCrafter] Speech prompt format detected. Using specialized handler...\033[0m")
+            
+            # Use a fallback value if the subclass hasn't defined MAX_IMAGES
+            num_images = getattr(self, "MAX_IMAGES", 5)
+            
+            if not images_with_weights:
+                return ("Speech prompt generation requires an image to identify the subject.", None, None, None, None, None) + (None,) * num_images
+
+            # 1. Get the primary subject from the first image.
+            image_context, primary_subjects = self._describe_images(images_with_weights, run_config)
+            
+            subject_description = "A subject" # Default fallback
+            if primary_subjects:
+                # Clean up the subject description, removing any [PRIMARY] tags etc.
+                subject_description = re.sub(r'^\[PRIMARY\]\\s*', '', primary_subjects[0]).strip()
+            
+            # 2. Use an LLM to fill in the user's template.
+            prompt = textwrap.dedent(f'''
+                You are a creative writer. Your task is to generate a single, formatted speech prompt based on the user's instructions.
+
+                --- USER INSTRUCTIONS ---
+                {user_text}
+                ---
+                
+                --- SUBJECT DESCRIPTION ---
+                The primary subject of the scene is: {subject_description}
+                ---
+
+                TASK:
+                1.  Follow the user's specified format EXACTLY.
+                2.  Replace the placeholder for the subject description (e.g., `<describe subject>`) with the provided SUBJECT DESCRIPTION.
+                3.  Invent a unique, creative, and contextually appropriate line of dialogue for the subject to say, and place it inside the speech tags (e.g., `<S>...</E>`).
+                4.  If the user's instructions mention a specific tone (e.g., "ironically funny"), adhere to it.
+
+                Return ONLY the final, formatted prompt string. Do not include any commentary.
+            ''').strip()
+
+            ok, final_prompt = api_clients.query_model_auto(
+                run_config.model,
+                prompt,
+                prefer_chat=True,
+                temperature=run_config.temperature,
+                seed=run_config.seed,
+                debug_mode=run_config.debug_mode,
+                debug_title="Speech Prompt Generation"
+            )
+
+            if not ok:
+                return (f"Failed to generate speech prompt: {final_prompt}", None, None, None, None, None) + (None,) * num_images
+
+            # --- NEW: Generate the <AUDCAP> audio description for OVI format ---
+            audcap_prompt = textwrap.dedent(f'''
+                You are an expert audio engineer. Analyze the following scene description and dialogue.
+                Generate a concise audio description for the <AUDCAP> tag.
+                - Describe the voice (e.g., "Clear older male voice", "Young female voice, whispering").
+                - Describe the speech itself (e.g., "speaking dialogue sarcastically").
+                - Add 1-2 relevant, subtle background sounds (e.g., "subtle outdoor ambience", "faint city noise").
+                - Be concise. Keep the description to one sentence.
+
+                --- SCENE & DIALOGUE ---
+                {final_prompt}
+                ---
+
+                Return ONLY the audio description text (e.g., "Clear older male voice speaking dialogue sarcastically, subtle outdoor ambience.")
+                Do not include the <AUDCAP> tags yourself.
+            ''').strip()
+
+            ok_aud, aud_desc = api_clients.query_model_auto(
+                run_config.model,
+                audcap_prompt,
+                prefer_chat=True,
+                temperature=0.1, # Low temp for factual description
+                seed=run_config.seed,
+                debug_mode=run_config.debug_mode,
+                debug_title="OVI <AUDCAP> Generation"
+            )
+
+            ovi_formatted_prompt = final_prompt # Start with the base prompt
+            if ok_aud and aud_desc.strip():
+                # Add the audio caption in the OVI format
+                ovi_formatted_prompt = f"{final_prompt.strip().rstrip('.')} <AUDCAP> {aud_desc.strip()} <ENDAUDCAP>"
             else:
-                return_values.append(None) # None is fine for IMAGE, etc.
-        return tuple(return_values)
+                # Fallback if AUDCAP generation fails, just use the visual prompt
+                print(f"\033[93m[PromptCrafter] Warning: Could not generate <AUDCAP> description. Returning speech prompt without it. Error: {aud_desc}\033[0m")
+                # ovi_formatted_prompt is already set to final_prompt, so no action needed
 
+            # Pass through the results in the expected format for the node
+            passthrough_images = [img for img, _ in images_with_weights]
+            passthrough_images.extend([None] * (num_images - len(passthrough_images)))
+            
+            return (ovi_formatted_prompt, "", image_context, "", run_config.model, str(run_config.seed)) + tuple(passthrough_images)
+
+    def _handle_creator_exception(self, e):
+            """Logs the exception and returns a tuple matching the node's return signature."""
+            import traceback
+            error_message = f"[PromptCrafter] Error: {e}"
+            print(f"\033[91m{error_message}\n{traceback.format_exc()}\033[0m")
+            
+            # This is the key: we return a tuple with the error message as the first
+            # item, and then pad the rest with 'None' to match the node's
+            # RETURN_TYPES. This prevents the workflow from crashing.
+            # Use getattr safely to handle subclasses that define RETURN_TYPES at class level.
+            try:
+                # Prefer instance attribute first, then class attribute, fallback to None
+                rt = getattr(self, "RETURN_TYPES", None)
+                if rt is None:
+                    rt = getattr(type(self), "RETURN_TYPES", None)
+                num_returns = len(rt) if rt else 2
+            except Exception:
+                # Any unexpected issue falls back to a safe default
+                num_returns = 2
+                
+            return (error_message,) + (None,) * (num_returns - 1)
 
     def _collect_images_with_weights(self, image_count=1, image_weights_json="{}", **kwargs):
         """Collects all connected image tensors and their weights from the dynamic inputs."""
@@ -509,7 +649,7 @@ class PromptCrafter_BaseCreator: # noqa
             run_config.style_profile = {"persona": first_persona, "inspiration": "\n- ".join(filter(None, inspirations))}
         elif run_config.style_override and run_config.style_override != "None":
             # User has overridden the style.
-            original_name = re.sub(r'^\(.*?\)\s', '', run_config.style_override)
+            original_name = re.sub(r'^\(.*\)\s', '', run_config.style_override)
             if original_name in style_profiles.NAMED_STYLE_PROFILES:
                 run_config.style_profile = style_profiles.NAMED_STYLE_PROFILES[original_name]
         else:
@@ -529,7 +669,7 @@ class PromptCrafter_BaseCreator: # noqa
                 print("\033[94m[PromptCrafter] User text mentions images, but none are connected. Using AI to confirm intent...\033[0m")
                 prompt = f"""Analyze the user's request. Does it explicitly mention using input images, reference images, or the provided images?
 - If it says \"using the images\", \"based on the pictures\", etc., answer YES.
-- If it just describes a scene (e.g., \"create an image of a woman\"), answer NO.
+- If it just describes a scene (e.g., \"create an image of a woman\", answer NO.
 ---
 USER REQUEST ---
 {user_text}
@@ -569,7 +709,11 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" # noqa
         cache_key = utils._get_cache_key(images, weights, run_config.model, run_config.use_chat_api, run_config.temperature, run_config.language, run_config.safe_mode, run_config.seed, "describe_images_v4_parallel", run_config.style_profile)
         if config.CACHE.has(cache_key):
             print("\033[94m[PromptCrafter] Using cached image descriptions and primary subjects.\033[0m")
-            return config.CACHE.get(cache_key)
+            cached = config.CACHE.get(cache_key)
+            # Ensure we never return None from the cache to prevent unpacking errors.
+            if cached is None:
+                return ("No reference images provided.", [])
+            return cached
 
         description_objects = []
         for idx, (img, weight) in enumerate(images_with_weights, start=1):
@@ -606,7 +750,7 @@ Analyze Image {idx} and provide a detailed, one-paragraph description and identi
 
 Your task is to:
 1.  Identify the single most important subject (the focal point).
-2.  Describe the visual elements of the scene factually. Describe the subject's clothing and actions. Avoid interpreting or labeling the artistic style (e.g., instead of "punk rock", say "wearing a studded leather vest and ripped jeans").
+2.  Describe the visual elements of the scene factually. Describe the subject's clothing and actions. Avoid interpreting or labeling the artistic style (e.g., instead of \"punk rock\", say \"wearing a studded leather vest and ripped jeans\").
 3.  If there is any readable text, transcribe it exactly.
 
 Return ONLY a JSON object with two keys:
@@ -615,7 +759,7 @@ Return ONLY a JSON object with two keys:
 
 The final output must be in {language} only.{safety_rule}"""
 
-    def _generate_visual_prompt_pipeline(self, mode, user_text, images_with_weights, save_to_txt, filename_prefix, run_config, negative_prompt="", **kwargs): # noqa
+    def _generate_visual_prompt_pipeline(self, mode, user_text, images_with_weights, run_config, negative_prompt="", **kwargs): # noqa
         images = [img for img, _ in images_with_weights]
         if not images_with_weights and not (user_text and user_text.strip() and user_text.strip() != config.DEFAULT_PROMPT_TEXT):
             return ("No inputs provided.", None, None)
@@ -628,14 +772,20 @@ The final output must be in {language} only.{safety_rule}"""
         if not ok_draft: return (draft_or_err, image_context, None)
         scene_prompt = draft_or_err
         
-        style_rules = self._build_style_and_composition_rules(mode, images, run_config, user_instructions, user_context, image_context) # noqa
+        # Ensure we always pass strings to _build_style_and_composition_rules to avoid type issues
+        safe_user_instructions = user_instructions or ""
+        safe_user_context = user_context or ""
+        safe_image_context = image_context or ""
+        # Ensure image_context is a string before passing
+        image_context_str = str(safe_image_context) if not isinstance(safe_image_context, str) else safe_image_context
+        style_rules = self._build_style_and_composition_rules(mode, images, run_config, safe_user_instructions, safe_user_context, image_context_str) # noqa
         scene_prompt = self._refine_image_video_prompt(scene_prompt, mode, mandatory_tokens, style_rules, run_config) # noqa
         
         new_positive, counter_negatives = utils._simplify_for_diffusion(scene_prompt, user_text, run_config)
         scene_prompt = new_positive
 
         combined_negative_input = f"{negative_prompt}, {counter_negatives}".strip().strip(',')
-        final_negative_prompt = self._finalize_visual_prompt_output(scene_prompt, image_context, user_text, mandatory_tokens, run_config, save_to_txt, filename_prefix, user_negative_prompt=combined_negative_input) # noqa
+        final_negative_prompt = self._finalize_visual_prompt_output(scene_prompt, image_context, user_text, mandatory_tokens, run_config, user_negative_prompt=combined_negative_input) # noqa
 
         return (scene_prompt, image_context, final_negative_prompt)
 
@@ -648,13 +798,77 @@ The final output must be in {language} only.{safety_rule}"""
 
         # This logic is now consolidated and correctly handles all cases.
         tok_ok, tokens_or_msg = utils._extract_mandatory_tokens_with_model(image_context, user_text, run_config, primary_subjects_from_images)
+
+        # If token extraction from text fails, but we have subjects from images,
+        # treat the image subjects as mandatory and continue. This handles cases
+        # where the user provides an image with a generic prompt like "create a prompt for this."
+        if not tok_ok and primary_subjects_from_images:
+            print("\033[94m[PromptCrafter] No subjects found in text prompt. Using subjects from image analysis instead.\033[0m")
+            tok_ok = True
+            tokens_or_msg = {"primary": primary_subjects_from_images, "allowed_list": primary_subjects_from_images}
+
         if not tok_ok:
             return False, (tokens_or_msg, None, None, None, None)
         
         mandatory_tokens = tokens_or_msg
-        all_primary_subjects = [re.sub(r'^\s*\bPRIMARY\b\s*', '', t) for t in mandatory_tokens.get("primary", [])]
+        # Robust handling: ensure we have an iterable list of primary items regardless of the returned type.
+        primary_list = []
+        if isinstance(mandatory_tokens, dict):
+            primary_list = mandatory_tokens.get("primary", []) or []
+        elif isinstance(mandatory_tokens, str):
+            primary_list = [mandatory_tokens]
+        elif isinstance(mandatory_tokens, (list, tuple)):
+            primary_list = list(mandatory_tokens)
+        else:
+            primary_list = []
 
-        user_instructions, user_context = user_text, ""
+        # Normalize to a flat list of strings
+        normalized_primary = []
+        for item in primary_list:
+            if item is None:
+                continue
+            if isinstance(item, (list, tuple)):
+                for sub in item:
+                    if isinstance(sub, str):
+                        normalized_primary.append(sub)
+                    else:
+                        try:
+                            normalized_primary.append(str(sub))
+                        except Exception:
+                            continue
+            elif isinstance(item, str):
+                normalized_primary.append(item)
+            else:
+                try:
+                    normalized_primary.append(str(item))
+                except Exception:
+                    continue
+
+        all_primary_subjects = [re.sub(r'^\s*\bPRIMARY\b\s*', '', t).strip() for t in normalized_primary]
+        # --- FIX 2: Inject the Image 1 Subject as Mandatory ---
+        if image_context:
+            try:
+                # The image_context contains the JSON output from the initial image analysis
+                image_json = json.loads(image_context)
+                primary_subject_from_image = image_json.get("primary_subject", "").strip()
+
+                if primary_subject_from_image:
+                    # Append the image's subject to the mandatory list
+                    # Prepending a tag ensures it's clearly identified as the primary visual focus
+                    tagged_subject = f"[PRIMARY] {primary_subject_from_image}"
+                    if tagged_subject not in all_primary_subjects:
+                         all_primary_subjects.append(tagged_subject)
+            except json.JSONDecodeError:
+                # Log error if image context isn't valid JSON, but continue
+                print(f"[PromptCrafter] Warning: Failed to parse Image 1 JSON for subject injection.")
+        # -----------------------------------------------------------
+        # --- FIX: Strip Example Section to Prevent Subject Misinterpretation ---
+        # The 'example:' block often contains subjects that are incorrectly parsed as mandatory.
+        # This regex removes the 'example:' keyword and everything that follows it.
+        cleaned_user_text = re.sub(r'(\n|\r\n|\r)?example:.*', '', user_text, flags=re.DOTALL)
+        # ------------------------------------------------------------------
+        
+        user_instructions, user_context = cleaned_user_text, ""
         return True, (image_context, user_instructions, user_context, mandatory_tokens, all_primary_subjects)
 
     def _generate_initial_draft(self, mode, user_instructions, user_context, image_context, mandatory_tokens, images, run_config, primary_subjects_from_images=None): # noqa
@@ -817,10 +1031,12 @@ The final output must be in {language} only.{safety_rule}"""
     def _get_video_specific_rules(self, run_config, user_instructions="", user_context="", image_context=""): # noqa
         motion_analysis_prompt = f"""You are an expert film director. Analyze the provided scene context and choose the most appropriate motion style and a specific camera movement for a video prompt.
 
---- SCENE CONTEXT ---
+---
+SCENE CONTEXT ---
 User Instructions: {user_instructions}
 Image Descriptions: {image_context}
---- END SCENE CONTEXT ---
+---
+END SCENE CONTEXT ---
 
 Part 1: Choose ONE motion style from the following list that best fits the overall mood and action:
 - \"subtle, natural\": For calm, still scenes (e.g., gentle breeze).
@@ -856,7 +1072,7 @@ Example: {{'motion_style': \"dynamic, cinematic\", 'camera_movement': \"tracking
         current_prompt = draft_prompt
         
         # Extract the subject names from the tagged list
-        primary_items_list = [re.sub(r'^\ Electrochemical_cell_diagram_with_labels_and_explanation_of_components_and_reactions_in_a_clear_and_concise_manner', '', t) for t in (mandatory_tokens or {}).get("primary", [])]
+        primary_items_list = [re.sub(r'^ Electrochemical_cell_diagram_with_labels_and_explanation_of_components_and_reactions_in_a_clear_and_concise_manner', '', t) for t in (mandatory_tokens or {}).get("primary", [])]
 
         if not primary_items_list:
             critique_prompt = self._build_refinement_prompt(current_prompt, mode, [], [], style_rules, run_config, ask_for_json=False)
@@ -904,23 +1120,23 @@ Return ONLY a single JSON object with three keys:
 
         # Base template
         refine_template = textwrap.dedent("""
-You are a master prompt critic and editor. Your task is to review and enhance the following DRAFT PROMPT.
+            You are a master prompt critic and editor. Your task is to review and enhance the following DRAFT PROMPT.
 
---- DRAFT PROMPT ---
-{prompt_to_review}
---- END DRAFT PROMPT ---
+            --- DRAFT PROMPT ---
+            {prompt_to_review}
+            --- END DRAFT PROMPT ---
 
---- REQUIREMENTS & RULES ---
-{mandatory_section}
-{allowed_section}
-3.  **MODE-SPECIFIC RULES:**
-    - The final prompt is for an '{mode}' generation.
-    {mode_specific_rule}
-4.  **GENERAL STYLE & COMPOSITION RULES:**
-{rules}
---- END REQUIREMENTS & RULES ---
+            --- REQUIREMENTS & RULES ---
+            {mandatory_section}
+            {allowed_section}
+            3.  **MODE-SPECIFIC RULES:**
+                - The final prompt is for an '{mode}' generation.
+                {mode_specific_rule}
+            4.  **GENERAL STYLE & COMPOSITION RULES:**
+            {rules}
+            --- END REQUIREMENTS & RULES ---
 
-{instructions}""")
+            {instructions}""" ).strip()
 
         mandatory_section = f"1.  **MANDATORY SUBJECTS (CRITICAL):** The final prompt MUST include all of the following subjects: {json.dumps(primary_items)}\n" if primary_items else ""
         allowed_section = f"2.  **ALLOWED SUBJECTS (Anti-Hallucination):** The prompt should ONLY contain subjects from this list. If the draft contains subjects not on this list, REMOVE them or replace them with a generic equivalent from the list. Allowed list: {json.dumps(all_allowed_items)}\n" if all_allowed_items else ""
@@ -935,21 +1151,10 @@ You are a master prompt critic and editor. Your task is to review and enhance th
             instructions=final_instructions
         )
 
-    def _finalize_visual_prompt_output(self, scene_prompt, image_context, user_text, mandatory_tokens, run_config, save_to_txt, filename_prefix, user_negative_prompt=""): # noqa
+    def _finalize_visual_prompt_output(self, scene_prompt, image_context, user_text, mandatory_tokens, run_config, user_negative_prompt=""): # noqa
         ai_negative_prompt = utils._generate_negative_prompt(scene_prompt, run_config, user_negative_prompt="")
         parts = [p for p in [user_negative_prompt, ai_negative_prompt] if p and p.strip()]
         final_negative_prompt = ", ".join(parts)
-
-        if save_to_txt and scene_prompt and scene_prompt.strip():
-            sections = [("IMAGE CONTEXT", image_context)]
-            if user_text and user_text.strip() and user_text.strip() != config.DEFAULT_PROMPT_TEXT:
-                sections.append(("USER TEXT", user_text))
-            if mandatory_tokens:
-                all_tokens = mandatory_tokens.get("primary", []) + mandatory_tokens.get("secondary", [])
-                if all_tokens: sections.append(("EXTRACTED TOKENS", "\n".join(all_tokens)))
-            sections.append(("NEGATIVE PROMPT", final_negative_prompt))
-            sections.append(("SCENE PROMPT", scene_prompt))
-            utils._save_output_to_file(filename_prefix, sections, base_filename="scene_prompt")
         return final_negative_prompt
 
     def _handle_scheduled_mode(self, mode, user_text, images_with_weights, run_config, **kwargs): # noqa
@@ -994,18 +1199,48 @@ You are a master prompt critic and editor. Your task is to review and enhance th
                 except Exception as exc:
                     error_msg = f"[Error processing scene {index + 1}: {exc}]"
                     generated_prompts[index] = error_msg
-                    print(f"\033[91m[PromptCrafter] {error_msg}\033[0m")
+                    print(f'\033[91m[PromptCrafter] {error_msg}\033[0m')
 
         if not any(generated_prompts):
             return ("", "Failed to generate prompts for any of the scenes. Please check the model and logs.", image_context_for_all, base_negative_prompt)
 
         schedule_json = utils._create_schedule_from_items(generated_prompts, kwargs.get("max_frames", 240), 0, kwargs.get("interpolate_keyframes", True), kwargs.get("interpolation_frame_interval", 10))
         
-        if kwargs.get("save_to_txt", False) and schedule_json:
-            sections = [("USER TEXT", user_text), ("IMAGE CONTEXT", image_context_for_all), ("NEGATIVE PROMPT", base_negative_prompt), ("SCHEDULE", schedule_json)]
-            utils._save_output_to_file(kwargs.get("filename_prefix"), sections, base_filename="schedule")
-
         return ("", schedule_json, image_context_for_all, base_negative_prompt)
+
+    def _format_prompt_for_target(self, prompt, target_format):
+            prompt_text = str(prompt).strip().rstrip(',')
+            
+            if target_format == "Generic (SD1.5, SD2.1)":
+                # Standard prompt, no changes needed.
+                return prompt_text
+
+            elif target_format == "Fooocus":
+                # Fooocus uses --style flags
+                return f"{prompt_text} --style cinematic-default"
+            
+            elif target_format == "Stable Diffusion 3":
+                # SD3 can use weighting, but a standard prompt is fine.
+                # This is more of a placeholder for future, complex SD3 syntax.
+                return prompt_text
+            
+            elif target_format == "Stable Cascade":
+                # Stable Cascade uses a standard prompt, no special formatting required.
+                return prompt_text
+
+            elif target_format == "FLUX / Qwen / Hunyuan":
+                # These models (like FLUX, PixArt, Hunyuan, and Qwen-Image) 
+                # often benefit from simple, descriptive prompts + quality tags.
+                return f"{prompt_text}, masterpiece, high quality, 8k"
+
+            elif target_format == "Generic Video (Wan, etc.)":
+                # Most Wan 2.2 variants (T2V, I2V, S2V, OVI, VACE, Animate) 
+                # and others (hidream, chroma) use a standard descriptive prompt.
+                # The OVI speech format is handled separately by our speech detector.
+                return prompt_text
+            
+            else: # "Generic" fallback
+                return prompt_text
 
     def _generate_prompt_for_scene(self, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, **kwargs): # noqa
         config_key_parts = (run_config.model, run_config.language, run_config.temperature, run_config.use_chat_api, run_config.max_length_words, run_config.seed, run_config.max_retries, run_config.critique_strength, run_config.simplify_for_diffusion, run_config.use_deep_think, str(run_config.style_profile))
@@ -1027,12 +1262,16 @@ You are a master prompt critic and editor. Your task is to review and enhance th
         config.CACHE.set(cache_key, new_positive)
         return new_positive
 
-class PromptCrafter_ImageCreator(PromptCrafter_BaseCreator):
-    DESCRIPTION = get_node_description("PromptCrafter_ImageCreator")
+# ------------------------------------------------------------------------------------
+# PromptCrafter_VisualCreator Node
+# ------------------------------------------------------------------------------------
+class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
+    DESCRIPTION = "A unified node to create advanced prompts for images or short videos by analyzing user text and optional reference images."
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "pipeline_mode": (["Image", "Video"], {"default": "Image"}),
                 "user_text": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The language model to use for all analysis and generation. Vision-capable models are required if using images."} ),
                 "image_count": ("INT", {"default": 1, "min": 1, "max": 5, "step": 1}),
@@ -1048,12 +1287,11 @@ class PromptCrafter_ImageCreator(PromptCrafter_BaseCreator):
                 "max_retries": ("INT", {"default": 2, "min": 0, "max": 10}),
                 "safe_mode": ("BOOLEAN", {"default": True}),
                 "debug_mode": ("BOOLEAN", {"default": False}),
-                "save_to_txt": ("BOOLEAN", {"default": False}),
-                "filename_prefix": ("STRING", {"default": "scene_prompts"}),
             },
             "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO", "negative_prompt": "STRING"},
             "optional": {
                 "style_tags": ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."} ),
+                "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "Generic Video (Wan, etc.)"], {"default": "Generic (SD1.5, SD2.1)", "tooltip": "Format the prompt for a specific model's syntax. OVI speech format is handled automatically."}),
                 "generate_schedule": ("BOOLEAN", {"default": False}),
                 "max_frames": ("INT", {"default": 240, "min": 1, "max": 99999}),
                 "interpolate_keyframes": ("BOOLEAN", {"default": True}),
@@ -1062,40 +1300,719 @@ class PromptCrafter_ImageCreator(PromptCrafter_BaseCreator):
         }
 
     MAX_IMAGES = 5
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
-    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
+    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt", "model_out", "seed_out") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
 
     def execute(self, user_text, model, negative_prompt="", **kwargs):
         try:
-            images_with_weights = self._collect_images_with_weights(**kwargs) # noqa
-            initial_run_config = self._setup_config("Image", user_text, model, images_with_weights=images_with_weights, **kwargs)
+            pipeline_mode = kwargs.get("pipeline_mode", "Image")
+            target_model_format = kwargs.get("target_model_format", "Generic")
             
-            error, new_user_text = self._handle_creative_intent("Image", user_text, images_with_weights, initial_run_config)
+            images_with_weights = self._collect_images_with_weights(**kwargs) # noqa
+            initial_run_config = self._setup_config(pipeline_mode, user_text, model, images_with_weights=images_with_weights, **kwargs)
+            
+            if self._is_speech_prompt_request(user_text, initial_run_config):
+                return self._handle_speech_prompt_request(user_text, images_with_weights, initial_run_config)
+            
+            error, new_user_text = self._handle_creative_intent(pipeline_mode, user_text, images_with_weights, initial_run_config)
             if error: return (error,) + (None,) * (len(self.RETURN_TYPES) - 1)
             final_user_text = new_user_text or user_text
 
-            run_config = self._setup_config("Image", final_user_text, model, images_with_weights=images_with_weights, **kwargs)
+            run_config = self._setup_config(pipeline_mode, final_user_text, model, images_with_weights=images_with_weights, **kwargs)
 
             passthrough_images = [img for img, _ in images_with_weights]
             passthrough_images.extend([None] * (self.MAX_IMAGES - len(passthrough_images)))
 
             if kwargs.get("generate_schedule"):
-                prompt, schedule, image_context, neg_prompt = self._handle_scheduled_mode("Image", final_user_text, images_with_weights, run_config, **kwargs)
-                return (prompt, schedule, image_context, neg_prompt) + tuple(passthrough_images)
+                prompt, schedule, image_context, neg_prompt = self._handle_scheduled_mode(pipeline_mode, final_user_text, images_with_weights, run_config, **kwargs)
+                prompt = self._format_prompt_for_target(prompt, target_model_format)
+                return (prompt, schedule, image_context, neg_prompt, model, str(run_config.seed)) + tuple(passthrough_images)
             else:
                 pipeline_kwargs = {k: v for k, v in kwargs.items() if k not in ['prompt', 'extra_pnginfo']}
-                pipeline_kwargs.pop('save_to_txt', None)
-                pipeline_kwargs.pop('filename_prefix', None)
 
                 prompt, image_context, negative_prompt_out = self._generate_visual_prompt_pipeline(
-                    mode="Image", user_text=final_user_text, images_with_weights=images_with_weights, save_to_txt=kwargs.get("save_to_txt", False), filename_prefix=kwargs.get("filename_prefix", "scene_prompts"), run_config=run_config, negative_prompt=negative_prompt, **pipeline_kwargs
+                    mode=pipeline_mode, user_text=final_user_text, images_with_weights=images_with_weights, run_config=run_config, negative_prompt=negative_prompt, **pipeline_kwargs
                 )
-                return (prompt, "", image_context, negative_prompt_out) + tuple(passthrough_images)
+                prompt = self._format_prompt_for_target(prompt, target_model_format)
+                return (prompt, "", image_context, negative_prompt_out, model, str(run_config.seed)) + tuple(passthrough_images)
         except Exception as e:
             return self._handle_creator_exception(e)
 
+# ------------------------------------------------------------------------------------
+# PromptCrafter_LyricsCreator Node
+# ------------------------------------------------------------------------------------
+class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
+    DESCRIPTION = get_node_description("PromptCrafter_LyricsCreator")
+    @classmethod
+    def INPUT_TYPES(cls):
+        types = copy.deepcopy(PromptCrafter_VisualCreator.INPUT_TYPES()) # Base off the new visual creator
+        types["required"]["temperature"] = ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01})
+        # // AI ENHANCEMENT: Changed default max_length_words to 40, aligning with the goal of shorter prompts.
+        types["required"]["max_length_words"] = ("INT", {"default": 40, "min": 0, "max": 400, "step": 10})
+        types["required"]["style_override"] = (style_profiles.get_style_override_options("Lyrics"), {"default": "None"})
+        types["required"]["simplify_for_diffusion"] = ("BOOLEAN", {"default": False})
+        
+        # Remove inputs not relevant to LyricsCreator
+        if "pipeline_mode" in types["required"]: del types["required"]["pipeline_mode"]
+        if "target_model_format" in types["optional"]: del types["optional"]["target_model_format"]
+
+        types["optional"].update({
+            "style_tags": ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."} ),
+            "audio_folder_path": ("STRING", {"multiline": False, "default": "input/audio"}),
+            "audio_file": ("STRING", {"multiline": False, "default": "<none>"}),
+            "lyrics_folder_path": ("STRING", {"multiline": False, "default": "input/lyrics"}),
+            "lyrics_file": ("STRING", {"multiline": False, "default": "<none>"}),
+            "use_audio_alignment": ("BOOLEAN", {"default": True}),
+            "song_length_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1}),
+            "fps": ("FLOAT", {"default": 16.0, "min": 1.0, "max": 120.0, "step": 0.5}),
+            "whisper_model_size": (["tiny", "base", "small", "medium", "large-v3"], {"default": "large-v3", "tooltip": "The size of the Whisper model to use for transcription. Larger models are more accurate but slower and use more VRAM."} ),
+            "whisper_engine": (["faster-whisper", "insanely-fast-whisper"], {"default": "faster-whisper", "tooltip": "The transcription engine to use. 'insanely-fast-whisper' is optimized for batch processing and lower latency."} ),
+            "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "Generic Video (Wan, etc.)"], {"default": "Generic Video (Wan, etc.)", "tooltip": "Format the prompt for a specific model's syntax. OVI speech format is handled automatically."}),
+        })
+        types["optional"]["generate_schedule"] = ("BOOLEAN", {"default": True})
+        types["optional"]["interpolate_keyframes"] = ("BOOLEAN", {"default": False})
+        types["optional"]["interpolation_frame_interval"] = ("INT", {"default": 0, "min": 0, "max": 100})
+        return types
+    MAX_IMAGES = 5
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
+    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt", "clean_lyrics_txt", "lyrics_srt", "model_out", "seed_out") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
+    FUNCTION = "execute"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
+
+    def execute(self, user_text, model, **kwargs):
+        try:
+            images_with_weights = self._collect_images_with_weights(**kwargs)
+            
+            lyrics_text, timed_segments, lyrics_meta = (None, None, None)
+            
+            audio_file = kwargs.get("audio_file", "<none>")
+            lyrics_file = kwargs.get("lyrics_file", "<none>")
+            audio_path = utils._get_audio_path(kwargs.get("audio_folder_path"), audio_file)
+
+            # If audio is provided without other text inputs, transcribe it.
+            if audio_path and lyrics_file == "<none>" and user_text.strip() == config.DEFAULT_PROMPT_TEXT:
+                lyrics_text, timed_segments, lyrics_meta = self._transcribe_audio(
+                    audio_path, 
+                    model_size=kwargs.get("whisper_model_size", "large-v3"), 
+                    engine=kwargs.get("whisper_engine", "faster-whisper")
+                )
+            else:
+                lyrics_text, timed_segments, lyrics_meta = utils._get_lyrics_from_input(user_text, kwargs.get("lyrics_folder_path"), lyrics_file, kwargs.get("debug_mode", False))
+
+            run_config = self._setup_config("Lyrics", lyrics_text or user_text, model, images_with_weights=images_with_weights, **kwargs)
+
+            # --- Pipeline Step 2: Correct Lyrics with VLM ---
+            lyrics_text, timed_segments = self._correct_transcript_with_vlm(lyrics_text, timed_segments, audio_path, run_config)
+
+            # --- Pipeline Step 3: Generate Prompts ---
+            prompt, schedule, image_context, negative_prompt = self._generate_prompts_from_lyrics(
+                lyrics=lyrics_text,
+                timed_segments=timed_segments,
+                images_with_weights=images_with_weights,
+                user_instructions=user_text,
+                config=run_config,
+                negative_prompt=kwargs.get("negative_prompt", ""),
+                **kwargs
+            )
+
+            passthrough_images = [img for img, _ in images_with_weights]
+            passthrough_images.extend([None] * (self.MAX_IMAGES - len(passthrough_images)))
+            
+            final_srt_string = ""
+            if timed_segments:
+                def to_srt_time(seconds):
+                    millis = round((seconds - int(seconds)) * 1000)
+                    seconds_int = int(seconds)
+                    minutes = seconds_int // 60
+                    seconds_int %= 60
+                    hours = minutes // 60
+                    minutes %= 60
+                    return f"{hours:02d}:{minutes:02d}:{seconds_int:02d},{millis:03d}"
+                
+                srt_lines = []
+                for i, (start, end, text) in enumerate(timed_segments):
+                    srt_lines.append(str(i + 1))
+                    srt_lines.append(f"{to_srt_time(start)} --> {to_srt_time(end)}")
+                    srt_lines.append(text)
+                    srt_lines.append("")
+                final_srt_string = "\n".join(srt_lines)
+
+            return (prompt, schedule, image_context, negative_prompt, lyrics_text, final_srt_string, model, str(run_config.seed)) + tuple(passthrough_images)
+
+        except Exception as e:
+            return self._handle_creator_exception(e)
+
+    def _transcribe_audio(self, audio_path, model_size="large-v3", engine="faster-whisper"):
+        if not audio_path: return None, None, None
+        
+        print(f"\033[94m[PromptCrafter] Transcribing audio at {audio_path} using {engine}...")
+        try:
+            if engine == "insanely-fast-whisper":
+                from insanely_fast_whisper import WhisperModel as InsanelyWhisperModel
+                
+                # This implementation uses the Transformers pipeline
+                model = InsanelyWhisperModel(f"openai/whisper-{model_size}", model_type="hf")
+                
+                print(f"[PromptCrafter] Loading whisper model 'openai/whisper-{model_size}' with insanely-fast-whisper...")
+                # Note the different arguments for the transcribe call
+                outputs = model.transcribe(audio_path, batch_size=8)
+                lyrics_text = outputs["text"]
+                
+                # Reconstruct timed_segments from 'chunks' if available
+                timed_segments = []
+                if "chunks" in outputs:
+                    for chunk in outputs["chunks"]:
+                        if "timestamp" in chunk and chunk["timestamp"] is not None:
+                            start, end = chunk["timestamp"]
+                            timed_segments.append((start, end, chunk["text"]))
+
+                print(f"\033[92m[PromptCrafter] Transcription complete with insanely-fast-whisper.\033[0m")
+                lyrics_meta = f"Transcribed from {os.path.basename(audio_path)} (insanely-fast-whisper)"
+                return lyrics_text, timed_segments, lyrics_meta
+            else: # Default to faster-whisper
+                from faster_whisper import WhisperModel
+                
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                compute_type = "float16" if torch.cuda.is_available() else "int8"
+                
+                print(f"[PromptCrafter] Loading whisper model '{model_size}' on device '{device}' with compute type '{compute_type}'...")
+                model_whisper = WhisperModel(model_size, device=device, compute_type=compute_type)
+                
+                segments_generator, info = model_whisper.transcribe(audio_path, word_timestamps=True)
+                
+                segments = list(segments_generator)
+                
+                lyrics_text = " ".join([s.text.strip() for s in segments]).strip()
+                timed_segments = [(s.start, s.end, s.text.strip()) for s in segments]
+
+                print(f"\033[92m[PromptCrafter] Transcription complete. Language: {info.language}, Duration: {info.duration}s\033[0m")
+                lyrics_meta = f"Transcribed from {os.path.basename(audio_path)} ({info.language})\n"
+                
+                return lyrics_text, timed_segments, lyrics_meta
+
+        except ImportError as e:
+            print(f"\033[91m[PromptCrafter] Error: A required transcription library is not installed. Please ensure both 'faster-whisper' and 'insanely-fast-whisper' are installed. Details: {e}\033[0m")
+            raise
+        except Exception as e:
+            print(f"\033[91m[PromptCrafter] Error during audio transcription: {e}\033[0m")
+            return f"[Error during transcription: {e}]", [], None
+
+    def _correct_transcript_with_vlm(self, raw_lyrics, timed_segments, audio_path, config):
+        if not (config.use_audio_alignment and audio_path and raw_lyrics and not raw_lyrics.startswith("[Error")):
+            return raw_lyrics, timed_segments
+
+        print("\033[94m[PromptCrafter] Audio file provided. Performing audio-lyric alignment (this is experimental)...")
+        spectrogram_img = utils.audio_to_spectrogram(audio_path)
+        
+        if not isinstance(spectrogram_img, Image.Image):
+            print(f"\033[93m[PromptCrafter] Warning: Could not generate spectrogram. Error: {spectrogram_img}\033[0m")
+            return raw_lyrics, timed_segments
+
+        corrected_lyrics = self._validate_lyrics_against_audio(raw_lyrics, spectrogram_img, config)
+        
+        if corrected_lyrics.strip() and corrected_lyrics.strip() != raw_lyrics.strip():
+            print("\033[92m[PromptCrafter] Lyrics corrected based on audio analysis.\033[0m")
+            # Reprocess the corrected lyrics to get new text and segments
+            return utils._process_lyrics_content(corrected_lyrics)
+        
+        return raw_lyrics, timed_segments
+
+    def _analyze_audio_mood(self, audio_path, config):
+        if not audio_path:
+            return ""
+        try:
+            import librosa
+            print("\033[94m[PromptCrafter] Analyzing audio mood with librosa...")
+            y, sr = librosa.load(audio_path)
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            
+            audio_summary = f"The song has a tempo of approximately {tempo:.0f} BPM."
+            
+            mood_prompt = f"""Analyze the following musical feature and describe the song's overall mood and genre in a few keywords. 
+            
+            Audio Feature: {audio_summary}
+            
+            Return only the keywords. Example: 'energetic, rock, upbeat' or 'somber, orchestral, melancholic'.
+            """
+            ok, mood_keywords = api_clients.query_model_auto(config.model, mood_prompt, prefer_chat=True, temperature=0.1, seed=config.seed, debug_mode=config.debug_mode, debug_title="Audio Mood Analysis")
+            
+            if ok and mood_keywords:
+                print(f"\033[92m[PromptCrafter] Detected Audio Mood: {mood_keywords}\033[0m")
+                return mood_keywords.strip()
+            return ""
+            
+        except ImportError:
+            print("\033[91m[PromptCrafter] Error: 'librosa' is not installed, which is required for audio mood analysis. Please run 'pip install librosa'.\033[0m")
+            return ""
+        except Exception as e:
+            print(f"\033[91m[PromptCrafter] Could not analyze audio mood: {e}\033[0m")
+            return ""
+
+    def _generate_prompts_from_lyrics(self, lyrics, timed_segments, images_with_weights, user_instructions, config, negative_prompt, **kwargs):
+            if not lyrics or not lyrics.strip(): return "No lyrics provided.", "", "No reference images provided.", ""
+            
+            audio_path = utils._get_audio_path(kwargs.get("audio_folder_path"), kwargs.get("audio_file", "<none>"))
+            mood_keywords = self._analyze_audio_mood(audio_path, config)
+            
+            if lyrics.startswith("[Error"):
+                return f"Failed to process lyrics input: {lyrics}", "", "No reference images provided.", ""
+
+            image_context, mandatory_tokens, style_inspiration_section, instructions_section, context_section = self._prepare_lyrics_generation_context(user_instructions, images_with_weights, lyrics, config)
+            
+            theme_ok, global_theme_or_err = self._generate_storyboard_global_theme(lyrics, instructions_section, context_section, image_context, config, mood_keywords=mood_keywords)
+            if not theme_ok: return global_theme_or_err, "", image_context, ""
+
+            storyboard_prompts = self._process_lyrics_storyboard(lyrics, timed_segments, global_theme_or_err, mandatory_tokens, style_inspiration_section, config)
+            if not storyboard_prompts or (isinstance(storyboard_prompts, str) and storyboard_prompts.startswith("Could not generate")):
+                return (storyboard_prompts or "Failed to generate storyboard prompts."), "", image_context, ""
+
+            # --- NEW: Apply target model formatting to each prompt ---
+            target_model_format = kwargs.get("target_model_format", "Generic")
+            if target_model_format != "Generic":
+                print(f"\033[94m[PromptCrafter] Applying '{target_model_format}' formatting to {len(storyboard_prompts)} lyric scenes...\033[0m")
+                formatted_prompts = []
+                for p in storyboard_prompts:
+                    if p.startswith("[Error:"):
+                        formatted_prompts.append(p)
+                    else:
+                        # Use the inherited method
+                        formatted_prompts.append(self._format_prompt_for_target(p, target_model_format))
+                storyboard_prompts = formatted_prompts
+            # --- END NEW BLOCK ---
+
+            storyboard_text_for_neg_prompt = "\n\n---\n\n".join(storyboard_prompts)
+            ai_negative_prompt = utils._generate_negative_prompt(storyboard_text_for_neg_prompt, config, user_negative_prompt="")
+            parts = [p for p in [negative_prompt, ai_negative_prompt] if p and p.strip()]
+            final_negative_prompt = ", ".join(parts)
+
+            final_output = self._create_final_lyrics_output(
+                storyboard_prompts=storyboard_prompts,
+                timed_segments=timed_segments,
+                generate_schedule=kwargs.get("generate_schedule", False),
+                fps=config.fps,
+                song_length_seconds=config.song_length_seconds,
+                config=config
+            )
+            
+            prompt_out, schedule_out = ("", final_output) if kwargs.get("generate_schedule", False) else (final_output, "")
+            
+            return prompt_out, schedule_out, image_context, final_negative_prompt
+
+    # // AI ENHANCEMENT: New method to group lyrics into logical scenes using an LLM.
+    # // This creates more meaningful chunks (verse, chorus, etc.) than simple line-by-line processing.
+    def _group_lyrics_into_scenes(self, lyrics, run_config):
+        """Groups raw lyrics into narratively coherent scenes using an AI model."""
+        print("\033[94m[PromptCrafter] Grouping lyrics into logical scenes using AI...\033[0m")
+        prompt = textwrap.dedent(f"""
+            You are a literary analyst. Your task is to read the following song lyrics and group them into logical scenes or sections (like Verse 1, Chorus, Bridge, etc.).
+            Each scene should represent a distinct part of the narrative or a shift in mood.
+
+            --- LYRICS ---
+            {lyrics}
+            --- END LYRICS ---
+
+            RULES:
+            1. Analyze the structure and meaning to identify logical breaks.
+            2. Group consecutive lines into scenes. Do not split a single thought.
+            3. Return ONLY a JSON object with a single key "scenes", which is an array of strings. Each string in the array should be a multi-line block of lyrics representing one scene.
+
+            Example Output:
+            {{
+                "scenes": [
+                    "First line of verse 1\nSecond line of verse 1",
+                    "First line of the chorus\nSecond line of the chorus",
+                    "First line of verse 2\nSecond line of verse 2"
+                ]
+            }}
+        """ ).strip()
+
+        ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Lyric Scene Grouping")
+        
+        if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list):
+            print(f"\033[92m[PromptCrafter] Successfully grouped lyrics into {len(result_json['scenes'])} scenes.\033[0m")
+            return result_json["scenes"]
+        else:
+            print(f"\033[93m[PromptCrafter] Warning: AI-based lyric grouping failed. Falling back to line-by-line processing. Error: {result_json}\033[0m")
+            return None # Fallback signal
+
+    def _validate_lyrics_against_audio(self, lyrics_text, audio_img, run_config): # noqa
+        prompt = f'''You are an audio proofreading specialist. I have a raw transcript from an automatic speech recognition (ASR) system that may contain errors.
+Analyze the attached audio spectrogram and compare it to the RAW TRANSCRIPT provided below. Your task is to listen carefully to the audio (via the spectrogram) and meticulously correct any inaccuracies in the text.
+
+RAW TRANSCRIPT:
+{lyrics_text}
+Return ONLY the 100% corrected lyrics. Preserve the original line breaks and song structure.'''
+        ok, corrected = api_clients.query_model_auto(run_config.model, prompt, images=[audio_img], prefer_chat=True, temperature=run_config.temperature, seed=run_config.seed, debug_mode=run_config.debug_mode, timeout=run_config.timeout, debug_title="Audio-Lyric Cross-Check")
+        return corrected if ok else lyrics_text
+
+    def _prepare_lyrics_generation_context(self, user_instructions, images_with_weights, lyrics, run_config): # noqa
+        images = [img for img, _ in images_with_weights]
+        describe_result = self._describe_images(images_with_weights, run_config)
+        # Be defensive: ensure describe_result is not None and is an iterable tuple before unpacking.
+        if describe_result is None:
+            image_context, _ = "No reference images provided.", []
+        elif isinstance(describe_result, tuple) and len(describe_result) >= 2:
+            image_context, _ = describe_result
+        else:
+            # Fallback for unexpected return types
+            image_context, _ = "No reference images provided.", []
+        parsed_instructions, parsed_context = user_instructions, ""
+        style_inspiration_section, instructions_section, context_section = self._prepare_lyrics_context_sections(run_config, images, lyrics, parsed_instructions, parsed_context)
+        tok_ok, mandatory_tokens = utils._extract_mandatory_tokens_with_model(image_context, (parsed_instructions or ""), run_config)
+        return image_context, (mandatory_tokens if tok_ok else {}), style_inspiration_section, instructions_section, context_section
+
+    def _prepare_lyrics_context_sections(self, run_config, images, lyrics, instructions, context): # noqa
+        style_inspiration_section = ""
+        if run_config.style_profile:
+            inspiration = run_config.style_profile.get("inspiration", "")
+            if inspiration: style_inspiration_section = f"- {inspiration}\n"
+        elif run_config.style_override != "None" and run_config.style_override in style_profiles.STYLE_KEYWORDS:
+            style_inspiration_section = f"- Style: {style_profiles.STYLE_KEYWORDS[run_config.style_override]}\n"
+        else:
+            inspiration = run_config.style_profile.get("inspiration", "")
+            if inspiration: style_inspiration_section = f"- {inspiration.lstrip('- ').strip()}\n"
+        
+        instructions_section = f"SONG INSTRUCTIONS (use as a guide, but prioritize the ACTION/MOTION rules):\n{instructions}\n\n" if instructions and instructions.strip() else ""
+        context_section = f"SONG CONTEXT & NARRATIVE (for mood and story):\n{context}\n\n" if context and context.strip() else ""
+        return style_inspiration_section, instructions_section, context_section
+
+    def _generate_storyboard_global_theme(self, lyrics, instructions_section, context_section, image_context, run_config, mood_keywords=""): # noqa
+        mood_section = f"\n--- AUDIO MOOD ---\n{mood_keywords}\n" if mood_keywords else ""
+        theme_prompt = f"""You are a music video director. Your task is to analyze the provided source material and synthesize a "Global Theme" for a music video. This theme is a high-level summary that will ensure visual consistency across all scenes.
+
+**CRITICAL INSTRUCTIONS:**
+1.  **Analyze Source Material:** Your theme MUST be based on the explicit information and implicit mood of the LYRICS, INSTRUCTIONS, IMAGE REFERENCES, and especially the AUDIO MOOD.
+2.  **Handle Abstract Lyrics:** If the lyrics are abstract or non-narrative, focus on interpreting the core emotions, mood, and symbolism. Translate these abstract concepts into a cohesive visual theme. For example, for lyrics about loneliness, you might suggest a theme of 'a single figure in vast, empty landscapes with a cool, desaturated color palette'.
+3.  **Prioritize Audio Mood:** The AUDIO MOOD is a strong indicator of the intended feeling. If the lyrics are ambiguous, let the audio mood guide your visual theme.
+4.  **Define Core Elements:** The theme should define the core visual style, setting, character design, and mood.
+
+--- LYRICS ---
+{lyrics}
+--- INSTRUCTIONS ---
+{instructions_section}
+--- CONTEXT ---
+{context_section}
+--- IMAGE REFERENCES ---
+{image_context}{mood_section}
+---
+Return ONLY the Global Theme description in a single, concise paragraph."""
+        ok, theme = api_clients.query_model_auto(run_config.model, theme_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature, seed=run_config.seed, timeout=120, debug_mode=run_config.debug_mode, debug_title="Storyboard Global Theme")
+        return (True, utils.TextCleaner.single_paragraph(theme)) if ok else (False, f"Could not generate storyboard theme: {theme}")
+
+    def _process_lyrics_storyboard(self, lyrics, timed_segments, global_theme, mandatory_tokens, style_inspiration_section, run_config):
+        storyboard_rules_text = self._build_storyboard_rules(run_config, style_inspiration_section)
+        
+        segments = []
+        if timed_segments:
+            # Use SRT data if available
+            segments = [(str(i + 1), seg[2]) for i, seg in enumerate(timed_segments)]
+        else:
+            # Otherwise, use AI to group lyrics into scenes
+            scene_lyrics = self._group_lyrics_into_scenes(lyrics, run_config)
+            if scene_lyrics:
+                segments = [(f"Scene {i + 1}", scene_text) for i, scene_text in enumerate(scene_lyrics)]
+            else:
+                # Fallback to line-by-line if AI grouping fails
+                segments = [(f"Line {i + 1}", line) for i, line in enumerate(lyrics.splitlines()) if line.strip()]
+
+        if not segments: return "Could not segment lyrics into processable lines or sections."
+
+        print(f"\033[94m[PromptCrafter] Generating storyboard for {len(segments)} scenes iteratively...\033[0m")
+        processed_prompts: list[str] = [""] * len(segments)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(segments))) as executor:
+            # Submit all jobs to the executor
+            future_to_index = {
+                executor.submit(self._create_prompt_for_scene, name, text, global_theme, storyboard_rules_text, mandatory_tokens, run_config): i
+                for i, (name, text) in enumerate(segments)
+            }
+            # Process results as they complete
+            for future in concurrent.futures.as_completed(future_to_index):
+                index = future_to_index[future]
+                segment_name, _ = segments[index]
+                try:
+                    processed_prompts[index] = future.result()
+                    print(f"\033[92m[PromptCrafter] Finished processing '{segment_name}'.\033[0m")
+                except Exception as exc:
+                    error_message = f"Scene '{segment_name}' generated an exception: {exc}"
+                    print(f'\033[91m[PromptCrafter] {error_message}\033[0m')
+                    processed_prompts[index] = f"[Error: {error_message}]"
+        
+        return processed_prompts
+
+    def _create_prompt_for_scene(self, scene_name, scene_text, global_theme, storyboard_rules_text, mandatory_tokens, run_config):
+        """Generates a final prompt for a lyric scene in two steps: Concept and Refinement."""
+        
+        # --- STEP 1: Conceptualize the Shot ---
+        concept_prompt = textwrap.dedent(f"""
+            You are a creative music video director. Your goal is to invent a single, clear visual concept for a short 5-second video clip that represents the lyrics provided.
+
+            --- GLOBAL THEME (for visual consistency) ---
+            {global_theme}
+
+            --- LYRIC SCENE: "{scene_name}" ---
+            {scene_text}
+            ---
+            
+            TASK: Describe a single, compelling camera shot. Focus on ONE core action or visual moment.
+            - What is the subject doing?
+            - What is the key visual element?
+            - Keep the concept description to a single, simple sentence (under 20 words).
+
+            Return ONLY the shot concept sentence.
+        """ ).strip()
+
+        concept_ok, shot_concept = api_clients.query_model_auto(
+            run_config.model, concept_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature,
+            seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title=f"Concept for '{scene_name}'"
+        )
+
+        if not concept_ok:
+            error_msg = f"Failed to generate concept for '{scene_name}': {shot_concept}"
+            print(f"\033[93m[PromptCrafter] Warning: {error_msg}\033[0m")
+            return f"[Error: {error_msg}]"
+
+        # --- STEP 2: Refine the Concept into a Final Prompt ---
+        refine_prompt = textwrap.dedent(f"""
+            You are an expert prompt engineer for video generation models. Your task is to refine the SHOT CONCEPT into a concise, high-quality final prompt.
+
+            --- SHOT CONCEPT ---
+            {shot_concept}
+            ---
+            
+            --- STYLE & COMPOSITION RULES ---
+            {storyboard_rules_text}
+            ---
+            
+            TASK:
+            1.  Translate the SHOT CONCEPT into a powerful, descriptive prompt.
+            2.  Integrate the style and composition rules naturally.
+            3.  Ensure the final prompt is clear, focused, and remains concise.
+
+            Return ONLY the final, polished prompt.
+        """ ).strip()
+
+        final_ok, final_prompt = api_clients.query_model_auto(
+            run_config.model, refine_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature,
+            seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title=f"Refine Prompt for '{scene_name}'"
+        )
+        
+        if not final_ok:
+            error_msg = f"Failed to refine prompt for '{scene_name}': {final_prompt}"
+            print(f"\033[93m[PromptCrafter] Warning: {error_msg}\033[0m")
+            return f"[Error: {error_msg}]"
+
+        return utils.TextCleaner.slim_prompt_text(utils.TextCleaner.single_paragraph(final_prompt))
+
+    def _build_storyboard_rules(self, run_config, style_inspiration_section):
+        safety_rule = f"\n{config.SAFE_MODE_RULE}" if run_config.safe_mode else ""
+        length_rule = f"- The final prompt must be concise (ideally under {run_config.max_length_words} words) to create a clear, focused 5-second video clip (approx. 77-81 frames)."
+        negative_concepts_rule = f"- CRITICAL: Do NOT include any of the following concepts: {run_config.negative_concepts}" if run_config.negative_concepts else ""
+        
+        return textwrap.dedent(f"""
+            - All generated prompt text MUST be in {run_config.language}.
+            {style_inspiration_section.strip()}
+            {safety_rule.strip()}
+            {negative_concepts_rule.strip()}
+            - The visual elements (characters, setting) must be consistent with the Global Theme.
+            - The ACTION and MOOD must be a direct visual interpretation of the specific lyric scene.
+            - CRITICAL PRIORITY: Focus on a single, clear subject ACTION and physics-based MOTION.
+            - Keep the environment concise and supporting, not distracting.
+            - Maintain visual continuity with the overall theme.
+            {length_rule}
+        """ ).strip()
+
+    def _create_final_lyrics_output(self, storyboard_prompts, timed_segments, generate_schedule, fps, song_length_seconds, config): # noqa
+        if not generate_schedule: return "\n\n---\n\n".join(storyboard_prompts)
+        if timed_segments: return self._create_schedule_from_srt(storyboard_prompts, timed_segments, fps, config)
+        max_frames = int(song_length_seconds * fps) if song_length_seconds > 0 else config.max_frames
+        return utils._create_schedule_from_items(storyboard_prompts, max_frames, 0, config.interpolate_keyframes, config.interpolation_frame_interval)
+
+    def _create_schedule_from_srt(self, storyboard_prompts, timed_segments, fps, run_config): # noqa
+        print("\033[94m[PromptCrafter] SRT file detected. Generating timed schedule...\033[0m")
+        if len(storyboard_prompts) != len(timed_segments):
+            return f"[Error: Mismatch between SRT segments ({len(timed_segments)}) and generated prompts ({len(storyboard_prompts)}).]"
+        schedule = collections.OrderedDict()
+        for i, seg in enumerate(timed_segments):
+            frame = int(seg[0] * fps)
+            prompt = storyboard_prompts[i].strip()
+            schedule[frame] = prompt
+        if run_config.interpolate_keyframes:
+            schedule = utils._interpolate_schedule_prompts(schedule, run_config.interpolation_frame_interval)
+        schedule_items = ",".join([f'\"{str(key)}\": {json.dumps(str(value))}' for key, value in schedule.items()])
+        return f"{{{schedule_items}}}"
+
+# ------------------------------------------------------------------------------------
+# PromptCrafter_Formatter Node (Enhanced)
+# ------------------------------------------------------------------------------------
+class PromptCrafter_Formatter:
+    DESCRIPTION = "Formats prompts or schedules. Can apply templates or add prefixes/suffixes to individual prompts or all keyframes in a schedule."
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mode": (["Simple Template", "Apply to Prompt", "Apply to Schedule"], {"default": "Simple Template", "tooltip": "Choose the formatting operation."}),
+            },
+            "optional": {
+                "prompt_in": ("STRING", {"multiline": True, "default": "", "tooltip": "The main prompt string to format."}),
+                "schedule_in": ("STRING", {"multiline": True, "default": "", "tooltip": "The schedule JSON string to format."}),
+                
+                # For "Simple Template" mode
+                "template_text": ("STRING", {"multiline": True, "default": "A high-quality photo of {a}, in the style of {b}.", "tooltip": "Template for 'Simple Template' mode. Use {a}, {b}, {prompt}, {schedule}, etc."}),
+                "var_a": ("STRING", {"multiline": False, "default": "", "tooltip": "Replaces {a} in the template."}),
+                "var_b": ("STRING", {"multiline": False, "default": "", "tooltip": "Replaces {b} in the template."}),
+                "var_c": ("STRING", {"multiline": False, "default": "", "tooltip": "Replaces {c} in the template."}),
+                "var_d": ("STRING", {"multiline": False, "default": "", "tooltip": "Replaces {d} in the template."}),
+
+                # For "Apply to Prompt/Schedule" modes
+                "prefix": ("STRING", {"multiline": False, "default": "", "tooltip": "Text to add to the beginning of the prompt(s)."}),
+                "suffix": ("STRING", {"multiline": False, "default": "", "tooltip": "Text to add to the end of the prompt(s)."}),
+                "find_text": ("STRING", {"multiline": False, "default": "", "tooltip": "Text to find (case-sensitive)."}),
+                "replace_with": ("STRING", {"multiline": False, "default": "", "tooltip": "Text to replace with."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("formatted_prompt", "formatted_schedule")
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+
+    def _format_text(self, text, prefix, suffix, find_text, replace_with):
+        """Helper function to apply formatting rules to a single text string."""
+        
+        # 1. Start with the core text
+        processed_text = text if text else ""
+        
+        # 2. Find/Replace
+        if find_text:
+            processed_text = processed_text.replace(find_text, replace_with)
+        
+        # 3. Add Prefix/Suffix
+        # Use a list to join non-empty parts, avoiding comma/space issues
+        parts = []
+        if prefix:
+            parts.append(prefix.strip())
+        if processed_text:
+            parts.append(processed_text)
+        if suffix:
+            parts.append(suffix.strip())
+            
+        # Join with ", " only if multiple parts exist
+        return ", ".join(parts)
+
+    def execute(self, mode, prompt_in="", schedule_in="", template_text="", var_a="", var_b="", var_c="", var_d="", prefix="", suffix="", find_text="", replace_with=""):
+        
+        out_prompt = prompt_in
+        out_schedule = schedule_in
+
+        if mode == "Simple Template":
+            placeholders = {
+                "{a}": str(var_a),
+                "{b}": str(var_b),
+                "{c}": str(var_c),
+                "{d}": str(var_d),
+                "{prompt}": str(prompt_in),
+                "{schedule}": str(schedule_in),
+            }
+            formatted_text = template_text
+            for placeholder, value in placeholders.items():
+                formatted_text = formatted_text.replace(placeholder, value)
+            
+            # In this mode, the main output is the formatted template text.
+            out_prompt = formatted_text
+            # Pass the original schedule through unchanged
+            out_schedule = schedule_in 
+        
+        elif mode == "Apply to Prompt":
+            out_prompt = self._format_text(prompt_in, prefix, suffix, find_text, replace_with)
+            # Pass schedule through unchanged
+            out_schedule = schedule_in
+
+        elif mode == "Apply to Schedule":
+            if not schedule_in:
+                return (prompt_in, "") # Pass prompt, return empty schedule
+            
+            try:
+                # We need the json module
+                import json
+                schedule_data = json.loads(schedule_in)
+                
+                new_schedule = {}
+                # Iterate through the schedule (which is a dict of "frame": "prompt")
+                for frame, prompt_text in schedule_data.items():
+                    # Apply the same formatting rules to each prompt
+                    new_schedule[frame] = self._format_text(prompt_text, prefix, suffix, find_text, replace_with)
+                
+                # Re-serialize the schedule to a string
+                out_schedule = json.dumps(new_schedule, indent=4)
+                # Pass prompt through unchanged
+                out_prompt = prompt_in
+            
+            except json.JSONDecodeError:
+                error_msg = "[PromptCrafter Formatter] Error: schedule_in is not valid JSON. Cannot apply to schedule."
+                print(f"\033[91m{error_msg}\033[0m")
+                out_prompt = error_msg # Output error to prompt string
+                out_schedule = schedule_in # Pass through the broken schedule
+            except Exception as e:
+                error_msg = f"[PromptCrafter Formatter] Error processing schedule: {e}"
+                print(f"\033[91m{error_msg}\033[0m")
+                out_prompt = error_msg
+                out_schedule = schedule_in
+
+        return (out_prompt, out_schedule)
+
+# ------------------------------------------------------------------------------------
+# PromptCrafter_SaveTextFile Node
+# ------------------------------------------------------------------------------------
+class PromptCrafter_SaveTextFile:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "text_to_save": ("STRING", {"multiline": True}),
+                "folder_path": ("STRING", {"default": "ComfyUI/output/PromptCrafter"}),
+                "filename_template": ("STRING", {"default": "{seed}_{model_name}.txt"}),
+            },
+            "optional": {
+                "model_name": ("STRING", {"multiline": False, "default": ""}),
+                "seed": ("STRING", {"multiline": False, "default": ""}),
+                "user_text": ("STRING", {"multiline": False, "default": ""}),
+                "custom_var": ("STRING", {"multiline": False, "default": ""}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("save_status",)
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+
+    def execute(self, text_to_save, folder_path, filename_template, model_name="", seed="", user_text="", custom_var=""):
+        # 1. ADD: Ensure all replacement values are strings
+        filename = filename_template.replace("{model_name}", str(model_name))
+        filename = filename.replace("{seed}", str(seed))
+        filename = filename.replace("{user_text}", str(user_text))
+        filename = filename.replace("{custom_var}", str(custom_var))
+
+        # Sanitize the filename
+        filename = utils.TextCleaner.sanitize_filename(filename)
+
+        # Ensure the directory exists (This is fine, but robust error handling is better)
+        os.makedirs(folder_path, exist_ok=True)
+        
+        # 2. ADD: Logic to get a unique filename and prevent overwrites
+        base_name, ext = os.path.splitext(filename)
+        # The 'utils' function from the original good code is the best way to handle this
+        # Assuming the existence of utils._get_unique_filepath(directory, base_name, extension)
+        out_dir = os.path.abspath(folder_path) # Need absolute path for the utility
+        full_path, _ = utils._get_unique_filepath(out_dir, base_name, ext)
+
+        # Write the content to the file
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(text_to_save)
+
+        return (f"Saved to {full_path}",)
 
 # ------------------------------------------------------------------------------------
 # PromptCrafter_FileOrganizer Node
@@ -1109,25 +2026,25 @@ class PromptCrafter_FileOrganizer:
                 "model": (api_clients.get_all_models(), {"tooltip": "The language model to use for all analysis and generation. Vision-capable models are required if using images."} ),
                 "input_folder": ("STRING", {"default": "output/unorganized", "tooltip": "The folder containing the files you want to organize (relative to ComfyUI root)."}),
                 "output_folder": ("STRING", {"default": "output/organized", "tooltip": "The root folder where organized subdirectories will be created (relative to ComfyUI root)."}),
-                "organization_profile": (organization_profiles.get_organization_profile_options(), {"default": "None (Manual Scheme)", "tooltip": "Select a pre-configured organization scheme. Overrides the manual scheme text box."} ),
+                "organization_profile": (organization_profiles.get_organization_profile_options(), {"default": "None (Manual Scheme)", "tooltip": "Select a pre-configured organization scheme. Overrides the manual scheme text box."}),
                 "organization_scheme": ("STRING", {
                     "multiline": True,
                     "default": "# Define rules, one per line. The first match will be used.\n# Format: CRITERION: VALUE -> FOLDER_NAME\n# Criteria: image_resolution, image_description_contains, captionfile_contains, filename_contains, metadata_contains, content_keyword\n\nimage_resolution: >1920x1080 -> High_Resolution/4K_ish\nimage_resolution: ==512x512 -> Square_Images/512x512\nimage_description_contains: cat -> By_Embedded_Caption/Cats\ncaptionfile_contains: dog -> By_Text_File/Dogs\nfilename_contains: car -> By_Filename/Cars\nmetadata_contains: AnimateDiff -> By_Workflow/Animations\ncontent_keyword: landscape -> By_VLM_Content/Landscapes",
                     "tooltip": "Rules for organizing files. 'image_resolution' checks dimensions (e.g., >1024x768). 'image_description_contains' reads embedded EXIF/PNG descriptions. 'captionfile_contains' reads .txt files. 'filename_contains' checks the filename. 'metadata_contains' checks the ComfyUI workflow."
                 }),
-                "action": (["Copy", "Move"], {"default": "Copy", "tooltip": "Copy files (safer) or move them to the new location."} ),
-                "dry_run": ("BOOLEAN", {"default": False, "tooltip": "Simulate the organization process and report actions without moving or copying files."} ),
-                "analysis_priority": (["Metadata First", "Content First", "Metadata Only"], {"default": "Metadata First", "tooltip": "The order of analysis. 'Metadata First' is fastest."} ),
-                "fallback_folder": ("STRING", {"default": "_unorganized", "tooltip": "Subfolder for files that do not match any rule."} ),
+                "action": (["Copy", "Move"], {"default": "Copy", "tooltip": "Copy files (safer) or move them to the new location."}),
+                "dry_run": ("BOOLEAN", {"default": False, "tooltip": "Simulate the organization process and report actions without moving or copying files."}),
+                "analysis_priority": (["Metadata First", "Content First", "Metadata Only"], {"default": "Metadata First", "tooltip": "The order of analysis. 'Metadata First' is fastest."}),
+                "fallback_folder": ("STRING", {"default": "_unorganized", "tooltip": "Subfolder for files that do not match any rule."}),
                 "auto_generate_scheme": ("BOOLEAN", {"default": False, "tooltip": "Automatically generate an organization scheme by analyzing a sample of files. Overrides the manual scheme."} ),
             },
             "optional": {
-                "run_organization": ("BOOLEAN", {"default": False, "tooltip": "Toggle to True to start the organization process. It will run once per execution."} ),
-                "max_workers": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1, "tooltip": "Number of parallel threads for processing files."} ),
-                "recursive": ("BOOLEAN", {"default": False, "tooltip": "Process files in all subdirectories of the input folder as well."} ),
-                "create_log_file": ("BOOLEAN", {"default": False, "tooltip": "Create a text log file summarizing all operations in the output folder."} ),
-                "log_filename": ("STRING", {"default": "organization_log.txt", "tooltip": "The name of the log file to be created in the output folder."} ),
-                "delete_source_folder_on_move": ("BOOLEAN", {"default": False, "tooltip": "After a successful 'Move' operation, delete the original input folder if it's empty. Use with caution."} ),
+                "run_organization": ("BOOLEAN", {"default": False, "tooltip": "Toggle to True to start the organization process. It will run once per execution."}),
+                "max_workers": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1, "tooltip": "Number of parallel threads for processing files." }),
+                "recursive": ("BOOLEAN", {"default": False, "tooltip": "Process files in all subdirectories of the input folder as well."}),
+                "create_log_file": ("BOOLEAN", {"default": False, "tooltip": "Create a text log file summarizing all operations in the output folder."}),
+                "log_filename": ("STRING", {"default": "organization_log.txt", "tooltip": "The name of the log file to be created in the output folder."}),
+                "delete_source_folder_on_move": ("BOOLEAN", {"default": False, "tooltip": "After a successful 'Move' operation, delete the original input folder if it's empty. Use with caution."}),
             }
         }
     
@@ -1299,7 +2216,7 @@ class PromptCrafter_FileOrganizer:
             You are an expert data analyst and file organization assistant. Your task is to create a logical organization scheme based on a sample of file profiles.
 
             **Available Rule Criteria & Syntax:**
-            - `image_resolution`: Checks image dimensions. Use operators `==`, `>`, `<`. Example: `image_resolution: >1024x1024 -> High_Resolution`
+            - `image_resolution`: Checks image dimensions. Use operators `=`, `>`, `<`. Example: `image_resolution: >1024x1024 -> High_Resolution`
             - `image_description_contains`: Checks embedded metadata (EXIF/PNG). Most reliable for content. Example: `image_description_contains: cat -> By_Subject/Cats`
             - `captionfile_contains`: Checks an associated `.txt` file. Example: `captionfile_contains: dog -> By_Text_File/Dogs`
             - `filename_contains`: Checks the file's name. Good for types like 'screenshot'. Example: `filename_contains: screenshot -> By_Type/Screenshots`
@@ -1325,7 +2242,7 @@ class PromptCrafter_FileOrganizer:
             image_description_contains: dog -> By_Subject/Dogs
             captionfile_contains: cyberpunk -> By_Theme/Cyberpunk
             filename_contains: screenshot -> By_Type/Screenshots
-        """ ).strip()
+        """).strip()
 
         ok, scheme = api_clients.query_model_auto(model, prompt, prefer_chat=True, temperature=0.1, seed=1, timeout=120, debug_mode=debug_mode, debug_title="Auto-Generate Scheme")
         return (scheme, None) if ok else (None, f"AI scheme generation failed: {scheme}")
@@ -1446,7 +2363,8 @@ class PromptCrafter_FileOrganizer:
             try:
                 with Image.open(file_path) as img:
                     profile["image_resolution"] = f"{img.width}x{img.height}"
-            except Exception: pass # Fail silently if image is unreadable
+            except Exception:
+                pass # Fail silently if image is unreadable
 
         # Read embedded image description (from EXIF/PNG)
         image_description = utils._read_image_description(file_path)
@@ -1461,7 +2379,8 @@ class PromptCrafter_FileOrganizer:
                     content = f.read().strip()
                     if content:
                         profile["caption_content"] = content
-            except Exception: pass
+            except Exception:
+                pass
         return profile
 
     def execute(self, model, input_folder, output_folder, organization_profile, organization_scheme, action, dry_run, analysis_priority, fallback_folder, auto_generate_scheme=False, run_organization=False, max_workers=4, recursive=False, create_log_file=False, log_filename="organization_log.txt", delete_source_folder_on_move=False, **kwargs):
@@ -1491,18 +2410,20 @@ class PromptCrafter_FileOrganizer:
 
         if not file_groups: return ("No supported files found in the input folder.", "", "")
 
-        final_scheme = organization_scheme
+        final_scheme = organization_scheme or ""  # Set empty string as default
         generated_scheme_out = ""
         if auto_generate_scheme:
             generated_scheme, error = self._generate_scheme_with_ai(file_groups, model, max_workers, debug_mode=kwargs.get("debug_mode", False))
             if error:
                 return (f"Error during auto-scheme generation: {error}", "", "")
-            final_scheme = generated_scheme
+            # Ensure we never assign None to final_scheme
+            final_scheme = generated_scheme or ""
             print(f"\033[92m[FileOrganizer] Using auto-generated scheme:\n{final_scheme}\033[0m")
         elif organization_profile != "None (Manual Scheme)":
             profile = organization_profiles.NAMED_ORGANIZATION_PROFILES.get(organization_profile)
             if profile and "scheme" in profile:
-                final_scheme = profile["scheme"]
+                # Use .get and default to empty string to avoid None
+                final_scheme = profile.get("scheme", "") or ""
                 print(f"\033[92m[FileOrganizer] Using scheme from profile: '{organization_profile}'\033[0m")
 
         generated_scheme_out = final_scheme if auto_generate_scheme else ""
@@ -1591,6 +2512,15 @@ class PromptCrafter_FileOrganizer:
             log_messages.append("-" * 40)
             log_messages.append(summary.replace('\n', '\n' + ' ' * 4)) # Indent summary for readability
             
+            # Ensure full_output_path is a valid string (utils._get_and_create_output_dir may return None on failure)
+            if not full_output_path:
+                try:
+                    os.makedirs(output_folder, exist_ok=True)
+                    full_output_path = os.path.abspath(output_folder)
+                except Exception:
+                    # Fallback to current working directory if we cannot create the requested folder
+                    full_output_path = os.getcwd()
+
             log_file_path = os.path.join(full_output_path, log_filename)
             try:
                 with open(log_file_path, "w", encoding="utf-8") as f:
@@ -1603,409 +2533,9 @@ class PromptCrafter_FileOrganizer:
 
         return (summary, dry_run_plan_str, generated_scheme_out)
 
-
-class PromptCrafter_VideoCreator(PromptCrafter_BaseCreator):
-    DESCRIPTION = get_node_description("PromptCrafter_VideoCreator")
-    @classmethod
-    def INPUT_TYPES(cls):
-        types = copy.deepcopy(PromptCrafter_ImageCreator.INPUT_TYPES())
-        types["required"]["temperature"] = ("FLOAT", {"default": 0.4, "min": 0.0, "max": 1.0, "step": 0.01})
-        types["required"]["max_length_words"] = ("INT", {"default": 0, "min": 0, "max": 400, "step": 10})
-        types["required"]["style_override"] = (style_profiles.get_style_override_options("Video"), {"default": "None"})
-        if "image_weights_json" in types["optional"]:
-            del types["optional"]["image_weights_json"]
-        # Add style_tags if it's not there from the parent
-        if "style_tags" not in types["optional"]:
-             types["optional"]["style_tags"] = ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."} )
-        return types
-
-    MAX_IMAGES = 5
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
-    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
-    FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
-
-    def execute(self, user_text, model, negative_prompt="", **kwargs):
-        try:
-            images_with_weights = self._collect_images_with_weights(**kwargs) # noqa
-            initial_run_config = self._setup_config("Video", user_text, model, images_with_weights=images_with_weights, **kwargs)
-            
-            error, new_user_text = self._handle_creative_intent("Video", user_text, images_with_weights, initial_run_config)
-            if error: return (error,) + (None,) * (len(self.RETURN_TYPES) - 1)
-            final_user_text = new_user_text or user_text
-
-            run_config = self._setup_config("Video", final_user_text, model, images_with_weights=images_with_weights, **kwargs)
-
-            passthrough_images = [img for img, _ in images_with_weights]
-            passthrough_images.extend([None] * (self.MAX_IMAGES - len(passthrough_images)))
-
-            if kwargs.get("generate_schedule"):
-                prompt, schedule, image_context, neg_prompt = self._handle_scheduled_mode("Video", final_user_text, images_with_weights, run_config, **kwargs)
-                return (prompt, schedule, image_context, neg_prompt) + tuple(passthrough_images)
-            else:
-                pipeline_kwargs = {k: v for k, v in kwargs.items() if k not in ['prompt', 'extra_pnginfo']}
-                pipeline_kwargs.pop('save_to_txt', None)
-                pipeline_kwargs.pop('filename_prefix', None)
-
-                prompt, image_context, final_negative_prompt = self._generate_visual_prompt_pipeline(
-                    mode="Video", user_text=final_user_text, images_with_weights=images_with_weights, save_to_txt=kwargs.get("save_to_txt", False), filename_prefix=kwargs.get("filename_prefix", "scene_prompts"), run_config=run_config, negative_prompt=negative_prompt, **pipeline_kwargs
-                )
-                return (prompt, "", image_context, final_negative_prompt) + tuple(passthrough_images)
-        except Exception as e:
-            return self._handle_creator_exception(e)
-
-class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
-    DESCRIPTION = get_node_description("PromptCrafter_LyricsCreator")
-    @classmethod
-    def INPUT_TYPES(cls):
-        types = copy.deepcopy(PromptCrafter_ImageCreator.INPUT_TYPES())
-        types["required"]["temperature"] = ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01})
-        # // AI ENHANCEMENT: Changed default max_length_words to 40, aligning with the goal of shorter prompts.
-        types["required"]["max_length_words"] = ("INT", {"default": 40, "min": 0, "max": 400, "step": 10})
-        types["required"]["style_override"] = (style_profiles.get_style_override_options("Lyrics"), {"default": "None"})
-        types["required"]["simplify_for_diffusion"] = ("BOOLEAN", {"default": False})
-        types["required"]["filename_prefix"] = ("STRING", {"default": "lyrics_prompts"})
-        types["optional"].update({
-            "style_tags": ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."} ),
-            "audio_folder_path": ("STRING", {"multiline": False, "default": "input/audio"}),
-            "audio_file": ("STRING", {"multiline": False, "default": "<none>"}),
-            "lyrics_folder_path": ("STRING", {"multiline": False, "default": "input/lyrics"}),
-            "lyrics_file": ("STRING", {"multiline": False, "default": "<none>"}),
-            "use_audio_alignment": ("BOOLEAN", {"default": True}),
-            "song_length_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1}),
-            "fps": ("FLOAT", {"default": 16.0, "min": 1.0, "max": 120.0, "step": 0.5}),
-        })
-        types["optional"]["generate_schedule"] = ("BOOLEAN", {"default": True})
-        types["optional"]["interpolate_keyframes"] = ("BOOLEAN", {"default": False})
-        types["optional"]["interpolation_frame_interval"] = ("INT", {"default": 0, "min": 0, "max": 100})
-        return types
-
-    MAX_IMAGES = 5
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
-    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
-    FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter"
-
-    def execute(self, user_text, model, **kwargs):
-        try:
-            images_with_weights = self._collect_images_with_weights(**kwargs)
-            lyrics_text, timed_segments, lyrics_meta = utils._get_lyrics_from_input(user_text, kwargs.get("lyrics_folder_path"), kwargs.get("lyrics_file"), kwargs.get("debug_mode", False))
-            audio_path = utils._get_audio_path(kwargs.get("audio_folder_path"), kwargs.get("audio_file"))
-
-            run_config = self._setup_config("Lyrics", lyrics_text or user_text, model, images_with_weights=images_with_weights, **kwargs)
-
-            passthrough_images = [img for img, _ in images_with_weights]
-            passthrough_images.extend([None] * (self.MAX_IMAGES - len(passthrough_images)))
-
-            prompt, schedule, image_context, negative_prompt = self._handle_lyrics_mode(
-                lyrics=lyrics_text,
-                timed_segments=timed_segments,
-                images_with_weights=images_with_weights,
-                user_instructions=user_text,
-                lyrics_meta=lyrics_meta,
-                config=run_config,
-                audio_path=audio_path,
-                generate_schedule=kwargs.get("generate_schedule", False),
-                negative_prompt=kwargs.get("negative_prompt", ""),
-                save_to_txt=kwargs.get("save_to_txt", False),
-                filename_prefix=kwargs.get("filename_prefix", "lyrics_prompts")
-            )
-            return (prompt, schedule, image_context, negative_prompt) + tuple(passthrough_images)
-        except Exception as e:
-            return self._handle_creator_exception(e)
-
-    def _handle_lyrics_mode(self, lyrics, timed_segments, images_with_weights, user_instructions, lyrics_meta, config, audio_path=None, generate_schedule=False, negative_prompt="", save_to_txt=False, filename_prefix=""): # noqa
-        if config.use_audio_alignment and audio_path and lyrics and not lyrics.startswith("[Error"):
-            print("\033[94m[PromptCrafter] Audio file provided. Performing audio-lyric alignment (this is experimental)...")
-            spectrogram_img = utils.audio_to_spectrogram(audio_path)
-            if isinstance(spectrogram_img, Image.Image):
-                corrected_lyrics = self._validate_lyrics_against_audio(lyrics, spectrogram_img, config)
-                if corrected_lyrics.strip() and corrected_lyrics.strip() != lyrics.strip():
-                    print("\033[92m[PromptCrafter] Lyrics corrected based on audio analysis.\033[0m")
-                    lyrics = corrected_lyrics
-                    lyrics, timed_segments = utils._process_lyrics_content(lyrics)
-            else:
-                print(f"\033[93m[PromptCrafter] Warning: Could not generate spectrogram. Error: {spectrogram_img}\033[0m")
-
-        if not lyrics or not lyrics.strip(): return ("No lyrics provided.", "", "No reference images provided.", "")
-        if lyrics.startswith("[Error"):
-            return (f"Failed to process lyrics input: {lyrics}", "", "No reference images provided.", "")
-
-        image_context, mandatory_tokens, style_inspiration_section, instructions_section, context_section = self._prepare_lyrics_generation_context(user_instructions, images_with_weights, lyrics, config)
-        
-        theme_ok, global_theme_or_err = self._generate_storyboard_global_theme(lyrics, instructions_section, context_section, image_context, config)
-        if not theme_ok: return (global_theme_or_err, "", image_context, "")
-
-        storyboard_prompts = self._process_lyrics_storyboard(lyrics, timed_segments, global_theme_or_err, mandatory_tokens, style_inspiration_section, config)
-        if not storyboard_prompts or (isinstance(storyboard_prompts, str) and storyboard_prompts.startswith("Could not generate")):
-            return (storyboard_prompts or "Failed to generate storyboard prompts.", "", image_context, "")
-
-        storyboard_text_for_neg_prompt = "\n\n---\n\n".join(storyboard_prompts)
-        ai_negative_prompt = utils._generate_negative_prompt(storyboard_text_for_neg_prompt, config, user_negative_prompt="")
-        parts = [p for p in [negative_prompt, ai_negative_prompt] if p and p.strip()]
-        final_negative_prompt = ", ".join(parts)
-
-        final_output = self._create_final_lyrics_output(storyboard_prompts=storyboard_prompts, timed_segments=timed_segments, generate_schedule=generate_schedule, fps=config.fps, song_length_seconds=config.song_length_seconds, config=config)
-        
-        prompt_out, schedule_out = ("", final_output) if generate_schedule else (final_output, "")
-
-        if save_to_txt: self._save_lyrics_output_to_file(filename_prefix, lyrics_meta, image_context, lyrics, final_negative_prompt, final_output)
-        return (prompt_out, schedule_out, image_context, final_negative_prompt)
-
-    # // AI ENHANCEMENT: New method to group lyrics into logical scenes using an LLM.
-    # // This creates more meaningful chunks (verse, chorus, etc.) than simple line-by-line processing.
-    def _group_lyrics_into_scenes(self, lyrics, run_config):
-        """Groups raw lyrics into narratively coherent scenes using an AI model."""
-        print("\033[94m[PromptCrafter] Grouping lyrics into logical scenes using AI...\033[0m")
-        prompt = textwrap.dedent(f"""
-            You are a literary analyst. Your task is to read the following song lyrics and group them into logical scenes or sections (like Verse 1, Chorus, Bridge, etc.).
-            Each scene should represent a distinct part of the narrative or a shift in mood.
-
-            --- LYRICS ---
-            {lyrics}
-            --- END LYRICS ---
-
-            RULES:
-            1. Analyze the structure and meaning to identify logical breaks.
-            2. Group consecutive lines into scenes. Do not split a single thought.
-            3. Return ONLY a JSON object with a single key "scenes", which is an array of strings. Each string in the array should be a multi-line block of lyrics representing one scene.
-
-            Example Output:
-            {{
-                "scenes": [
-                    "First line of verse 1\nSecond line of verse 1",
-                    "First line of the chorus\nSecond line of the chorus",
-                    "First line of verse 2\nSecond line of verse 2"
-                ]
-            }}
-        """ ).strip()
-
-        ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Lyric Scene Grouping")
-        
-        if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list):
-            print(f"\033[92m[PromptCrafter] Successfully grouped lyrics into {len(result_json['scenes'])} scenes.\033[0m")
-            return result_json["scenes"]
-        else:
-            print(f"\033[93m[PromptCrafter] Warning: AI-based lyric grouping failed. Falling back to line-by-line processing. Error: {result_json}\033[0m")
-            return None # Fallback signal
-
-    def _validate_lyrics_against_audio(self, lyrics_text, audio_img, run_config): # noqa
-        prompt = f"""You are a lyrics alignment assistant.
-Compare the provided text (lyrics) with the singing audio represented by this spectrogram.
-Correct any misheard or missing words. Maintain line breaks and rhythm.
-
-RAW LYRICS:
-{lyrics_text}
-
-Return ONLY the corrected lyrics."""
-        ok, corrected = api_clients.query_model_auto(run_config.model, prompt, images=[audio_img], prefer_chat=True, temperature=run_config.temperature, seed=run_config.seed, debug_mode=run_config.debug_mode, timeout=run_config.timeout, debug_title="Audio-Lyric Cross-Check")
-        return corrected if ok else lyrics_text
-
-    def _prepare_lyrics_generation_context(self, user_instructions, images_with_weights, lyrics, run_config): # noqa
-        images = [img for img, _ in images_with_weights]
-        describe_result = self._describe_images(images_with_weights, run_config)
-        if describe_result is None:
-            image_context, _ = "No reference images provided.", []
-        else:
-            image_context, _ = describe_result
-        parsed_instructions, parsed_context = user_instructions, ""
-        style_inspiration_section, instructions_section, context_section = self._prepare_lyrics_context_sections(run_config, images, lyrics, parsed_instructions, parsed_context)
-        tok_ok, mandatory_tokens = utils._extract_mandatory_tokens_with_model(image_context, (parsed_instructions or ""), run_config)
-        return image_context, (mandatory_tokens if tok_ok else {}), style_inspiration_section, instructions_section, context_section
-
-    def _prepare_lyrics_context_sections(self, run_config, images, lyrics, instructions, context): # noqa
-        style_inspiration_section = ""
-        if run_config.style_profile:
-            inspiration = run_config.style_profile.get("inspiration", "")
-            if inspiration: style_inspiration_section = f"- {inspiration}\n"
-        elif run_config.style_override != "None" and run_config.style_override in style_profiles.STYLE_KEYWORDS:
-            style_inspiration_section = f"- Style: {style_profiles.STYLE_KEYWORDS[run_config.style_override]}\n"
-        else:
-            inspiration = run_config.style_profile.get("inspiration", "")
-            if inspiration: style_inspiration_section = f"- {inspiration.lstrip('- ').strip()}\n"
-        
-        instructions_section = f"SONG INSTRUCTIONS (use as a guide, but prioritize the ACTION/MOTION rules):\n{instructions}\n\n" if instructions and instructions.strip() else ""
-        context_section = f"SONG CONTEXT & NARRATIVE (for mood and story):\n{context}\n\n" if context and context.strip() else ""
-        return style_inspiration_section, instructions_section, context_section
-
-    def _generate_storyboard_global_theme(self, lyrics, instructions_section, context_section, image_context, run_config): # noqa
-        theme_prompt = f"""You are a music video director. Your task is to analyze the provided source material and synthesize a \"Global Theme\" for a music video. This theme is a high-level summary that will ensure visual consistency across all scenes.
-
-**CRITICAL INSTRUCTIONS:**
-1.  **Analyze Source Material:** Your theme MUST be based on the explicit information and implicit mood of the LYRICS, INSTRUCTIONS, and IMAGE REFERENCES.
-2.  **Handle Abstract Lyrics:** If the lyrics are abstract or non-narrative, focus on interpreting the core emotions, mood, and symbolism. Translate these abstract concepts into a cohesive visual theme. For example, for lyrics about loneliness, you might suggest a theme of 'a single figure in vast, empty landscapes with a cool, desaturated color palette'.
-3.  **Avoid Contradiction:** Do NOT invent narratives or characters that contradict the source material. Your theme should be a creative interpretation, not a replacement.
-4.  **Define Core Elements:** The theme should define the core visual style, setting, character design, and mood.
-
---- LYRICS ---
-{lyrics}
---- INSTRUCTIONS ---
-{instructions_section}
---- CONTEXT ---
-{context_section}
---- IMAGE REFERENCES ---
-{image_context}
----
-Return ONLY the Global Theme description in a single, concise paragraph."""
-        ok, theme = api_clients.query_model_auto(run_config.model, theme_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature, seed=run_config.seed, timeout=120, debug_mode=run_config.debug_mode, debug_title="Storyboard Global Theme")
-        return (True, utils.TextCleaner.single_paragraph(theme)) if ok else (False, f"Could not generate storyboard theme: {theme}")
-
-    # // AI ENHANCEMENT: Reworked the entire storyboard generation process.
-    # // It now segments lyrics more intelligently and uses a two-step "concept -> prompt" process.
-    def _process_lyrics_storyboard(self, lyrics, timed_segments, global_theme, mandatory_tokens, style_inspiration_section, run_config):
-        storyboard_rules_text = self._build_storyboard_rules(run_config, style_inspiration_section)
-        
-        segments = []
-        if timed_segments:
-            # Use SRT data if available
-            segments = [(str(i + 1), seg[2]) for i, seg in enumerate(timed_segments)]
-        else:
-            # Otherwise, use AI to group lyrics into scenes
-            scene_lyrics = self._group_lyrics_into_scenes(lyrics, run_config)
-            if scene_lyrics:
-                segments = [(f"Scene {i + 1}", scene_text) for i, scene_text in enumerate(scene_lyrics)]
-            else:
-                # Fallback to line-by-line if AI grouping fails
-                segments = [(f"Line {i + 1}", line) for i, line in enumerate(lyrics.splitlines()) if line.strip()]
-
-        if not segments: return "Could not segment lyrics into processable lines or sections."
-
-        print(f"\033[94m[PromptCrafter] Generating storyboard for {len(segments)} scenes iteratively...\033[0m")
-        processed_prompts: list[str] = [""] * len(segments)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(segments))) as executor:
-            # Submit all jobs to the executor
-            future_to_index = {
-                executor.submit(self._create_prompt_for_scene, name, text, global_theme, storyboard_rules_text, mandatory_tokens, run_config): i
-                for i, (name, text) in enumerate(segments)
-            }
-            # Process results as they complete
-            for future in concurrent.futures.as_completed(future_to_index):
-                index = future_to_index[future]
-                segment_name, _ = segments[index]
-                try:
-                    processed_prompts[index] = future.result()
-                    print(f"\033[92m[PromptCrafter] Finished processing '{segment_name}'.\033[0m")
-                except Exception as exc:
-                    error_message = f"Scene '{segment_name}' generated an exception: {exc}"
-                    print(f'\033[91m[PromptCrafter] {error_message}\033[0m')
-                    processed_prompts[index] = f"[Error: {error_message}]"
-        
-        return processed_prompts
-
-    # // AI ENHANCEMENT: This is the new core method for generating prompts.
-    # // It uses a two-step process to first create a simple "shot concept" and then
-    # // expand it into a polished, concise final prompt. This improves conceptual quality and brevity.
-    def _create_prompt_for_scene(self, scene_name, scene_text, global_theme, storyboard_rules_text, mandatory_tokens, run_config):
-        """Generates a final prompt for a lyric scene in two steps: Concept and Refinement."""
-        
-        # --- STEP 1: Conceptualize the Shot ---
-        concept_prompt = textwrap.dedent(f"""
-            You are a creative music video director. Your goal is to invent a single, clear visual concept for a short 5-second video clip that represents the lyrics provided.
-
-            --- GLOBAL THEME (for visual consistency) ---
-            {global_theme}
-
-            --- LYRIC SCENE: "{scene_name}" ---
-            {scene_text}
-            ---
-            
-            TASK: Describe a single, compelling camera shot. Focus on ONE core action or visual moment.
-            - What is the subject doing?
-            - What is the key visual element?
-            - Keep the concept description to a single, simple sentence (under 20 words).
-
-            Return ONLY the shot concept sentence.
-        """ ).strip()
-
-        concept_ok, shot_concept = api_clients.query_model_auto(
-            run_config.model, concept_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature,
-            seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title=f"Concept for '{scene_name}'"
-        )
-
-        if not concept_ok:
-            error_msg = f"Failed to generate concept for '{scene_name}': {shot_concept}"
-            print(f"\033[93m[PromptCrafter] Warning: {error_msg}\033[0m")
-            return f"[Error: {error_msg}]"
-
-        # --- STEP 2: Refine the Concept into a Final Prompt ---
-        refine_prompt = textwrap.dedent(f"""
-            You are an expert prompt engineer for video generation models. Your task is to refine the SHOT CONCEPT into a concise, high-quality final prompt.
-
-            --- SHOT CONCEPT ---
-            {shot_concept}
-            ---
-            
-            --- STYLE & COMPOSITION RULES ---
-            {storyboard_rules_text}
-            ---
-            
-            TASK:
-            1.  Translate the SHOT CONCEPT into a powerful, descriptive prompt.
-            2.  Integrate the style and composition rules naturally.
-            3.  Ensure the final prompt is clear, focused, and remains concise.
-
-            Return ONLY the final, polished prompt.
-        """ ).strip()
-
-        final_ok, final_prompt = api_clients.query_model_auto(
-            run_config.model, refine_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature,
-            seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title=f"Refine Prompt for '{scene_name}'"
-        )
-        
-        if not final_ok:
-            error_msg = f"Failed to refine prompt for '{scene_name}': {final_prompt}"
-            print(f"\033[93m[PromptCrafter] Warning: {error_msg}\033[0m")
-            return f"[Error: {error_msg}]"
-
-        return utils.TextCleaner.slim_prompt_text(utils.TextCleaner.single_paragraph(final_prompt))
-
-    # // AI ENHANCEMENT: Updated storyboard rules to be more direct and enforce brevity.
-    # // Specifically targets a ~5 second / 77-81 frame output per prompt.
-    def _build_storyboard_rules(self, run_config, style_inspiration_section):
-        safety_rule = f"\n{config.SAFE_MODE_RULE}" if run_config.safe_mode else ""
-        length_rule = f"- The final prompt must be concise (ideally under {run_config.max_length_words} words) to create a clear, focused 5-second video clip (approx. 77-81 frames)."
-        negative_concepts_rule = f"- CRITICAL: Do NOT include any of the following concepts: {run_config.negative_concepts}" if run_config.negative_concepts else ""
-        
-        return textwrap.dedent(f"""
-            - All generated prompt text MUST be in {run_config.language}.
-            {style_inspiration_section.strip()}
-            {safety_rule.strip()}
-            {negative_concepts_rule.strip()}
-            - The visual elements (characters, setting) must be consistent with the Global Theme.
-            - The ACTION and MOOD must be a direct visual interpretation of the specific lyric scene.
-            - CRITICAL PRIORITY: Focus on a single, clear subject ACTION and physics-based MOTION.
-            - Keep the environment concise and supporting, not distracting.
-            - Maintain visual continuity with the overall theme.
-            {length_rule}
-        """).strip()
-
-    def _create_final_lyrics_output(self, storyboard_prompts, timed_segments, generate_schedule, fps, song_length_seconds, config): # noqa
-        if not generate_schedule: return "\n\n---\n\n".join(storyboard_prompts)
-        if timed_segments: return self._create_schedule_from_srt(storyboard_prompts, timed_segments, fps, config)
-        max_frames = int(song_length_seconds * fps) if song_length_seconds > 0 else config.max_frames
-        return utils._create_schedule_from_items(storyboard_prompts, max_frames, 0, config.interpolate_keyframes, config.interpolation_frame_interval)
-
-    def _create_schedule_from_srt(self, storyboard_prompts, timed_segments, fps, run_config): # noqa
-        print("\033[94m[PromptCrafter] SRT file detected. Generating timed schedule...\033[0m")
-        if len(storyboard_prompts) != len(timed_segments):
-            return f"[Error: Mismatch between SRT segments ({len(timed_segments)}) and generated prompts ({len(storyboard_prompts)}).]"
-        schedule = collections.OrderedDict()
-        for i, seg in enumerate(timed_segments):
-            frame = int(seg[0] * fps)
-            prompt = storyboard_prompts[i].strip()
-            schedule[frame] = prompt
-        if run_config.interpolate_keyframes:
-            schedule = utils._interpolate_schedule_prompts(schedule, run_config.interpolation_frame_interval)
-        schedule_items = ",".join([f'\"{str(key)}\": {json.dumps(str(value))}' for key, value in schedule.items()])
-        return f"{{{schedule_items}}}"
-
-    def _save_lyrics_output_to_file(self, filename_prefix, lyrics_meta, image_context, lyrics, final_negative_prompt, final_output): # noqa
-        if not final_output or not final_output.strip(): return
-        sections = []
-        if lyrics_meta and lyrics_meta[0] and lyrics_meta[1] and lyrics_meta[1] != "<none>":
-            sections.append(("LYRICS SOURCE FILE", f"folder: {lyrics_meta[0]}\nfile: {lyrics_meta[1]}"))
-        sections.extend([("IMAGE CONTEXT", image_context or "No reference images provided."), ("LYRICS", (lyrics or "").strip()), ("NEGATIVE PROMPT", final_negative_prompt or ""), ("OUTPUT", final_output)])
-        utils._save_output_to_file(filename_prefix, sections, base_filename="lyrics_prompts")
+# ------------------------------------------------------------------------------------
+# PromptCrafter_CacheUtility Node
+# ------------------------------------------------------------------------------------
 class PromptCrafter_CacheUtility:
     DESCRIPTION = get_node_description("PromptCrafter_CacheUtility")
     @classmethod
@@ -2030,19 +2560,21 @@ class PromptCrafter_CacheUtility:
 NODE_CLASS_MAPPINGS = {
     "PromptCrafter_QnA": PromptCrafter_QnA,
     "PromptCrafter_Captioner": PromptCrafter_Captioner,
-    "PromptCrafter_ImageCreator": PromptCrafter_ImageCreator,
-    "PromptCrafter_VideoCreator": PromptCrafter_VideoCreator,
+    "PromptCrafter_VisualCreator": PromptCrafter_VisualCreator,
     "PromptCrafter_LyricsCreator": PromptCrafter_LyricsCreator,
     "PromptCrafter_CacheUtility": PromptCrafter_CacheUtility,
     "PromptCrafter_FileOrganizer": PromptCrafter_FileOrganizer,
+    "PromptCrafter_Formatter": PromptCrafter_Formatter,
+    "PromptCrafter_SaveTextFile": PromptCrafter_SaveTextFile,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_QnA": f"PromptCrafter QnA",
-    "PromptCrafter_Captioner": f"PromptCrafter Image Captioner",
-    "PromptCrafter_ImageCreator": f"PromptCrafter Image Prompt Creator",
-    "PromptCrafter_VideoCreator": f"PromptCrafter Video Prompt Creator",
-    "PromptCrafter_LyricsCreator": f"PromptCrafter Lyrics-to-Prompt Creator",
-    "PromptCrafter_CacheUtility": f"PromptCrafter Cache Utility",
-    "PromptCrafter_FileOrganizer": f"PromptCrafter File Organizer",
+    "PromptCrafter_QnA": "PromptCrafter QnA",
+    "PromptCrafter_Captioner": "PromptCrafter Image Captioner",
+    "PromptCrafter_VisualCreator": "PromptCrafter Visual Creator",
+    "PromptCrafter_LyricsCreator": "PromptCrafter Lyrics-to-Prompt Creator",
+    "PromptCrafter_CacheUtility": "PromptCrafter Cache Utility",
+    "PromptCrafter_FileOrganizer": "PromptCrafter File Organizer",
+    "PromptCrafter_Formatter": "PromptCrafter Text Formatter",
+    "PromptCrafter_SaveTextFile": "PromptCrafter Save Text File",
 }

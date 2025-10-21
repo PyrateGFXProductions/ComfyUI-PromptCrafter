@@ -7,8 +7,8 @@ import { app } from "../../../scripts/app.js";
 // =================================================================================
 
 const DYNAMIC_INPUT_NODE_CLASSES_EXT1 = [
-    "PromptCrafter_ImageCreator",
-    "PromptCrafter_VideoCreator",
+    "PromptCrafter_BaseCreator",
+    "PromptCrafter_VisualCreator",
     "PromptCrafter_LyricsCreator",
 ];
 
@@ -36,7 +36,7 @@ app.registerExtension({
                 const inputPrefix = "image_";
                 const weightPrefix = "image_weight_";
                 const outputPrefix = "reference_image_";
-                const numStandardOutputs = 4;
+                const numStandardOutputs = 6;
 
                 const currentInputs = this.inputs?.filter(input => /^image_\d+$/.test(input.name)) || [];
                 let currentInputCount = currentInputs.length;

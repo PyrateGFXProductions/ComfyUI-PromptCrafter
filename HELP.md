@@ -1,21 +1,22 @@
-## `PromptCrafter_ImageCreator`
-**Purpose:** Generates high-quality, detailed prompts for creating static images.
+## `PromptCrafter_VisualCreator`
+**Purpose:** A unified node to create advanced prompts for images or short videos by analyzing user text and optional reference images.
 
-**How to Use:** Provide a high-level idea in `user_text` and optionally connect reference `image` inputs. The node analyzes your inputs, determines a creative style, and generates a polished prompt.
+**How to Use:** Provide a high-level idea in `user_text` and optionally connect reference `image` inputs. Select the desired `pipeline_mode` ("Image" or "Video"). The node analyzes your inputs, determines a creative style, and generates a polished prompt.
 
 ### Parameters
 
-| Parameter | Type | Description |
+| Parameter | Type | Description | 
 | --- | --- | --- |
-| **`user_text`** | `STRING` | Your main instruction. Describe the scene, subjects, and mood. This is the primary input for the AI. |
+| **`pipeline_mode`** | `STRING` | Choose between "Image" for static images or "Video" for animated sequences. This adjusts the AI's focus and output structure. |
+| **`user_text`** | `STRING` | Your main instruction. Describe the scene, subjects, and mood. |
 | **`model`** | `STRING` | The language model to use for all analysis and generation. Vision-capable models are required if using images. |
 | **`image_count`** | `INT` | Sets the number of available `image` and `image_weight` inputs (from 1 to 5). |
-| **`image_weight_*`** | `FLOAT` | (Dynamic Input) Controls the influence of a specific reference image. Higher values give the image more weight in the analysis. |
 | **`temperature`** | `FLOAT` | Controls the creativity of the AI. Lower values (e.g., 0.1) are more deterministic, while higher values (e.g., 0.8) produce more creative and unpredictable results. |
 | **`seed`** | `INT` | The seed for the language model. Use -1 for a random seed, or a specific number for reproducible results (requires Temperature to be > 0). |
 | **`max_length_words`** | `INT` | Sets a target maximum length for the generated prompt in words. 0 means the AI will decide the optimal length. |
 | **`style_override`** | `STRING` | Force a specific artistic style (e.g., "Cyberpunk", "Fantasy Battle") from a predefined list, instead of letting the AI decide based on your inputs. |
 | **`style_tags`** | `STRING` | A comma-separated list of style names to blend together (e.g., `Cyberpunk, Film Noir`). This powerful feature overrides the `style_override` dropdown and allows for unique combinations. |
+| **`target_model_format`** | `STRING` | Format the prompt for a specific target model like "Fooocus" or "Stable Diffusion 3". |
 | **`critique_strength`** | `STRING` | Controls how heavily the AI edits its own initial draft. `Subtle` makes minor wording changes, `Normal` is a balanced revision, and `Heavy` allows for radical, creative restructuring. |
 | **`deep_think_refinements`** | `INT` | The number of iterative refinement steps for the "Deep Think" process. Each step makes the AI reconsider and improve its own output. 0 disables this feature. |
 | **`simplify_for_diffusion`** | `BOOLEAN` | If True, the final prompt is passed through an additional AI step to rephrase it in a way that is more easily understood by diffusion models, often improving prompt adherence. |
@@ -23,64 +24,24 @@
 | **`max_retries`** | `INT` | The number of times the node will retry a failed API call. |
 | **`safe_mode`** | `BOOLEAN` | If True, a rule is added to the AI's instructions to avoid generating NSFW, violent, or controversial content. |
 | **`debug_mode`** | `BOOLEAN` | If True, prints detailed intermediate prompts and AI reasoning to the console, which is useful for understanding the generation process. |
-| **`save_to_txt`** | `BOOLEAN` | If True, saves the full context (image analysis, user text, final prompt, etc.) to a text file in the `ComfyUI/output/scene_prompts` directory. |
-| **`filename_prefix`** | `STRING` | The subdirectory and filename prefix for the saved text file. |
 | **`generate_schedule`** | `BOOLEAN` | If enabled, it will treat multi-paragraph text in `user_text` as a sequence of scenes, generating a schedule of prompts for animations or slideshows. |
 | **`max_frames`** | `INT` | In schedule mode, this is the total number of frames for the animation. |
 | **`interpolate_keyframes`** | `BOOLEAN` | In schedule mode, this will create smooth transitions between your keyframe prompts. |
 | **`interpolation_frame_interval`**| `INT` | In schedule mode, the number of frames between interpolated prompts. |
 
-## `PromptCrafter_VideoCreator`
-**Purpose:** Generates cinematic, motion-focused prompts for video models like AnimateDiff.
-
-**How to Use:** The workflow is the same as the Image Creator. Provide a high-level idea, and the node will generate a polished prompt emphasizing **action, motion, and camera movement**. The AI acts as a "film director" to suggest dynamic shots.
-
-### Parameters
-
-| Parameter | Type | Description |
-| --- | --- | --- |
-| **`user_text`** | `STRING` | Your main instruction for the video scene. Describe the subjects, setting, mood, and desired actions. |
-| **`model`** | `STRING` | The language model to use for all analysis and generation. Vision-capable models are required if using images. |
-| **`image_count`** | `INT` | Sets the number of available `image` and `image_weight` inputs (from 1 to 5). |
-| **`image_weight_*`** | `FLOAT` | (Dynamic Input) Controls the influence of a specific reference image on the scene's characters and environment. |
-| **`temperature`** | `FLOAT` | Controls AI creativity. Higher values are better for creative video concepts. Default is `0.4`. |
-| **`seed`** | `INT` | The seed for the language model. Use -1 for a random seed. |
-| **`max_length_words`** | `INT` | Sets a target maximum length for the generated prompt. For video, shorter prompts (around 80 words) often work best. 0 lets the AI decide. |
-| **`style_override`** | `STRING` | Force a specific cinematic style (e.g., "Epic Fantasy", "Found Footage") from a predefined list. |
-| **`style_tags`** | `STRING` | A comma-separated list of style names to blend together (e.g., `Sci-Fi, Horror`). Overrides the `style_override` dropdown. |
-| **`critique_strength`** | `STRING` | Controls how heavily the AI edits its own initial draft. `Heavy` can produce very creative results for video. |
-| **`deep_think_refinements`** | `INT` | The number of iterative refinement steps. More steps can lead to more detailed and coherent motion descriptions. 0 disables it. |
-| **`simplify_for_diffusion`** | `BOOLEAN` | If True, the prompt is rephrased for better diffusion model understanding. |
-| **`timeout`** | `INT` | The timeout in seconds for each API call. |
-| **`max_retries`** | `INT` | The number of times the node will retry a failed API call. |
-| **`safe_mode`** | `BOOLEAN` | If True, instructs the AI to avoid generating unsafe content. |
-| **`debug_mode`** | `BOOLEAN` | If True, prints detailed intermediate steps to the console. |
-| **`save_to_txt`** | `BOOLEAN` | If True, saves the full generation context to a text file. |
-| **`filename_prefix`** | `STRING` | The subdirectory and filename prefix for the saved text file. |
-| **`generate_schedule`** | `BOOLEAN` | If enabled, treats multi-paragraph text as a sequence of scenes, generating a keyframe schedule for animations. |
-| **`max_frames`** | `INT` | In schedule mode, the total number of frames for the animation. |
-| **`interpolate_keyframes`** | `BOOLEAN` | In schedule mode, creates smooth transitions between keyframe prompts. |
-| **`interpolation_frame_interval`**| `INT` | In schedule mode, the number of frames between interpolated prompts. |
-
 ## `PromptCrafter_LyricsCreator`
-**Purpose:** A powerful and unique node for creating a complete visual storyboard from song lyrics.
-**How to Use:** Provide lyrics via the `user_text` input or a `.srt`/`.lrc` file. You can also provide a high-level visual concept in `user_text` to guide the AI.
-* **Creative Autopilot:** If you only provide lyrics, the AI will act as a creative director, inventing a visual theme, characters, and setting from scratch based on the song's mood.
-* **`lyrics_file`**: Use this to load a timed `.srt` or `.lrc` file. This will generate a schedule where prompts are perfectly synced to the lyrics.
-* **`audio_file`**: (Experimental) Provide the song's audio file to help the AI cross-reference and potentially correct the lyrics.
-* **`generate_schedule`**: Should almost always be **True**. This formats the output for animation nodes.
+**Purpose:** A powerful node for creating a visual storyboard from a song. It can now analyze the audio's mood to influence the theme, transcribe lyrics automatically, and output both timed prompts and subtitle files.
+
+**How to Use:** Provide an `audio_file` to enable the full workflow. The node will transcribe the lyrics, analyze the music's mood (tempo and feel), and generate a storyboard that matches the song.
 
 ### Parameters
 
-| Parameter | Type | Description |
+| Parameter | Type | Description | 
 | --- | --- | --- |
 | **`user_text`** | `STRING` | Your main instruction for the video scene. Can be used to provide a visual concept, or the lyrics themselves if not using a file. |
-| **`lyrics_file`** | `STRING` | Path to a `.srt` or `.lrc` file containing timed lyrics. This is the recommended way to sync visuals to music. |
-| **`audio_file`** | `STRING` | (Experimental) Path to an audio file (`.mp3`, `.wav`). The AI can use this to help understand the song's structure and correct lyrics. |
 | **`model`** | `STRING` | The language model to use for all analysis and generation. Vision-capable models are required if using images. |
 | **`image_count`** | `INT` | Sets the number of available `image` and `image_weight` inputs (from 1 to 5). |
-| **`image_weight_*`** | `FLOAT` | (Dynamic Input) Controls the influence of a specific reference image on the scene's characters and environment. |
-| **`temperature`** | `FLOAT` | Controls AI creativity. Higher values are better for creative video concepts. Default is `0.4`. |
+| **`temperature`** | `FLOAT` | Controls AI creativity. Higher values are better for creative video concepts. Default is `0.5`. |
 | **`seed`** | `INT` | The seed for the language model. Use -1 for a random seed. |
 | **`max_length_words`** | `INT` | Sets a target maximum length for each generated prompt in the sequence. 0 lets the AI decide. |
 | **`style_override`** | `STRING` | Force a specific cinematic or artistic style from a predefined list. |
@@ -92,8 +53,15 @@
 | **`max_retries`** | `INT` | The number of times the node will retry a failed API call. |
 | **`safe_mode`** | `BOOLEAN` | If True, instructs the AI to avoid generating unsafe content. |
 | **`debug_mode`** | `BOOLEAN` | If True, prints detailed intermediate steps to the console. |
-| **`save_to_txt`** | `BOOLEAN` | If True, saves the full generation context to a text file. |
-| **`filename_prefix`** | `STRING` | The subdirectory and filename prefix for the saved text file. |
+| **`audio_folder_path`** | `STRING` | Path to the folder containing the audio file. |
+| **`audio_file`** | `STRING` | Path to an audio file (`.mp3`, `.wav`). Enables automatic transcription and mood analysis. |
+| **`lyrics_folder_path`** | `STRING` | Path to the folder containing the lyrics file. |
+| **`lyrics_file`** | `STRING` | Path to a `.srt` or `.lrc` file containing timed lyrics. Used if no audio file is provided. |
+| **`use_audio_alignment`** | `BOOLEAN` | If True, uses the audio to correct the transcript. |
+| **`song_length_seconds`** | `FLOAT` | The length of the song in seconds. |
+| **`fps`** | `FLOAT` | Frames per second for the output schedule. |
+| **`whisper_model_size`** | `STRING` | The transcription model to use. Larger models are more accurate but slower and use more VRAM. |
+| **`whisper_engine`** | `STRING` | The transcription engine to use. |
 | **`generate_schedule`** | `BOOLEAN` | If enabled, treats lyrics or scenes as a sequence, generating a keyframe schedule for animations. Should be True for this node. |
 | **`max_frames`** | `INT` | In schedule mode, the total number of frames for the animation. |
 | **`interpolate_keyframes`** | `BOOLEAN` | In schedule mode, creates smooth transitions between keyframe prompts. |
@@ -101,14 +69,11 @@
 
 ## `PromptCrafter_QnA`
 **Purpose:** A conversational AI assistant that can answer questions and use external information for context.
+
 **How to Use:** Ask a question in `user_text`. You can chain the `history_out` to `history_in` on a new node to continue the conversation.
-* **`enable_web_search`**: Allows the node to perform a web search for questions about recent events or topics requiring current information.
-* **`file_name`**: Provide a `.txt` or `.pdf` file as a context document for the AI to read and answer questions about.
-* **`image`**: Connect an image and ask a question about it (requires a vision model).
-* **`auto_select_model`**: Automatically switches to a vision model if an image is connected, or a text model if not. Highly recommended to keep this on.
 
 ### Parameters
-| Parameter | Type | Description |
+| Parameter | Type | Description | 
 | --- | --- | --- |
 | **`user_text`** | `STRING` | Your question or instruction for the model. |
 | **`model`** | `STRING` | The language model (text or vision) to use for the answer. |
@@ -117,13 +82,11 @@
 | **`timeout`** | `INT` | Timeout in seconds for each API call. Increase if you get timeout errors. |
 | **`safe_mode`** | `BOOLEAN` | Enforce SFW rules to prevent NSFW, violent, or controversial content. |
 | **`debug_mode`** | `BOOLEAN` | Print all intermediate prompts to the console for debugging. |
-| **`save_to_txt`** | `BOOLEAN` | Save the full Q&A context and response to a text file in the ComfyUI/output directory. |
 | **`image`** | `IMAGE` | Optional reference image for the query. Requires a vision model (VLM). |
 | **`auto_select_model`** | `BOOLEAN` | Automatically select a vision model if an image is connected, or a text model if not. |
 | **`enable_web_search`** | `BOOLEAN` | Allow the node to perform a web search for questions about recent events or topics requiring current information. |
 | **`fast_web_search`** | `BOOLEAN` | In web search mode, only use search result snippets instead of fetching full page content. Much faster. |
 | **`folder_path`** | `STRING` | Folder containing an optional context file (e.g., 'input' or 'input/texts'). |
-| **`filename_prefix`** | `STRING` | Subdirectory and prefix for the saved text file. |
 | **`file_name`** | `STRING` | The name of the text file within the specified folder. |
 | **`chunk_large_context`** | `BOOLEAN` | Automatically chunk and summarize context files that are too large. |
 | **`chunk_size_words`** | `INT` | The approximate size of each chunk in words for summarization. |
@@ -133,15 +96,11 @@
 
 ## `PromptCrafter_Captioner`
 **Purpose:** Automatically generates descriptive captions for images, ideal for dataset creation or organizing your library.
+
 **How to Use:** Can be used in single mode (one image) or batch mode (an entire folder).
-* **`captioner_profile`**: Select a pre-configured captioning prompt for different use cases (e.g., "Training Style", "Detailed Scene Description"). Overrides the manual prompt text box.
-* **`batch_mode`**: Enable to process all images in the `input_folder`.
-* **`skip_existing`**: In batch mode, it won't re-caption an image that already has a `.txt` file.
-* **`rename_file_with_caption`**: A powerful feature that renames your image file based on the generated caption (e.g., `a_photo_of_a_cat.png`), making your collection instantly searchable.
-* **`add_caption_to_metadata`**: Writes the caption directly into the image's EXIF/PNG metadata.
 
 ### Parameters
-| Parameter | Type | Description |
+| Parameter | Type | Description | 
 | --- | --- | --- |
 | **`vision_model`** | `STRING` | The vision language model (VLM) to use for captioning. |
 | **`image`** | `IMAGE` | The image to be captioned (for single mode). |
@@ -167,15 +126,11 @@
 
 ## `PromptCrafter_FileOrganizer`
 **Purpose:** A powerful utility to automatically sort your images and other files into folders based on a flexible ruleset.
+
 **How to Use:** Point it to an `input_folder`, define your rules in `organization_scheme`, and set `run_organization` to True.
-* **`organization_profile`**: Select a pre-configured set of rules from a dropdown. This is an easy way to get started without writing rules manually. Choosing a profile will override any text in the `organization_scheme` box.
-* **`organization_scheme`**: The core of the node. You define rules like `captionfile_contains: cat -> By_Subject/Cats` or `image_resolution: >1920x1080 -> High_Resolution`.
-* **`auto_generate_scheme`**: Let the AI analyze a sample of your files and create a logical organization scheme for you.
-* **`action`**: Choose to `Copy` files (safer) or `Move` them.
-* **`dry_run`**: A safe way to test your rules. It will print what it *would* do without actually moving any files.
 
 ### Parameters
-| Parameter | Type | Description |
+| Parameter | Type | Description | 
 | --- | --- | --- |
 | **`model`** | `STRING` | The language model to use for all analysis and generation. Vision-capable models are required if using images. |
 | **`input_folder`** | `STRING` | The folder containing the files you want to organize (relative to ComfyUI root). |
@@ -194,6 +149,36 @@
 | **`log_filename`** | `STRING` | The name of the log file to be created in the output folder. |
 | **`delete_source_folder_on_move`** | `BOOLEAN` | After a successful 'Move' operation, delete the original input folder if it's empty. Use with caution. |
 
+## `PromptCrafter_Formatter`
+**Purpose:** A simple utility to format text by inserting variables into a template.
+
+**How to Use:** Write a template in the `template_text` box using placeholders like `{a}`, `{b}`, `{c}`, and `{d}`. Connect text to the `var_a`, `var_b`, etc. inputs to replace the placeholders. This is useful for building complex, reusable prompt structures like adding LORAs or artist names to a base prompt.
+
+### Parameters
+| Parameter | Type | Description | 
+| --- | --- | --- |
+| **`template_text`** | `STRING` | The template text with placeholders. |
+| **`var_a`** | `STRING` | The text to replace `{a}`. |
+| **`var_b`** | `STRING` | The text to replace `{b}`. |
+| **`var_c`** | `STRING` | The text to replace `{c}`. |
+| **`var_d`** | `STRING` | The text to replace `{d}`. |
+
+## `PromptCrafter_SaveTextFile`
+**Purpose:** A powerful and flexible node for saving any text output to a file with dynamic naming.
+
+**How to Use:** Connect any text output (like a prompt or lyrics) to the `text_to_save` input. Use the `filename_template` to create a custom file naming scheme using variables like `{seed}` and `{model_name}`, which you can connect from the creator nodes' new `model_out` and `seed_out` outputs.
+
+### Parameters
+| Parameter | Type | Description | 
+| --- | --- | --- |
+| **`text_to_save`** | `STRING` | The text content to save. |
+| **`folder_path`** | `STRING` | The directory to save the file in. |
+| **`filename_template`** | `STRING` | A template for the filename, with placeholders like `{seed}`, `{model_name}`, etc. |
+| **`model_name`** | `STRING` | The name of the model used. |
+| **`seed`** | `STRING` | The seed used for generation. |
+| **`user_text`** | `STRING` | The original user text. |
+| **`custom_var`** | `STRING` | A custom variable to include in the filename. |
+
 ## `PromptCrafter_CacheUtility`
 **Purpose:** A simple utility to manage the node pack's internal cache. The cache stores the results of expensive operations, like image analysis or AI-based generation, to make subsequent runs faster.
 
@@ -202,7 +187,7 @@
 *   **`Check Size`**: This action reports how many items are currently stored in the cache out of the maximum capacity. This is useful for debugging and understanding memory usage.
 
 ### Parameters
-| Parameter | Type | Description |
+| Parameter | Type | Description | 
 | --- | --- | --- |
 | **`action`** | `STRING` | The action to perform. Choose between `Clear Cache` to empty the cache or `Check Size` to see its current status. |
 
@@ -233,7 +218,7 @@ Let's say you want to add a profile to sort images by the checkpoint model used.
 `{
     "name": "Sort by Checkpoint Model",
     "description": "Sorts images into folders based on the checkpoint model used.",
-    "scheme": "# This scheme uses metadata to find the model name.\\nmetadata_contains: Juggernaut.safetensors -> By_Model/Juggernaut\\nmetadata_contains: Dreamshaper.safetensors -> By_Model/Dreamshaper\\n# Add more model rules here"
+    "scheme": "# This scheme uses metadata to find the model name.\nmetadata_contains: Juggernaut.safetensors -> By_Model/Juggernaut\nmetadata_contains: Dreamshaper.safetensors -> By_Model/Dreamshaper\n# Add more model rules here"
 }
 `
 
@@ -270,9 +255,10 @@ You can add your own custom captioning prompts to the `captioner_profile` dropdo
 **Important Notes:**
 *   **Restart ComfyUI**: After saving your changes to `captioner_profiles.json`, you must restart ComfyUI for the new profiles to appear in the dropdown menu.
 *   **JSON Validity**: Always ensure your file is valid JSON. Use an online validator if you're unsure.
+
 ### Adding Custom Style Profiles
 
-You can add your own creative styles to the `style_override` dropdown in the creator nodes (`ImageCreator`, `VideoCreator`, `LyricsCreator`).
+You can add your own creative styles to the `style_override` dropdown in the creator nodes (`VisualCreator`, `LyricsCreator`).
 
 1.  **Locate the File**: Open the `style_profiles.json` file located in your `ComfyUI/custom_nodes/ComfyUI-PromptCrafter/` directory.
 

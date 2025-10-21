@@ -3,6 +3,7 @@ import os
 import pickle
 import shutil
 import time
+from typing import Any
 
 class DiskCache:
     """
@@ -46,8 +47,7 @@ class DiskCache:
             print(f"\033[93m[PromptCrafter Cache] Warning: Could not read cache file {filepath}. Removing it. Error: {e}\033[0m")
             self._safe_remove(filepath)
             return None
-
-    def set(self, key: str, value: any):
+    def set(self, key: str, value: Any):
         """
         Saves an item to the cache and runs the eviction policy if necessary.
         """
@@ -57,6 +57,7 @@ class DiskCache:
                 pickle.dump(value, f)
             self._enforce_size_limit()
         except (pickle.PicklingError, TypeError) as e:
+            print(f"\033[91m[PromptCrafter Cache] Error: Could not serialize value for key '{key}'. Error: {e}\033[0m")
             print(f"\033[91m[PromptCrafter Cache] Error: Could not serialize value for key '{key}'. Error: {e}\033[0m")
 
     def clear(self) -> int:
