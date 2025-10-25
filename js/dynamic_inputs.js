@@ -21,7 +21,7 @@ app.registerExtension({
             if (nodeType.comfyClass === "PromptCrafter_VisualCreator") {
                 numStandardOutputs = 6;
             } else if (nodeType.comfyClass === "PromptCrafter_LyricsCreator") {
-                numStandardOutputs = 8;
+                numStandardOutputs = 9;
             } else {
                 numStandardOutputs = 6; // Default value
             }

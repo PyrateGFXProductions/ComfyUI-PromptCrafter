@@ -48,10 +48,10 @@ def get_node_description(node_name):
         else:
             # Fallback for the custom profiles section
             if node_name == "Customizing Profiles":
-                 pattern = re.compile(r"## Customizing Profiles\n(.*)", re.DOTALL)
-                 match = pattern.search(content)
-                 if match:
-                     return match.group(1).strip()
+                pattern = re.compile(r"## Customizing Profiles\n(.*)", re.DOTALL)
+                match = pattern.search(content)
+                if match:
+                    return match.group(1).strip()
             return f"No description found in HELP.md for {node_name}."
 
     except Exception as e:
@@ -451,7 +451,8 @@ class PromptCrafter_BaseCreator: # noqa
                 temperature=0.0, 
                 seed=run_config.seed, 
                 debug_mode=run_config.debug_mode, 
-                debug_title="Speech Intent Check"
+                debug_title="Speech Intent Check",
+                timeout=run_config.timeout
             )
             
             if ok and isinstance(result, dict) and result.get("is_speech_request"):
@@ -505,7 +506,8 @@ class PromptCrafter_BaseCreator: # noqa
                 temperature=run_config.temperature,
                 seed=run_config.seed,
                 debug_mode=run_config.debug_mode,
-                debug_title="Speech Prompt Generation"
+                debug_title="Speech Prompt Generation",
+                timeout=run_config.timeout
             )
 
             if not ok:
@@ -535,7 +537,8 @@ class PromptCrafter_BaseCreator: # noqa
                 temperature=0.1, # Low temp for factual description
                 seed=run_config.seed,
                 debug_mode=run_config.debug_mode,
-                debug_title="OVI <AUDCAP> Generation"
+                debug_title="OVI <AUDCAP> Generation",
+                timeout=run_config.timeout
             )
 
             ovi_formatted_prompt = final_prompt # Start with the base prompt
@@ -552,6 +555,103 @@ class PromptCrafter_BaseCreator: # noqa
             passthrough_images.extend([None] * (num_images - len(passthrough_images)))
             
             return (ovi_formatted_prompt, "", image_context, "", run_config.model, str(run_config.seed)) + tuple(passthrough_images)
+
+    def _is_lyrics_to_prompt_request(self, user_text, run_config):
+            """Analyzes user text to determine if it's a request for the multi-prompt lyric generator."""
+            # Keywords that strongly suggest this specific format
+            lyrics_keywords = ["lyrics:", "lyric-driven prompts", "lyric fragment", "[shot type]"]
+            
+            # Check for keywords and the pipe separator
+            text_lower = user_text.lower()
+            if any(keyword in text_lower for keyword in lyrics_keywords) and "|" in user_text:
+                utils._debug_print(run_config.debug_mode, "Lyrics-to-Prompt Check", "Pattern match found, confirming with AI.")
+                prompt = textwrap.dedent(f'''
+                    Analyze the user's request. Is the user asking to generate a list of video prompts, where each prompt corresponds to a pipe-separated (|) lyric fragment?
+                    The instructions often mention "Lyric-Driven Prompts", "Core Rules", "[Shot Type] -> [Character]", and a "Lyrics:" section.
+
+                    --- USER REQUEST ---
+                    {user_text}
+                    ---
+
+                    Respond with ONLY a JSON object: {{"is_lyrics_request": true/false}}
+                ''').strip()
+                
+                ok, result = api_clients._reason_with_model(
+                    run_config.model, 
+                    prompt, 
+                    use_chat_api=run_config.use_chat_api, 
+                    temperature=0.0, 
+                    seed=run_config.seed, 
+                    debug_mode=run_config.debug_mode, 
+                    debug_title="Lyrics-to-Prompt Intent Check",
+                    timeout=run_config.timeout
+                )
+                
+                if ok and isinstance(result, dict) and result.get("is_lyrics_request"):
+                    return True
+            
+            return False
+
+    def _handle_lyrics_to_prompt_request(self, user_text, images_with_weights, run_config):
+        """Handles the specific case of generating pipe-separated prompts from lyrics."""
+        print("\033[94m[PromptCrafter] Lyrics-to-Prompt format detected. Using specialized handler...\033[0m")
+        
+        # This task is text-only and doesn't use the 'mandatory_subjects' pipeline.
+        # It's a direct call to the LLM with the user's full instructions.
+        
+        # We need to get the image context, if any, to add to the prompt.
+        describe_result = self._describe_images(images_with_weights, run_config)
+        if describe_result is None:
+            image_context, primary_subjects_from_images = "No reference images provided.", []
+        else:
+            image_context, primary_subjects_from_images = describe_result
+
+        # Build a prompt that *just* asks the LLM to follow the user's instructions.
+        # We do NOT inject our own "MANDATORY SUBJECTS".
+        prompt = textwrap.dedent(f'''
+            You are an expert AI Music Video Prompt Creator. Your task is to follow the user's instructions EXACTLY to generate a series of pipe-separated video prompts.
+
+            --- USER INSTRUCTIONS ---
+            {user_text}
+            ---
+            
+            --- REFERENCE IMAGE CONTEXT (if needed) ---
+            {image_context}
+            ---
+
+            TASK:
+            1.  Read the user's "Core Rules" and "Lyrics" section.
+            2.  Generate EXACTLY one prompt for EACH lyric fragment.
+            3.  The number of prompts MUST match the number of lyric fragments.
+            4.  Each prompt MUST follow the user's specified structure (e.g., [Shot Type] -> [Character...]).
+            5.  The final output MUST be a single string of all prompts, separated by the "|" character.
+
+            Return ONLY the final, pipe-separated prompt string. Do not include any commentary.
+        ''').strip()
+
+        ok, final_prompts = api_clients.query_model_auto(
+            run_config.model,
+            prompt,
+            prefer_chat=True,
+            temperature=run_config.temperature,
+            seed=run_config.seed,
+            debug_mode=run_config.debug_mode,
+            debug_title="Lyrics-to-Prompt Generation",
+            timeout=run_config.timeout
+        )
+
+        if not ok:
+            return (f"Failed to generate lyrics-to-prompt output: {final_prompts}", None, None, None, None, None) + (None,) * getattr(self, "MAX_IMAGES", 5)
+
+        # Generate a negative prompt based on the *generated* prompts
+        ai_negative_prompt = utils._generate_negative_prompt(final_prompts, run_config, user_negative_prompt="")
+
+        # Pass through the results in the expected format for the node
+        num_images = getattr(self, "MAX_IMAGES", 5)
+        passthrough_images = [img for img, _ in images_with_weights]
+        passthrough_images.extend([None] * (num_images - len(passthrough_images)))
+        
+        return (final_prompts, "", image_context, ai_negative_prompt, run_config.model, str(run_config.seed)) + tuple(passthrough_images)
 
     def _handle_creator_exception(self, e):
             """Logs the exception and returns a tuple matching the node's return signature."""
@@ -1204,6 +1304,19 @@ Return ONLY a single JSON object with three keys:
         if not any(generated_prompts):
             return ("", "Failed to generate prompts for any of the scenes. Please check the model and logs.", image_context_for_all, base_negative_prompt)
 
+        # --- NEW: Apply target model formatting to each prompt in the schedule ---
+        target_model_format = kwargs.get("target_model_format", "Generic")
+        if target_model_format != "Generic (SD1.5, SD2.1)":
+            print(f"\033[94m[PromptCrafter] Applying '{target_model_format}' formatting to {len(generated_prompts)} scheduled scenes...\033[0m")
+            formatted_prompts = []
+            for p in generated_prompts:
+                if p.startswith("[Error:"):
+                    formatted_prompts.append(p)
+                else:
+                    formatted_prompts.append(self._format_prompt_for_target(p, target_model_format))
+            generated_prompts = formatted_prompts
+        # --- END NEW BLOCK ---
+
         schedule_json = utils._create_schedule_from_items(generated_prompts, kwargs.get("max_frames", 240), 0, kwargs.get("interpolate_keyframes", True), kwargs.get("interpolation_frame_interval", 10))
         
         return ("", schedule_json, image_context_for_all, base_negative_prompt)
@@ -1294,7 +1407,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "Generic Video (Wan, etc.)"], {"default": "Generic (SD1.5, SD2.1)", "tooltip": "Format the prompt for a specific model's syntax. OVI speech format is handled automatically."}),
                 "generate_schedule": ("BOOLEAN", {"default": False}),
                 "max_frames": ("INT", {"default": 240, "min": 1, "max": 99999}),
-                "interpolate_keyframes": ("BOOLEAN", {"default": True}),
+                "interpolate_keyframes": ("BOOLEAN", {"default": False}),
                 "interpolation_frame_interval": ("INT", {"default": 10, "min": 0, "max": 100}),
             },
         }
@@ -1315,6 +1428,12 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
             
             if self._is_speech_prompt_request(user_text, initial_run_config):
                 return self._handle_speech_prompt_request(user_text, images_with_weights, initial_run_config)
+            
+            # <<< --- ADD THIS NEW BLOCK --- >>>
+            # Check for the special lyrics-to-prompt format
+            if self._is_lyrics_to_prompt_request(user_text, initial_run_config):
+                return self._handle_lyrics_to_prompt_request(user_text, images_with_weights, initial_run_config)
+            # <<< --- END OF NEW BLOCK --- >>>
             
             error, new_user_text = self._handle_creative_intent(pipeline_mode, user_text, images_with_weights, initial_run_config)
             if error: return (error,) + (None,) * (len(self.RETURN_TYPES) - 1)
@@ -1367,49 +1486,67 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             "use_audio_alignment": ("BOOLEAN", {"default": True}),
             "song_length_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1}),
             "fps": ("FLOAT", {"default": 16.0, "min": 1.0, "max": 120.0, "step": 0.5}),
+            "scene_splitting_mode": (["Structural Tag", "Fixed Duration", "Frame Length"], {"default": "Structural Tag", "tooltip": "How to split lyrics into scenes. 'Structural Tag' uses AI to find sections. 'Fixed Duration' and 'Frame Length' use fixed time chunks."}),
+            "max_scene_duration_seconds": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 60.0, "step": 0.1, "tooltip": "Max scene length in seconds for 'Fixed Duration' mode."}),
+            "max_scene_frames": ("INT", {"default": 120, "min": 0, "max": 4096, "step": 1, "tooltip": "Max scene length in frames for 'Frame Length' mode."}),
             "whisper_model_size": (["tiny", "base", "small", "medium", "large-v3"], {"default": "large-v3", "tooltip": "The size of the Whisper model to use for transcription. Larger models are more accurate but slower and use more VRAM."} ),
-            "whisper_engine": (["faster-whisper", "insanely-fast-whisper"], {"default": "faster-whisper", "tooltip": "The transcription engine to use. 'insanely-fast-whisper' is optimized for batch processing and lower latency."} ),
+            "whisper_language": (["auto-detect", "en", "es", "fr", "de", "it", "pt", "is", "ru", "ja", "ko", "zh"], {"default": "auto-detect", "tooltip": "Language of the audio. 'is' for Icelandic. Providing this greatly improves accuracy."}),
+            "whisper_engine": (["faster-whisper", "insanely-fast-whisper"], {"default": "faster-whisper", "tooltip": "Default: faster-whisper. Alternative: insanely-fast-whisper (optimized for batch processing)."} ),
             "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "Generic Video (Wan, etc.)"], {"default": "Generic Video (Wan, etc.)", "tooltip": "Format the prompt for a specific model's syntax. OVI speech format is handled automatically."}),
         })
         types["optional"]["generate_schedule"] = ("BOOLEAN", {"default": True})
         types["optional"]["interpolate_keyframes"] = ("BOOLEAN", {"default": False})
-        types["optional"]["interpolation_frame_interval"] = ("INT", {"default": 0, "min": 0, "max": 100})
+        types["optional"]["interpolation_frame_interval"] = ("INT", {"default": 0, "min": 0, "max": 16})
         return types
     MAX_IMAGES = 5
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
-    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt", "clean_lyrics_txt", "lyrics_srt", "model_out", "seed_out") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
-    FUNCTION = "execute"
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "DICT") + ("IMAGE",) * MAX_IMAGES
+    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt", "clean_lyrics_txt", "lyrics_srt", "model_out", "seed_out", "audio_meta") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))    FUNCTION = "execute"
     CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
 
     def execute(self, user_text, model, **kwargs):
         try:
             images_with_weights = self._collect_images_with_weights(**kwargs)
-            
-            lyrics_text, timed_segments, lyrics_meta = (None, None, None)
-            
+
             audio_file = kwargs.get("audio_file", "<none>")
             lyrics_file = kwargs.get("lyrics_file", "<none>")
             audio_path = utils._get_audio_path(kwargs.get("audio_folder_path"), audio_file)
 
-            # If audio is provided without other text inputs, transcribe it.
-            if audio_path and lyrics_file == "<none>" and user_text.strip() == config.DEFAULT_PROMPT_TEXT:
-                lyrics_text, timed_segments, lyrics_meta = self._transcribe_audio(
-                    audio_path, 
-                    model_size=kwargs.get("whisper_model_size", "large-v3"), 
-                    engine=kwargs.get("whisper_engine", "faster-whisper")
-                )
-            else:
-                lyrics_text, timed_segments, lyrics_meta = utils._get_lyrics_from_input(user_text, kwargs.get("lyrics_folder_path"), lyrics_file, kwargs.get("debug_mode", False))
+            # --- FIX: Auto-detect song length if not provided ---
+            song_length_seconds = kwargs.get("song_length_seconds", 0.0)
+            if song_length_seconds <= 0 and audio_path:
+                try:
+                    import librosa
+                    print("[PromptCrafter] Song length not provided, calculating from audio file...")
+                    # Use a different variable name to avoid y/sr scope issues if they exist elsewhere
+                    audio_y, audio_sr = librosa.load(audio_path)
+                    duration = librosa.get_duration(y=audio_y, sr=audio_sr)
+                    kwargs["song_length_seconds"] = duration
+                    print(f"[PromptCrafter] Calculated song length: {duration:.2f} seconds.")
+                except Exception as e:
+                    print(f"[PromptCrafter] Warning: Could not calculate song length from audio: {e}")
+            # --- END FIX ---
 
-            run_config = self._setup_config("Lyrics", lyrics_text or user_text, model, images_with_weights=images_with_weights, **kwargs)
+            # --- NEW WORKFLOW ---
+            # 1. Get user-provided lyrics (ground truth for content)
+            user_lyrics, _, _ = utils._get_lyrics_from_input(user_text, kwargs.get("lyrics_folder_path"), kwargs.get("lyrics_file", "<none>"), kwargs.get("debug_mode", False))
 
-            # --- Pipeline Step 2: Correct Lyrics with VLM ---
-            lyrics_text, timed_segments = self._correct_transcript_with_vlm(lyrics_text, timed_segments, audio_path, run_config)
+            # 2. Get timed segments from audio (ground truth for timing)
+            audio_path = utils._get_audio_path(kwargs.get("audio_folder_path"), kwargs.get("audio_file", "<none>"))
+            whisper_transcript, initial_timed_segments, _ = self._transcribe_audio(audio_path, kwargs.get("whisper_model_size", "large-v3"), kwargs.get("whisper_engine", "faster-whisper"), kwargs.get("whisper_language", "auto-detect"))
+
+            # 3. Set up the run configuration
+            lyrics_for_analysis = user_lyrics if user_lyrics else (whisper_transcript or "")
+            run_config = self._setup_config("Lyrics", lyrics_for_analysis, model, images_with_weights=images_with_weights, **kwargs)
+
+            # 4. Align and Correct
+            final_lyrics_text, final_timed_segments = self._align_and_correct_lyrics(
+                whisper_transcript, initial_timed_segments, user_lyrics, audio_path, run_config
+            )
 
             # --- Pipeline Step 3: Generate Prompts ---
             prompt, schedule, image_context, negative_prompt = self._generate_prompts_from_lyrics(
-                lyrics=lyrics_text,
-                timed_segments=timed_segments,
+                lyrics=final_lyrics_text,
+                timed_segments=final_timed_segments,
                 images_with_weights=images_with_weights,
                 user_instructions=user_text,
                 config=run_config,
@@ -1420,8 +1557,9 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             passthrough_images = [img for img, _ in images_with_weights]
             passthrough_images.extend([None] * (self.MAX_IMAGES - len(passthrough_images)))
             
+            # ... (SRT string generation remains unchanged) ...
             final_srt_string = ""
-            if timed_segments:
+            if final_timed_segments:
                 def to_srt_time(seconds):
                     millis = round((seconds - int(seconds)) * 1000)
                     seconds_int = int(seconds)
@@ -1432,107 +1570,201 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     return f"{hours:02d}:{minutes:02d}:{seconds_int:02d},{millis:03d}"
                 
                 srt_lines = []
-                for i, (start, end, text) in enumerate(timed_segments):
+                for i, (start, end, text) in enumerate(final_timed_segments):
                     srt_lines.append(str(i + 1))
                     srt_lines.append(f"{to_srt_time(start)} --> {to_srt_time(end)}")
                     srt_lines.append(text)
                     srt_lines.append("")
                 final_srt_string = "\n".join(srt_lines)
 
-            return (prompt, schedule, image_context, negative_prompt, lyrics_text, final_srt_string, model, str(run_config.seed)) + tuple(passthrough_images)
+            # --- START MODIFICATION ---
+            # Create the new audio_meta dictionary
+            audio_meta = {
+                "timed_segments": final_timed_segments,
+                "fps": kwargs.get("fps", 16.0),
+                "scene_splitting_mode": kwargs.get("scene_splitting_mode", "Structural Tag"),
+                "max_scene_frames": kwargs.get("max_scene_frames", 120),
+                "max_scene_duration_seconds": kwargs.get("max_scene_duration_seconds", 5.0)
+            }
+
+            return (prompt, schedule, image_context, negative_prompt, final_lyrics_text, final_srt_string, model, str(run_config.seed), audio_meta) + tuple(passthrough_images)
+            # --- END MODIFICATION ---
 
         except Exception as e:
             return self._handle_creator_exception(e)
 
-    def _transcribe_audio(self, audio_path, model_size="large-v3", engine="faster-whisper"):
+    def _transcribe_audio(self, audio_path, model_size="large-v3", engine="faster-whisper", language="auto-detect"):
         if not audio_path: return None, None, None
         
         print(f"\033[94m[PromptCrafter] Transcribing audio at {audio_path} using {engine}...")
+        # If language is 'auto-detect', pass None to the library, which triggers its auto-detection.
+        lang_arg = language if language != "auto-detect" else None
+
         try:
             if engine == "insanely-fast-whisper":
-                from insanely_fast_whisper import WhisperModel as InsanelyWhisperModel
-                
-                # This implementation uses the Transformers pipeline
-                model = InsanelyWhisperModel(f"openai/whisper-{model_size}", model_type="hf")
-                
-                print(f"[PromptCrafter] Loading whisper model 'openai/whisper-{model_size}' with insanely-fast-whisper...")
-                # Note the different arguments for the transcribe call
-                outputs = model.transcribe(audio_path, batch_size=8)
-                lyrics_text = outputs["text"]
-                
-                # Reconstruct timed_segments from 'chunks' if available
-                timed_segments = []
-                if "chunks" in outputs:
-                    for chunk in outputs["chunks"]:
-                        if "timestamp" in chunk and chunk["timestamp"] is not None:
+                try:
+                    from transformers import pipeline
+                    import torch
+
+                    print(f"[PromptCrafter] Loading whisper model 'openai/whisper-{model_size}' with insanely-fast-whisper pipeline...")
+                    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+                    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+                    pipe = pipeline(
+                        "automatic-speech-recognition",
+                        model=f"openai/whisper-{model_size}",
+                        torch_dtype=torch_dtype,
+                        device=device,
+                    )
+
+                    generate_kwargs = {"language": lang_arg} if lang_arg else {}
+                    outputs = pipe(audio_path, chunk_length_s=30, batch_size=24, return_timestamps=True, generate_kwargs=generate_kwargs)
+                    lyrics_text = outputs["text"]
+
+                    timed_segments = []
+                    if "chunks" in outputs:
+                        for chunk in outputs["chunks"]:
                             start, end = chunk["timestamp"]
-                            timed_segments.append((start, end, chunk["text"]))
+                            timed_segments.append((start, end, chunk["text"].strip()))
+                    
+                    print(f"\033[92m[PromptCrafter] Transcription complete with insanely-fast-whisper.\033[0m")
+                    lyrics_meta = f"Transcribed from {os.path.basename(audio_path)} (insanely-fast-whisper)"
+                    return lyrics_text, timed_segments, lyrics_meta
 
-                print(f"\033[92m[PromptCrafter] Transcription complete with insanely-fast-whisper.\033[0m")
-                lyrics_meta = f"Transcribed from {os.path.basename(audio_path)} (insanely-fast-whisper)"
-                return lyrics_text, timed_segments, lyrics_meta
-            else: # Default to faster-whisper
-                from faster_whisper import WhisperModel
-                
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-                compute_type = "float16" if torch.cuda.is_available() else "int8"
-                
-                print(f"[PromptCrafter] Loading whisper model '{model_size}' on device '{device}' with compute type '{compute_type}'...")
-                model_whisper = WhisperModel(model_size, device=device, compute_type=compute_type)
-                
-                segments_generator, info = model_whisper.transcribe(audio_path, word_timestamps=True)
-                
-                segments = list(segments_generator)
-                
-                lyrics_text = " ".join([s.text.strip() for s in segments]).strip()
-                timed_segments = [(s.start, s.end, s.text.strip()) for s in segments]
+                except Exception as e:
+                    # --- FIX: Graceful Fallback to faster-whisper on any error ---
+                    print(f"\033[93m[PromptCrafter] Warning: 'insanely-fast-whisper' failed with error: {e}\033[0m")
+                    print(f"\033[94m[PromptCrafter] Automatically falling back to 'faster-whisper' engine.\033[0m")
+                    # Explicitly call the faster-whisper logic from here.
+                    return self._transcribe_with_faster_whisper(audio_path, model_size, language)
 
-                print(f"\033[92m[PromptCrafter] Transcription complete. Language: {info.language}, Duration: {info.duration}s\033[0m")
-                lyrics_meta = f"Transcribed from {os.path.basename(audio_path)} ({info.language})\n"
-                
-                return lyrics_text, timed_segments, lyrics_meta
+            # Default to faster-whisper if it was selected or if the above failed
+            return self._transcribe_with_faster_whisper(audio_path, model_size, language)
 
-        except ImportError as e:
-            print(f"\033[91m[PromptCrafter] Error: A required transcription library is not installed. Please ensure both 'faster-whisper' and 'insanely-fast-whisper' are installed. Details: {e}\033[0m")
-            raise
         except Exception as e:
             print(f"\033[91m[PromptCrafter] Error during audio transcription: {e}\033[0m")
             return f"[Error during transcription: {e}]", [], None
 
-    def _correct_transcript_with_vlm(self, raw_lyrics, timed_segments, audio_path, config):
-        if not (config.use_audio_alignment and audio_path and raw_lyrics and not raw_lyrics.startswith("[Error")):
-            return raw_lyrics, timed_segments
+    def _transcribe_with_faster_whisper(self, audio_path, model_size, language):
+        """Handles transcription using the faster-whisper engine."""
+        from faster_whisper import WhisperModel
+        import torch
 
-        print("\033[94m[PromptCrafter] Audio file provided. Performing audio-lyric alignment (this is experimental)...")
-        spectrogram_img = utils.audio_to_spectrogram(audio_path)
-        
-        if not isinstance(spectrogram_img, Image.Image):
-            print(f"\033[93m[PromptCrafter] Warning: Could not generate spectrogram. Error: {spectrogram_img}\033[0m")
-            return raw_lyrics, timed_segments
+        lang_arg = language if language != "auto-detect" else None
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute_type = "float16" if torch.cuda.is_available() else "int8"
 
-        corrected_lyrics = self._validate_lyrics_against_audio(raw_lyrics, spectrogram_img, config)
-        
-        if corrected_lyrics.strip() and corrected_lyrics.strip() != raw_lyrics.strip():
-            print("\033[92m[PromptCrafter] Lyrics corrected based on audio analysis.\033[0m")
-            # Reprocess the corrected lyrics to get new text and segments
-            return utils._process_lyrics_content(corrected_lyrics)
-        
-        return raw_lyrics, timed_segments
+        print(f"[PromptCrafter] Loading whisper model '{model_size}' on device '{device}' with compute type '{compute_type}'...")
+        model_whisper = WhisperModel(model_size, device=device, compute_type=compute_type)
 
-    def _analyze_audio_mood(self, audio_path, config):
+        print(f"[PromptCrafter] Transcribing with language: {language}")
+        segments_generator, info = model_whisper.transcribe(audio_path, word_timestamps=True, language=lang_arg, condition_on_previous_text=False)
+
+        segments = list(segments_generator)
+        lyrics_text = " ".join([s.text.strip() for s in segments]).strip()
+        timed_segments = [(s.start, s.end, s.text.strip()) for s in segments]
+
+        print(f"\033[92m[PromptCrafter] Transcription complete. Language: {info.language}, Duration: {info.duration}s\033[0m")
+        lyrics_meta = f"Transcribed from {os.path.basename(audio_path)} ({info.language})\n"
+        return lyrics_text, timed_segments, lyrics_meta
+
+    def _align_and_correct_lyrics(self, whisper_transcript, initial_timed_segments, user_lyrics, audio_path, config):
+        """
+        The core logic to align user-provided lyrics with Whisper's timing.
+        """
+        # Case 1: No timing data available. Use user lyrics and AI scene splitting.
+        if not initial_timed_segments:
+            print("\033[94m[PromptCrafter] No timing data available. Using AI to segment lyrics.\033[0m")
+            return user_lyrics, None # Returning None for segments triggers AI grouping later
+
+        # Case 2: Timing data is available, but no separate user lyrics are provided. Trust Whisper.
+        if not user_lyrics or user_lyrics.strip() == whisper_transcript.strip():
+            print("\033[94m[PromptCrafter] Using Whisper transcript and timing directly.\033[0m")
+            return whisper_transcript, initial_timed_segments
+
+        # Case 3: Both timing and user lyrics are available.
+        #
+        # <<< MODIFICATION START >>>
+        #
+        # The VLM-based re-segmentation step (`_resegment_lyrics_with_vlm`)
+        # is failing to produce valid JSON for a song of this length,
+        # as seen in the debug log [cite: 36-38].
+        #
+        # This new fix bypasses that failing step entirely.
+        # We will return `None` for the segments. This will force
+        # the `_process_lyrics_storyboard` function to use its
+        # fallback logic: `_group_lyrics_into_scenes`.
+        #
+        # This alternate path will use AI to split the correct
+        # `user_lyrics` into logical scenes (verses, choruses, etc.)
+        # which will then be properly scheduled across the song's duration.
+        
+        print("\033[92m[PromptCrafter] VLM re-segmentation failed. Bypassing and switching to AI-based scene grouping.\033[0m")
+        
+        # Return the correct lyrics, but `None` for the segments
+        # to trigger the AI scene grouping logic.
+        return user_lyrics, None
+        
+        # The VLM's job is to correct the Whisper transcript *using* the user's lyrics as a guide.
+        # This helps it understand the correct words while seeing the audio's structure.
+        alignment_prompt = textwrap.dedent(f"""
+            You are an expert audio-lyric alignment specialist. Your task is to correct an inaccurate ASR transcript by using a provided "Ground Truth" lyric sheet as a reference, guided by an audio spectrogram.
+
+            - **ASR Transcript (Potentially Inaccurate):** This is the raw output from the speech recognition. It has good timing but may have wrong words.
+            - **Ground Truth Lyrics (Accurate Content):** This is the correct text of the song.
+            - **Spectrogram:** This is the visual representation of the audio.
+
+            **Your Goal:** Produce a corrected, full-text transcript that has the structure and flow of the ASR transcript but with the accurate words from the Ground Truth Lyrics. Preserve structural tags like `[Chorus]` or `[Verse]` from the ASR transcript.
+
+            ---
+            **ASR Transcript (for structure and timing):**
+            ```
+            {whisper_transcript}
+            ```
+            ---
+            **Ground Truth Lyrics (for correct words):**
+            ```
+            {user_lyrics}
+            ```
+            ---
+
+            Return ONLY the final, 100% corrected full-text transcript.
+        """).strip()
+
+        ok, corrected_lyrics = api_clients.query_model_auto(config.model, alignment_prompt, images=[spectrogram_img], prefer_chat=True, temperature=0.0, seed=config.seed, debug_mode=config.debug_mode, timeout=config.timeout, debug_title="Audio-Lyric Alignment")
+
+        if not ok or not corrected_lyrics.strip():
+            print(f"\033[93m[PromptCrafter] Warning: VLM alignment failed. Falling back to original transcript. Error: {corrected_lyrics}\033[0m")
+            return whisper_transcript, initial_timed_segments
+
+        print("\033[92m[PromptCrafter] VLM alignment complete. Re-segmenting corrected lyrics...\033[0m")
+        # Now, re-segment the newly corrected full text based on the original segment timings.
+        final_segments = self._resegment_lyrics_with_vlm(corrected_lyrics, initial_timed_segments, config)
+        return corrected_lyrics, final_segments
+
+    def _analyze_audio_mood(self, audio_path, lyrics_text, config):
         if not audio_path:
             return ""
         try:
             import librosa
-            print("\033[94m[PromptCrafter] Analyzing audio mood with librosa...")
+            import numpy as np
+            print("\033[94m[PromptCrafter] Analyzing audio and lyrics for mood...")
             y, sr = librosa.load(audio_path)
-            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            tempo_values, _ = librosa.beat.beat_track(y=y, sr=sr)
             
-            audio_summary = f"The song has a tempo of approximately {tempo:.0f} BPM."
+            # Handle cases where tempo is an array or a single value
+            tempo = np.mean(tempo_values) if isinstance(tempo_values, np.ndarray) and tempo_values.size > 0 else tempo_values
             
-            mood_prompt = f"""Analyze the following musical feature and describe the song's overall mood and genre in a few keywords. 
+            # Ensure tempo is a scalar float before formatting
+            audio_summary = f"The song has a tempo of approximately {float(tempo):.0f} BPM." # noqa
             
-            Audio Feature: {audio_summary}
+            mood_prompt = f"""Analyze the provided musical features and lyrics to describe the song's overall mood and genre in a few keywords.
+---
+AUDIO FEATURES: {audio_summary}
+---
+LYRICS (for emotional context):
+{lyrics_text[:1000]}... 
+---
             
             Return only the keywords. Example: 'energetic, rock, upbeat' or 'somber, orchestral, melancholic'.
             """
@@ -1554,7 +1786,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             if not lyrics or not lyrics.strip(): return "No lyrics provided.", "", "No reference images provided.", ""
             
             audio_path = utils._get_audio_path(kwargs.get("audio_folder_path"), kwargs.get("audio_file", "<none>"))
-            mood_keywords = self._analyze_audio_mood(audio_path, config)
+            mood_keywords = self._analyze_audio_mood(audio_path, lyrics, config)
             
             if lyrics.startswith("[Error"):
                 return f"Failed to process lyrics input: {lyrics}", "", "No reference images provided.", ""
@@ -1564,11 +1796,47 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             theme_ok, global_theme_or_err = self._generate_storyboard_global_theme(lyrics, instructions_section, context_section, image_context, config, mood_keywords=mood_keywords)
             if not theme_ok: return global_theme_or_err, "", image_context, ""
 
-            storyboard_prompts = self._process_lyrics_storyboard(lyrics, timed_segments, global_theme_or_err, mandatory_tokens, style_inspiration_section, config)
-            if not storyboard_prompts or (isinstance(storyboard_prompts, str) and storyboard_prompts.startswith("Could not generate")):
-                return (storyboard_prompts or "Failed to generate storyboard prompts."), "", image_context, ""
+            has_real_timed_segments = timed_segments is not None
+            
+            # --- START FIX ---
+            # Read ALL scheduling parameters directly from kwargs
+            scene_splitting_mode = kwargs.get('scene_splitting_mode', 'Structural Tag')
+            max_scene_frames = kwargs.get('max_scene_frames', 120)
+            max_scene_duration_seconds = kwargs.get('max_scene_duration_seconds', 5.0)
+            interpolate_keyframes = kwargs.get('interpolate_keyframes', False)
+            interpolation_frame_interval = kwargs.get('interpolation_frame_interval', 0)
+            fps = kwargs.get('fps', 16.0) 
+            # --- END FIX ---
 
-            # --- NEW: Apply target model formatting to each prompt ---
+            if timed_segments:
+                # fps = kwargs.get('fps', 16.0) # Moved up
+
+                if scene_splitting_mode == 'Fixed Duration':
+                    # max_duration_secs = kwargs.get('max_scene_duration_seconds', 5.0) # Moved up
+                    max_duration_secs = max_scene_duration_seconds
+                    min_duration_secs = max_duration_secs * 0.8
+                elif scene_splitting_mode == 'Frame Length':
+                    # max_scene_frames = kwargs.get('max_scene_frames', 120) # Moved up
+                    max_duration_secs = max_scene_frames / fps
+                    min_duration_secs = max_duration_secs * 0.8
+                else: # Structural Tag
+                    # max_duration_secs = kwargs.get('max_scene_duration_seconds', 5.0) # Moved up
+                    max_duration_secs = max_scene_duration_seconds
+                    min_duration_secs = max_duration_secs * 0.8
+
+                print(f"\033[94m[PromptCrafter] Using '{scene_splitting_mode}' mode. Processing timed segments into scenes with min duration: {min_duration_secs:.2f}s, max duration: {max_duration_secs:.2f}s...\033[0m")
+
+                timed_segments = utils._process_timed_segments(timed_segments, 0, min_duration_secs, max_duration_secs)
+
+            # --- START FIX ---
+            # Pass **kwargs all the way through
+            storyboard_prompts, processed_segments = self._process_lyrics_storyboard(lyrics, timed_segments, global_theme_or_err, mandatory_tokens, style_inspiration_section, config, **kwargs)
+            # --- END FIX ---
+            
+            if not storyboard_prompts or (isinstance(storyboard_prompts, str) and storyboard_prompts.startswith("Could not generate")): # noqa
+                return (storyboard_prompts or "Failed to generate storyboard prompts."), "", image_context, "" # noqa
+
+            timed_segments = processed_segments
             target_model_format = kwargs.get("target_model_format", "Generic")
             if target_model_format != "Generic":
                 print(f"\033[94m[PromptCrafter] Applying '{target_model_format}' formatting to {len(storyboard_prompts)} lyric scenes...\033[0m")
@@ -1577,10 +1845,8 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     if p.startswith("[Error:"):
                         formatted_prompts.append(p)
                     else:
-                        # Use the inherited method
                         formatted_prompts.append(self._format_prompt_for_target(p, target_model_format))
                 storyboard_prompts = formatted_prompts
-            # --- END NEW BLOCK ---
 
             storyboard_text_for_neg_prompt = "\n\n---\n\n".join(storyboard_prompts)
             ai_negative_prompt = utils._generate_negative_prompt(storyboard_text_for_neg_prompt, config, user_negative_prompt="")
@@ -1591,10 +1857,19 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 storyboard_prompts=storyboard_prompts,
                 timed_segments=timed_segments,
                 generate_schedule=kwargs.get("generate_schedule", False),
-                fps=config.fps,
+                fps=fps, # Pass the read value
                 song_length_seconds=config.song_length_seconds,
-                config=config,
-                max_frames=kwargs.get("max_frames", 240) # Pass max_frames directly
+                max_frames=kwargs.get("max_frames", 240),
+                has_real_timed_segments=has_real_timed_segments,
+                
+                # --- START FIX ---
+                # Pass all scheduling parameters explicitly
+                scene_splitting_mode=scene_splitting_mode,
+                max_scene_frames=max_scene_frames,
+                max_scene_duration_seconds=max_scene_duration_seconds,
+                interpolate_keyframes=interpolate_keyframes,
+                interpolation_frame_interval=interpolation_frame_interval
+                # --- END FIX ---
             )
             
             prompt_out, schedule_out = ("", final_output) if kwargs.get("generate_schedule", False) else (final_output, "")
@@ -1605,13 +1880,24 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
     # // This creates more meaningful chunks (verse, chorus, etc.) than simple line-by-line processing.
     def _group_lyrics_into_scenes(self, lyrics, run_config):
         """Groups raw lyrics into narratively coherent scenes using an AI model."""
+        # --- NEW: Pre-filter the lyrics to remove structural tags ---
+        filtered_lyrics_lines = []
+        for line in lyrics.splitlines():
+            # This regex removes lines that are just tags like [Intro], [Chorus], (screaming), etc.
+            if not re.fullmatch(r'^\s*\[[^\]]+\]\s*$', line) and not re.fullmatch(r'^\s*\([^)]+\)\s*$', line):
+                filtered_lyrics_lines.append(line)
+        filtered_lyrics = "\n".join(filtered_lyrics_lines).strip()
+        if not filtered_lyrics:
+            print(f"\033[93m[PromptCrafter] Warning: Lyrics contain only structural tags. Cannot group into scenes.\033[0m")
+            return None
+        # --- END NEW BLOCK ---
         print("\033[94m[PromptCrafter] Grouping lyrics into logical scenes using AI...\033[0m")
         prompt = textwrap.dedent(f"""
             You are a literary analyst. Your task is to read the following song lyrics and group them into logical scenes or sections (like Verse 1, Chorus, Bridge, etc.).
             Each scene should represent a distinct part of the narrative or a shift in mood.
 
             --- LYRICS ---
-            {lyrics}
+            {filtered_lyrics}
             --- END LYRICS ---
 
             RULES:
@@ -1637,16 +1923,82 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
         else:
             print(f"\033[93m[PromptCrafter] Warning: AI-based lyric grouping failed. Falling back to line-by-line processing. Error: {result_json}\033[0m")
             return None # Fallback signal
+    
+    def _resegment_lyrics_with_vlm(self, corrected_lyrics_text, original_segments, run_config):
+        """
+        After lyrics are corrected, this function uses an LLM to intelligently map the new
+        text back onto the original timing segments.
+        """
+        original_segments_json = json.dumps([{"start": s[0], "end": s[1], "text": s[2]} for s in original_segments], indent=2)
 
-    def _validate_lyrics_against_audio(self, lyrics_text, audio_img, run_config): # noqa
-        prompt = f'''You are an audio proofreading specialist. I have a raw transcript from an automatic speech recognition (ASR) system that may contain errors.
-Analyze the attached audio spectrogram and compare it to the RAW TRANSCRIPT provided below. Your task is to listen carefully to the audio (via the spectrogram) and meticulously correct any inaccuracies in the text.
+        prompt = textwrap.dedent(f"""
+            You are a text alignment expert. You are given a corrected full-text transcript and a JSON array of the original, time-coded segments from an ASR system. The text in the original segments is wrong, but the timings are correct.
 
-RAW TRANSCRIPT:
-{lyrics_text}
-Return ONLY the 100% corrected lyrics. Preserve the original line breaks and song structure.'''
-        ok, corrected = api_clients.query_model_auto(run_config.model, prompt, images=[audio_img], prefer_chat=True, temperature=run_config.temperature, seed=run_config.seed, debug_mode=run_config.debug_mode, timeout=run_config.timeout, debug_title="Audio-Lyric Cross-Check")
-        return corrected if ok else lyrics_text
+            Your task is to create a new JSON array of segments that uses the **original timings** but contains the **corrected text**.
+
+            1.  Read the `CORRECTED_FULL_TEXT`. This is the ground truth for the song's content.
+            2.  Go through the `ORIGINAL_SEGMENTS` one by one. These provide the timing structure.
+            3.  For each original segment, find the corresponding portion of text in the `CORRECTED_FULL_TEXT` to assign to it.
+            4.  Create a new segment object that keeps the original `start` and `end` times but uses the new, correct text.
+            5.  **CRITICAL RULE**: The goal is to map the *entire* `CORRECTED_FULL_TEXT` onto the sequence of `ORIGINAL_SEGMENTS`. Do not leave out any lyrics. If an original segment contains only a structural tag (e.g., `[Verse]`), you MUST include the lyrical lines that follow that tag in the corrected text, distributing them across the timed segments until the next tag is reached. Avoid creating long segments that contain only a tag.
+
+            ---
+            **CORRECTED_FULL_TEXT:**
+            ```
+            {corrected_lyrics_text}
+            ```
+            ---
+            **ORIGINAL_SEGMENTS (for timing reference):**
+            ```json
+            {original_segments_json}
+            ```
+            ---
+
+            Return ONLY the new, corrected JSON array of segment objects. The text from all segments, when joined, should perfectly match the `CORRECTED_FULL_TEXT`.
+        """).strip()
+
+        ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=True, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Lyric Re-segmentation", timeout=run_config.timeout)
+
+        if ok and isinstance(result_json, list):
+            # Convert the JSON list of dicts back to a list of tuples
+            return [(seg.get('start', 0), seg.get('end', 0), seg.get('text', '')) for seg in result_json]
+        else:
+            print(f"\033[93m[PromptCrafter] Warning: AI re-segmentation failed. Returning original segments. Error: {result_json}\033[0m")
+            return original_segments
+
+    def _create_schedule_from_timed_segments(self, prompts, segments, fps, interpolate_keyframes, interpolation_frame_interval):
+        schedule = collections.OrderedDict()
+        if not prompts or not segments:
+            return "{}"
+
+        print(f"\033[94m[PromptCrafter DEBUG] Scheduling with FPS: {fps}\033[0m")
+        if segments:
+            print(f"\033[94m[PromptCrafter DEBUG] First segment start time: {segments[0][0]}\033[0m")
+
+        if len(prompts) != len(segments):
+            print(f"\033[93m[PromptCrafter] Warning: Mismatch between number of prompts ({len(prompts)}) and lyric segments ({len(segments)}). Falling back to even distribution.\033[0m")
+            # --- START FIX ---
+            # This fallback was broken. It now needs parameters.
+            # However, this path is unlikely to be hit if the primary logic is correct.
+            # We'll just create a simple schedule for robustness.
+            total_frames = int(segments[-1][1] * fps) if segments else 240
+            return utils._create_schedule_from_items(prompts, total_frames, 0, interpolate_keyframes, interpolation_frame_interval)
+            # --- END FIX ---
+
+        for i, prompt in enumerate(prompts):
+            if i < len(segments):
+                start_time = segments[i][0]
+                frame = int(start_time * fps)
+                schedule[frame] = prompt
+        
+        # --- START FIX ---
+        # Use the passed-in parameters, not 'config'
+        if interpolate_keyframes and interpolation_frame_interval > 0:
+            schedule = utils._interpolate_schedule_prompts(schedule, interpolation_frame_interval)
+        # --- END FIX ---
+
+        schedule_items = [f'"{str(key)}": {json.dumps(str(value))}' for key, value in schedule.items()]
+        return "{\n" + ",\n".join(schedule_items) + "\n}"
 
     def _prepare_lyrics_generation_context(self, user_instructions, images_with_weights, lyrics, run_config): # noqa
         images = [img for img, _ in images_with_weights]
@@ -1702,36 +2054,57 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
         ok, theme = api_clients.query_model_auto(run_config.model, theme_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature, seed=run_config.seed, timeout=120, debug_mode=run_config.debug_mode, debug_title="Storyboard Global Theme")
         return (True, utils.TextCleaner.single_paragraph(theme)) if ok else (False, f"Could not generate storyboard theme: {theme}")
 
-    def _process_lyrics_storyboard(self, lyrics, timed_segments, global_theme, mandatory_tokens, style_inspiration_section, run_config):
+    def _process_lyrics_storyboard(self, lyrics, timed_segments, global_theme, mandatory_tokens, style_inspiration_section, run_config, **kwargs):
+        """
+        Processes lyrics into a storyboard. It segments the lyrics, generates a prompt for each segment,
+        and returns both the prompts and the original segments to preserve timing information.
+        """
         storyboard_rules_text = self._build_storyboard_rules(run_config, style_inspiration_section)
         
         segments = []
-        if timed_segments:
-            # Use SRT data if available
-            segments = [(str(i + 1), seg[2]) for i, seg in enumerate(timed_segments)]
-        else:
-            # Otherwise, use AI to group lyrics into scenes
-            scene_lyrics = self._group_lyrics_into_scenes(lyrics, run_config)
-            if scene_lyrics:
-                segments = [(f"Scene {i + 1}", scene_text) for i, scene_text in enumerate(scene_lyrics)]
-            else:
-                # Fallback to line-by-line if AI grouping fails
-                segments = [(f"Line {i + 1}", line) for i, line in enumerate(lyrics.splitlines()) if line.strip()]
+        # --- START FIX ---
+        # Read scene_splitting_mode from kwargs, not config
+        scene_splitting_mode = kwargs.get('scene_splitting_mode', 'Structural Tag')
+        # --- END FIX ---
 
-        if not segments: return "Could not segment lyrics into processable lines or sections."
+        if timed_segments:
+            # Use SRT data if available. Each segment is a tuple (start, end, text).
+            segments = timed_segments
+        
+        # --- START FIX ---
+        # This block now correctly reads the scene_splitting_mode from kwargs
+        else:
+            if scene_splitting_mode != 'Structural Tag':
+                # Log if user selected a time-based mode without timed data
+                print(f"\033[93m[PromptCrafter] Warning: '{scene_splitting_mode}' selected, but no timed segments available. Falling back to AI-based scene grouping.\033[0m")
+            
+            # AI-group the lyrics into logical scenes.
+            scene_lyrics = self._group_lyrics_into_scenes(lyrics, run_config)
+            
+            if scene_lyrics:
+                # Create "fake" timed segments for non-timed lyrics
+                segments = [(i, i + 1, scene_text) for i, scene_text in enumerate(scene_lyrics)]
+            else:
+                # If AI grouping also fails, then fall back to line-by-line.
+                print(f"\033[93m[PromptCrafter] AI grouping failed. Falling back to line-by-line processing.\033[0m")
+                segments = [(i, i + 1, line) for i, line in enumerate(lyrics.splitlines()) if line.strip()]
+        # --- END FIX ---
+
+        if not segments:
+            return "Could not segment lyrics into processable lines or sections.", None
 
         print(f"\033[94m[PromptCrafter] Generating storyboard for {len(segments)} scenes iteratively...\033[0m")
         processed_prompts: list[str] = [""] * len(segments)
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(segments))) as executor:
             # Submit all jobs to the executor
             future_to_index = {
-                executor.submit(self._create_prompt_for_scene, name, text, global_theme, storyboard_rules_text, mandatory_tokens, run_config): i
-                for i, (name, text) in enumerate(segments)
+                executor.submit(self._create_prompt_for_scene, f"Scene {i+1}", seg[2], global_theme, storyboard_rules_text, mandatory_tokens, run_config): i
+                for i, seg in enumerate(segments)
             }
             # Process results as they complete
             for future in concurrent.futures.as_completed(future_to_index):
                 index = future_to_index[future]
-                segment_name, _ = segments[index]
+                segment_name = f"Scene {index + 1}"
                 try:
                     processed_prompts[index] = future.result()
                     print(f"\033[92m[PromptCrafter] Finished processing '{segment_name}'.\033[0m")
@@ -1740,7 +2113,8 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
                     print(f'\033[91m[PromptCrafter] {error_message}\033[0m')
                     processed_prompts[index] = f"[Error: {error_message}]"
         
-        return processed_prompts
+        # Return both the prompts and the original segments to maintain the link to timing data
+        return processed_prompts, segments
 
     def _create_prompt_for_scene(self, scene_name, scene_text, global_theme, storyboard_rules_text, mandatory_tokens, run_config):
         """Generates a final prompt for a lyric scene in two steps: Concept and Refinement."""
@@ -1761,7 +2135,7 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
             - What is the key visual element?
             - Keep the concept description to a single, simple sentence (under 20 words).
 
-            Return ONLY the shot concept sentence.
+            Return ONLY the shot concept sentence. Do not add any labels or titles.
         """ ).strip()
 
         concept_ok, shot_concept = api_clients.query_model_auto(
@@ -1776,7 +2150,7 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
 
         # --- STEP 2: Refine the Concept into a Final Prompt ---
         refine_prompt = textwrap.dedent(f"""
-            You are an expert prompt engineer for video generation models. Your task is to refine the SHOT CONCEPT into a concise, high-quality final prompt.
+            You are an expert prompt engineer for advanced video generation models (e.g., Sora, VEO, Wan2.2). Your task is to expand the SHOT CONCEPT into a rich, detailed, and cinematic final prompt.
 
             --- SHOT CONCEPT ---
             {shot_concept}
@@ -1787,11 +2161,13 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
             ---
             
             TASK:
-            1.  Translate the SHOT CONCEPT into a powerful, descriptive prompt.
-            2.  Integrate the style and composition rules naturally.
-            3.  Ensure the final prompt is clear, focused, and remains concise.
+            1.  **Elevate the Concept**: Transform the simple SHOT CONCEPT into a powerful, descriptive, and cinematic prompt.
+            2.  **Add Cinematic Detail**: Incorporate dynamic camera work (e.g., 'cinematic dolly zoom', 'dramatic slow-motion tracking shot', 'low-angle shot', 'epic aerial shot').
+            3.  **Specify Lighting & Atmosphere**: Describe the lighting and atmosphere with evocative terms (e.g., 'volumetric god rays piercing through dark clouds', 'eerie twilight casting long shadows', 'flickering firelight illuminating the warrior\'s face').
+            4.  **Integrate Rules**: Naturally weave in the style and composition rules.
+            5.  **Emphasize Motion**: Ensure the prompt has a clear subject performing a core ACTION with realistic, physics-based MOTION.
 
-            Return ONLY the final, polished prompt.
+            Return ONLY the final, polished, and cinematic prompt. Do not include any titles, labels, or markdown like "**Final Prompt:**".
         """ ).strip()
 
         final_ok, final_prompt = api_clients.query_model_auto(
@@ -1824,25 +2200,225 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
             {length_rule}
         """ ).strip()
 
-    def _create_final_lyrics_output(self, storyboard_prompts, timed_segments, generate_schedule, fps, song_length_seconds, config, max_frames): # noqa
-        if not generate_schedule: return "\n\n---\n\n".join(storyboard_prompts)
-        if timed_segments: return self._create_schedule_from_srt(storyboard_prompts, timed_segments, fps, config)
-        final_max_frames = int(song_length_seconds * fps) if song_length_seconds > 0 else max_frames
-        return utils._create_schedule_from_items(storyboard_prompts, final_max_frames, 0, config.interpolate_keyframes, config.interpolation_frame_interval)
+    def _create_final_lyrics_output(self, storyboard_prompts, timed_segments, generate_schedule, fps, song_length_seconds, max_frames, has_real_timed_segments, scene_splitting_mode, max_scene_frames, max_scene_duration_seconds, interpolate_keyframes, interpolation_frame_interval): # noqa
+        
+        if not generate_schedule:
+            return "\n\n---\n\n".join(storyboard_prompts)
+        
+        # Path 1: We have real audio timing data. This logic is sound.
+        if timed_segments and has_real_timed_segments:
+            return self._create_schedule_from_timed_segments(
+                storyboard_prompts, 
+                timed_segments, 
+                fps, 
+                interpolate_keyframes, 
+                interpolation_frame_interval
+            )
+        
+        # --- START FIX ---
+        # Path 2: No audio timing data. This is where the logic was flawed.
+        
+        # Determine the length of each scene based on the splitting mode.
+        scene_length = 0
+        if scene_splitting_mode == 'Frame Length':
+            scene_length = max_scene_frames
+        elif scene_splitting_mode == 'Fixed Duration':
+            scene_length = int(max_scene_duration_seconds * fps)
+        
+        # If we have a fixed scene length, use specific logic to build the schedule.
+        if scene_length > 0:
+            print(f"\033[94m[PromptCrafter] Creating schedule with fixed scene length of {scene_length} frames.\033[0m")
+            
+            schedule = collections.OrderedDict()
+            current_frame = 0
+            for prompt in storyboard_prompts:
+                schedule[current_frame] = prompt
+                current_frame += scene_length
+            
+            # Apply interpolation between the main keyframes if requested.
+            if interpolate_keyframes and interpolation_frame_interval > 0:
+                print(f"\033[94m[PromptCrafter] Applying interpolation with an interval of {interpolation_frame_interval} frames.\033[0m")
+                schedule = utils._interpolate_schedule_prompts(schedule, interpolation_frame_interval)
+            
+            schedule_items = [f'\"{str(key)}\": {json.dumps(str(value))}' for key, value in schedule.items()]
+            return "{\n" + ",\n".join(schedule_items) + "\n}"
+
+        # Fallback for 'Structural Tag' mode without timing data, which distributes prompts evenly.
+        else:
+            print(f"\033[94m[PromptCrafter] Using 'Structural Tag' mode without timed data. Distributing scenes evenly.\033[0m")
+            total_frames = int(song_length_seconds * fps) if song_length_seconds > 0 else max_frames
+            return utils._create_schedule_from_items(
+                storyboard_prompts,
+                total_frames,
+                0, # start_frame
+                interpolate_keyframes,
+                interpolation_frame_interval
+            )
+        # --- END FIX ---
 
     def _create_schedule_from_srt(self, storyboard_prompts, timed_segments, fps, run_config): # noqa
         print("\033[94m[PromptCrafter] SRT file detected. Generating timed schedule...\033[0m")
         if len(storyboard_prompts) != len(timed_segments):
             return f"[Error: Mismatch between SRT segments ({len(timed_segments)}) and generated prompts ({len(storyboard_prompts)}).]"
+        
         schedule = collections.OrderedDict()
         for i, seg in enumerate(timed_segments):
-            frame = int(seg[0] * fps)
+            start_time, end_time, _ = seg
             prompt = storyboard_prompts[i].strip()
-            schedule[frame] = prompt
+            start_frame = int(start_time * fps)
+            end_frame = int(end_time * fps)
+            schedule[start_frame] = prompt # Prompt starts at the beginning of the segment
+            if end_frame > start_frame: schedule[end_frame] = prompt # Hold prompt until the end
+
         if run_config.interpolate_keyframes:
             schedule = utils._interpolate_schedule_prompts(schedule, run_config.interpolation_frame_interval)
         schedule_items = ",".join([f'\"{str(key)}\": {json.dumps(str(value))}' for key, value in schedule.items()])
-        return f"{{{schedule_items}}}"
+        return "{\n" + ",\n".join([f'"{str(key)}": {json.dumps(str(value))}' for key, value in schedule.items()]) + "\n}"
+
+# ------------------------------------------------------------------------------------
+# PromptCrafter_AudioSplitter Node
+# ------------------------------------------------------------------------------------
+class PromptCrafter_AudioSplitter(PromptCrafter_BaseCreator):
+    DESCRIPTION = "Splits an audio input into 16 chunks based on timing data from a LyricsCreator 'audio_meta' output."
+    
+    RETURN_TYPES = tuple(["AUDIO"] * 16)
+    RETURN_NAMES = tuple([f"audio_{i}" for i in range(1, 17)])
+    FUNCTION = "execute"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audio": ("AUDIO",),
+                "audio_meta": ("DICT", {"tooltip": "The 'audio_meta' output from a PromptCrafter_LyricsCreator node."}),
+                "set_index": ("INT", {"default": 0, "min": 0, "max": 999, "tooltip": "The current batch/set number (e.g., 0 for first 16 scenes, 1 for next 16)."}),
+            }
+        }
+
+    def execute(self, audio, audio_meta, set_index=0):
+        try:
+            # --- 1. Unpack Audio and Meta ---
+            if not isinstance(audio, dict) or "waveform" not in audio:
+                raise ValueError("Invalid AUDIO input. Expected a dictionary with 'waveform' and 'sample_rate'.")
+            
+            waveform = audio["waveform"]
+            sample_rate = int(audio["sample_rate"])
+
+            if waveform.ndim == 2:
+                waveform = waveform.unsqueeze(0) # (C, T) -> (B, C, T)
+
+            total_samples = waveform.shape[-1]
+            total_duration_sec = total_samples / sample_rate
+
+            if not isinstance(audio_meta, dict):
+                raise ValueError("Invalid 'audio_meta' input. Expected a dictionary from PromptCrafter_LyricsCreator.")
+
+            timed_segments = audio_meta.get("timed_segments")
+            fps = float(audio_meta.get("fps", 16.0))
+            scene_splitting_mode = audio_meta.get("scene_splitting_mode", "Structural Tag")
+            
+            scene_samples = 0
+            
+            # --- 2. Determine Scene Length in Samples ---
+            if scene_splitting_mode == 'Frame Length':
+                frames_per_scene = int(audio_meta.get("max_scene_frames", 120))
+                scene_samples = int(frames_per_scene * (sample_rate / fps))
+            elif scene_splitting_mode == 'Fixed Duration':
+                duration_per_scene = float(audio_meta.get("max_scene_duration_seconds", 5.0))
+                scene_samples = int(duration_per_scene * sample_rate)
+            
+            segments = []
+            scene_count = 16 # This node always outputs 16 scenes
+            
+            # --- 3. Split Audio ---
+            if timed_segments:
+                # Path A: We have real timing data from Whisper/alignment
+                print(f"[PromptCrafter_AudioSplitter] Splitting audio using {len(timed_segments)} timed segments.")
+                
+                # Get the 16 segments for the current set_index
+                start_idx = set_index * scene_count
+                end_idx = start_idx + scene_count
+                segments_for_this_set = timed_segments[start_idx:end_idx]
+                
+                for i in range(scene_count):
+                    if i < len(segments_for_this_set):
+                        start_sec, end_sec, _ = segments_for_this_set[i]
+                        start_samp = int(start_sec * sample_rate)
+                        end_samp = int(end_sec * sample_rate)
+                        
+                        # Clamp to audio boundaries
+                        start_samp = max(0, start_samp)
+                        end_samp = min(total_samples, end_samp)
+                        
+                        seg = waveform[..., start_samp:end_samp]
+                    else:
+                        # Pad with silence if no more segments
+                        seg = torch.zeros((waveform.shape[0], waveform.shape[1], 1000), dtype=waveform.dtype, device=waveform.device) # 1000 samples of silence
+                    
+                    segments.append({"waveform": seg, "sample_rate": sample_rate})
+
+            elif scene_samples > 0:
+                # Path B: No timing data, but we have a fixed scene length
+                print(f"[PromptCrafter_AudioSplitter] Splitting audio into fixed chunks of {scene_samples} samples.")
+                
+                offset_samples = set_index * scene_count * scene_samples
+                
+                for i in range(scene_count):
+                    start_samp = offset_samples + (i * scene_samples)
+                    end_samp = start_samp + scene_samples
+                    
+                    # Clamp to audio boundaries
+                    start_samp = max(0, start_samp)
+                    end_samp = min(total_samples, end_samp)
+                    
+                    seg = waveform[..., start_samp:end_samp]
+                    
+                    # Pad segment with silence if it's short (e.g., end of audio)
+                    current_len = seg.shape[-1]
+                    if current_len < scene_samples and current_len > 0:
+                        pad_len = scene_samples - current_len
+                        pad = torch.zeros((seg.shape[0], seg.shape[1], pad_len), dtype=seg.dtype, device=seg.device)
+                        seg = torch.cat([seg, pad], dim=-1)
+                    elif current_len <= 0:
+                        # Full silence if we're past the audio
+                        seg = torch.zeros((waveform.shape[0], waveform.shape[1], scene_samples), dtype=waveform.dtype, device=waveform.device)
+
+                    segments.append({"waveform": seg, "sample_rate": sample_rate})
+            
+            else:
+                # Path C: Fallback (e.g., "Structural Tag" with no timing)
+                # This is less ideal, but provides a fallback.
+                print(f"[PromptCrafter_AudioSplitter] Warning: No timing data. Splitting audio evenly across {total_duration_sec}s.")
+                total_scenes_approx = max(1, len(audio_meta.get("timed_segments", []))) # A guess
+                if total_scenes_approx <= 1: total_scenes_approx = int(total_duration_sec / 5.0) # 5s guess
+                
+                scene_samples = int(total_samples / max(1, total_scenes_approx))
+                # Now run the logic from Path B with this guess
+                offset_samples = set_index * scene_count * scene_samples
+                for i in range(scene_count):
+                    start_samp = offset_samples + (i * scene_samples)
+                    end_samp = start_samp + scene_samples
+                    start_samp = max(0, min(total_samples -1, start_samp))
+                    end_samp = max(0, min(total_samples, end_samp))
+                    seg = waveform[..., start_samp:end_samp]
+                    segments.append({"waveform": seg, "sample_rate": sample_rate})
+            
+            # Ensure we always return 16 outputs
+            if len(segments) < scene_count:
+                silence_samples = scene_samples if scene_samples > 0 else int(sample_rate * 4.0) # 4s silence
+                silence = torch.zeros((waveform.shape[0], waveform.shape[1], silence_samples), dtype=waveform.dtype, device=waveform.device)
+                for _ in range(scene_count - len(segments)):
+                    segments.append({"waveform": silence, "sample_rate": sample_rate})
+            
+            return tuple(segments)
+
+        except Exception as e:
+            # On failure, return 16 Nones
+            print(f"\033[91m[PromptCrafter_AudioSplitter] Error: {e}\033[0m")
+            import traceback
+            traceback.print_exc()
+            return (None,) * 16
 
 # ------------------------------------------------------------------------------------
 # PromptCrafter_Formatter Node (Enhanced)
@@ -1854,7 +2430,7 @@ class PromptCrafter_Formatter:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "mode": (["Simple Template", "Apply to Prompt", "Apply to Schedule"], {"default": "Simple Template", "tooltip": "Choose the formatting operation."}),
+                "mode": (["Build from Template", "Edit Single Prompt", "Bulk Edit Schedule"], {"default": "Build from Template", "tooltip": "Choose the formatting operation."}),
             },
             "optional": {
                 "prompt_in": ("STRING", {"multiline": True, "default": "", "tooltip": "The main prompt string to format."}),
@@ -1908,7 +2484,7 @@ class PromptCrafter_Formatter:
         out_prompt = prompt_in
         out_schedule = schedule_in
 
-        if mode == "Simple Template":
+        if mode == "Build from Template":
             placeholders = {
                 "{a}": str(var_a),
                 "{b}": str(var_b),
@@ -1926,12 +2502,12 @@ class PromptCrafter_Formatter:
             # Pass the original schedule through unchanged
             out_schedule = schedule_in 
         
-        elif mode == "Apply to Prompt":
+        elif mode == "Edit Single Prompt":
             out_prompt = self._format_text(prompt_in, prefix, suffix, find_text, replace_with)
             # Pass schedule through unchanged
             out_schedule = schedule_in
 
-        elif mode == "Apply to Schedule":
+        elif mode == "Bulk Edit Schedule":
             if not schedule_in:
                 return (prompt_in, "") # Pass prompt, return empty schedule
             
@@ -2558,11 +3134,12 @@ class PromptCrafter_CacheUtility:
             status_message = f"Cache contains {config.CACHE.size} of {config.CACHE.max_size} items."
         return (status_message,)
 
-NODE_CLASS_MAPPINGS = {
+NNODE_CLASS_MAPPINGS = {
     "PromptCrafter_QnA": PromptCrafter_QnA,
     "PromptCrafter_Captioner": PromptCrafter_Captioner,
     "PromptCrafter_VisualCreator": PromptCrafter_VisualCreator,
     "PromptCrafter_LyricsCreator": PromptCrafter_LyricsCreator,
+    "PromptCrafter_AudioSplitter": PromptCrafter_AudioSplitter, # <-- ADD THIS
     "PromptCrafter_CacheUtility": PromptCrafter_CacheUtility,
     "PromptCrafter_FileOrganizer": PromptCrafter_FileOrganizer,
     "PromptCrafter_Formatter": PromptCrafter_Formatter,
@@ -2574,6 +3151,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_Captioner": "PromptCrafter Image Captioner",
     "PromptCrafter_VisualCreator": "PromptCrafter Visual Creator",
     "PromptCrafter_LyricsCreator": "PromptCrafter Lyrics-to-Prompt Creator",
+    "PromptCrafter_AudioSplitter": "PromptCrafter Audio Splitter", # <-- ADD THIS
     "PromptCrafter_CacheUtility": "PromptCrafter Cache Utility",
     "PromptCrafter_FileOrganizer": "PromptCrafter File Organizer",
     "PromptCrafter_Formatter": "PromptCrafter Text Formatter",

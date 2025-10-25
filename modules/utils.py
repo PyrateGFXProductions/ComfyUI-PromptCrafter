@@ -29,6 +29,7 @@ if config.LIBROSA_AVAILABLE: import librosa
 if config.MATPLOTLIB_AVAILABLE:
     try:
         import matplotlib
+        matplotlib.use('Agg')  # Use a non-interactive backend to prevent display errors
         import matplotlib.pyplot as plt
     except ImportError:
         matplotlib = None
@@ -398,11 +399,12 @@ def audio_to_spectrogram(audio_path):
     try:
         import librosa
         import librosa.display
+        import numpy as np
+        import matplotlib.pyplot as plt
+
         y, sr = librosa.load(audio_path, sr=None)
         S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
-        S_dB = librosa.power_to_db(S, ref=np.max)
-        if plt is None:
-            return "[Error: matplotlib.pyplot is not available.]"
+        S_dB = librosa.power_to_db(S, ref=np.max(S))
         fig, ax = plt.subplots(figsize=(10, 4))
         librosa.display.specshow(S_dB, sr=sr, x_axis='time', y_axis='mel', ax=ax)
         ax.set(title=f'Mel spectrogram: {os.path.basename(audio_path)}')
@@ -539,12 +541,36 @@ def _interpolate_schedule_prompts(schedule, frame_interval):
         if num_frames_in_segment <= frame_interval: continue
         for interp_frame in range(start_frame + frame_interval, end_frame, frame_interval):
             t = (interp_frame - start_frame) / num_frames_in_segment
-            if start_prompt_text == end_prompt_text:
-                interp_weight = start_weight + (end_weight - start_weight) * t
-                new_schedule[interp_frame] = f"{json.dumps(start_prompt_text)}:{interp_weight:.4f}"
-            else:
-                new_schedule[interp_frame] = f"[{start_prompt_text}:{1 - t:.4f}][{end_prompt_text}:{t:.4f}]"
+            # --- FIX: Simplify interpolation to prevent malformed/repetitive prompts ---
+            # This logic was creating unwanted artifacts. A simple hold is more robust.
+            # The schedule already contains the start and end frames for a prompt.
+            # We just need to ensure the prompt is held. The start_prompt is sufficient.
+            new_schedule[interp_frame] = start_prompt_text
     return collections.OrderedDict(sorted(new_schedule.items()))
+
+def _process_timed_segments(timed_segments, fps, min_duration_secs=3.0, max_duration_secs=10.0):
+    """
+    Merges short timed segments into longer, more coherent scenes suitable for video generation.
+    """
+    if not timed_segments:
+        return []
+
+    processed_segments = []
+    current_text_parts = []
+    current_start_time = timed_segments[0][0]
+
+    for i, (start, end, text) in enumerate(timed_segments):
+        current_text_parts.append(text)
+        current_duration = end - current_start_time
+        is_last_segment = (i == len(timed_segments) - 1)
+        next_segment_has_gap = (not is_last_segment and (timed_segments[i+1][0] - end) > 1.0)
+
+        if is_last_segment or current_duration >= max_duration_secs or (current_duration >= min_duration_secs and next_segment_has_gap):
+            processed_segments.append((current_start_time, end, " ".join(current_text_parts)))
+            current_text_parts = []
+            if not is_last_segment:
+                current_start_time = timed_segments[i+1][0]
+    return processed_segments
 
 def _create_schedule_from_items(items, max_frames, start_frame=0, interpolate=True, interpolation_frame_interval=10):
     """A generic helper to create a keyframe schedule from a list of items (prompts)."""
@@ -559,7 +585,7 @@ def _create_schedule_from_items(items, max_frames, start_frame=0, interpolate=Tr
     if interpolate:
         schedule = _interpolate_schedule_prompts(schedule, interpolation_frame_interval)
     schedule_items = [f'"{str(key)}": {json.dumps(str(value))}' for key, value in schedule.items()]
-    return ",\n".join(schedule_items)
+    return "{\n" + ",\n".join(schedule_items) + "\n}"
 
 def _handle_lyrics_from_file(folder_path, file_name):
     """Handles loading and processing lyrics from a local file path."""
