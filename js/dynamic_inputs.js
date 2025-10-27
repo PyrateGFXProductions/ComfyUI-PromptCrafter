@@ -1,27 +1,123 @@
 import { app } from "../../../scripts/app.js";
 
 // =================================================================================
-// START: EXTENSION 1 (From promptcrafter_working.js)
-// This is the known-working code for the dynamic image inputs.
-// I have not modified it.
+// This script provides dynamic input capabilities for specific nodes.
+// It now handles two types of nodes:
+// 1. Creator Nodes: Complex nodes with dynamic images, weights, and reference outputs.
+// 2. Switcher Nodes: Simpler nodes with only dynamic image inputs.
 // =================================================================================
 
-const DYNAMIC_INPUT_NODE_CLASSES_EXT1 = [
+const DYNAMIC_CREATOR_NODE_CLASSES = [
     "PromptCrafter_BaseCreator",
     "PromptCrafter_VisualCreator",
     "PromptCrafter_LyricsCreator",
 ];
 
-app.registerExtension({
-    name: "PromptCrafter.DynamicInputs.Working",
-    async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (DYNAMIC_INPUT_NODE_CLASSES_EXT1.includes(nodeType.comfyClass)) {
+const DYNAMIC_SWITCHER_NODE_CLASSES = [
+    "PromptCrafter_ImageSwitcher",
+];
 
+app.registerExtension({
+    name: "PromptCrafter.DynamicInputs",
+    async beforeRegisterNodeDef(nodeType, nodeData, app) {
+
+        // --- Handler for Switcher Nodes ---
+        if (DYNAMIC_SWITCHER_NODE_CLASSES.includes(nodeType.comfyClass)) {
+            
+            const updateImageSwitcherInputs = function(targetCount) {
+                const count = parseInt(targetCount, 10);
+                if (isNaN(count)) return;
+                
+                const inputPrefix = "image_";
+                const currentInputs = this.inputs?.filter(input => /^image_\d+$/.test(input.name)) || [];
+                let currentInputCount = currentInputs.length;
+
+                if (count < currentInputCount) {
+                    for (let i = currentInputCount; i > count; i--) {
+                        this.removeInput(this.findInputSlot(`${inputPrefix}${i}`)); 
+                    }
+                } else if (count > currentInputCount) {
+                    for (let i = currentInputCount; i < count; i++) {
+                        this.addInput(`${inputPrefix}${i + 1}`, "IMAGE");
+                    }
+                }
+
+                this.computeSize(); 
+                this.setDirtyCanvas(true, true);
+            };
+
+            const addManualRefreshButton = function() {
+                const imageCountWidget = this.widgets?.find(w => w.name === "image_count");
+                if (!imageCountWidget) return;
+
+                // Avoid adding multiple buttons
+                const existingButton = this.widgets?.find(w => w.name === "Manual Refresh");
+                if (existingButton) return;
+
+                this.addWidget("button", "Manual Refresh", null, () => {
+                    updateImageSwitcherInputs.call(this, imageCountWidget.value);
+                }, { serialize: false });
+            };
+
+            const onCreated = nodeType.prototype.onCreated;
+            nodeType.prototype.onCreated = function () {
+                onCreated?.apply(this, arguments);
+
+                // Force correct output configuration
+                if (this.outputs && this.outputs.length > 2) {
+                    // Keep only the first 2 outputs (IMAGE and INT)
+                    this.outputs = this.outputs.slice(0, 2);
+                }
+
+                // Delay button addition to ensure widgets are loaded
+                setTimeout(() => {
+                    addManualRefreshButton.call(this);
+                    const imageCountWidget = this.widgets?.find(w => w.name === "image_count");
+                    if (imageCountWidget) {
+                        updateImageSwitcherInputs.call(this, imageCountWidget.value);
+                    }
+                }, 50);
+            };
+
+            const onConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function() {
+                onConfigure?.apply(this, arguments);
+
+                // Force correct output configuration on load
+                if (this.outputs && this.outputs.length > 2) {
+                    this.outputs = this.outputs.slice(0, 2);
+                }
+
+                setTimeout(() => {
+                    addManualRefreshButton.call(this);
+                    const imageCountWidget = this.widgets?.find(w => w.name === "image_count");
+                    if (imageCountWidget) {
+                        updateImageSwitcherInputs.call(this, imageCountWidget.value);
+                    }
+                }, 50);
+            };
+
+            // Add this to ensure outputs are correct when node is executed
+            const onExecutionStart = nodeType.prototype.onExecutionStart;
+            nodeType.prototype.onExecutionStart = function() {
+                onExecutionStart?.apply(this, arguments);
+                
+                // Ensure we only have 2 outputs
+                if (this.outputs && this.outputs.length > 2) {
+                    this.outputs = this.outputs.slice(0, 2);
+                }
+            };
+        }
+
+
+
+        // --- Handler for Creator Nodes (Original Logic) ---
+        if (DYNAMIC_CREATOR_NODE_CLASSES.includes(nodeType.comfyClass)) {
             let numStandardOutputs;
             if (nodeType.comfyClass === "PromptCrafter_VisualCreator") {
                 numStandardOutputs = 6;
             } else if (nodeType.comfyClass === "PromptCrafter_LyricsCreator") {
-                numStandardOutputs = 9;
+                numStandardOutputs = 10;
             } else {
                 numStandardOutputs = 6; // Default value
             }
@@ -136,10 +232,6 @@ app.registerExtension({
             };
 
             nodeType.prototype.numStandardOutputs = numStandardOutputs;
-
-            
-
-
         }
     },
 });

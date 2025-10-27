@@ -298,15 +298,15 @@ class PromptCrafter_Captioner:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_img = {
                     executor.submit(
-                        self._caption_one_image, 
-                        comfy.utils.pil2tensor(Image.open(os.path.join(full_folder_path, img))).convert("RGB"), 
-                        model, 
-                        final_caption_prompt, 
-                        temperature, 
-                        seed, 
-                        debug_mode, 
+                        self._caption_one_image,
+                        utils.pil2tensor(Image.open(os.path.join(full_folder_path, img)).convert("RGB")),
+                        model,
+                        final_caption_prompt,
+                        temperature,
+                        seed,
+                        debug_mode,
                         timeout
-                    ): img 
+                    ): img
                     for img in image_files
                 }
                 # -----------------------------------------------------------
@@ -833,7 +833,16 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" # noqa
         persona = run_config.style_profile.get("persona", "You are an expert art historian.")
 
         desc_prompt = self._build_image_description_prompt(persona, idx, run_config.language, run_config.safe_mode)
-        ok, result_json = api_clients._reason_with_model(run_config.model, desc_prompt, images=[img], use_chat_api=run_config.use_chat_api, temperature=run_config.temperature, seed=run_config.seed, timeout=run_config.timeout, debug_mode=run_config.debug_mode, debug_title=f"Image Description {idx}")
+        ok, result_json = api_clients._reason_with_model(
+            run_config.model,
+            desc_prompt,
+            images=[img],
+            use_chat_api=run_config.use_chat_api,
+            temperature=run_config.temperature,
+            seed=run_config.seed,
+            timeout=run_config.timeout,
+            debug_mode=run_config.debug_mode,
+            debug_title=f"Image Description {idx}")
 
         if ok and isinstance(result_json, dict):
             desc_text = utils.TextCleaner.single_paragraph(result_json.get("description", ""))
@@ -1080,7 +1089,15 @@ The final output must be in {language} only.{safety_rule}"""
             Respond with ONLY a JSON object containing a single boolean key \"blending_requested\".
             Example: {{'blending_requested': true}}
         """ ).strip()
-        ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Blending Intent Check")
+        ok, result_json = api_clients._reason_with_model(
+            run_config.model,
+            prompt,
+            use_chat_api=run_config.use_chat_api,
+            temperature=0.0, seed=run_config.seed,
+            debug_mode=run_config.debug_mode,
+            debug_title="Blending Intent Check",
+            timeout=run_config.timeout) # <-- ADD THIS LINE
+        
         return ok and isinstance(result_json, dict) and result_json.get("blending_requested", False)
 
     def _user_requests_replacement_with_ai(self, user_text, primary_subjects, run_config): # noqa
@@ -1099,7 +1116,15 @@ The final output must be in {language} only.{safety_rule}"""
             Respond with ONLY a JSON object containing a single boolean key \"replacement_requested\".
             Example: {{'replacement_requested': true}}
         """ ).strip()
-        ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Replacement Intent Check")
+        ok, result_json = api_clients._reason_with_model(
+            run_config.model,
+            prompt,
+            use_chat_api=run_config.use_chat_api,
+            temperature=0.0, seed=run_config.seed,
+            debug_mode=run_config.debug_mode,
+            debug_title="Replacement Intent Check",
+            timeout=run_config.timeout) # <-- ADD THIS LINE
+        
         return ok and isinstance(result_json, dict) and result_json.get("replacement_requested", False)
 
     def _build_style_and_composition_rules(self, mode, images, run_config, user_instructions="", user_context="", image_context=""): # noqa
@@ -1149,7 +1174,15 @@ Part 2: Based on your choice, suggest ONE specific camera movement from this lis
 
 Return ONLY a JSON object with your choices.
 Example: {{'motion_style': \"dynamic, cinematic\", 'camera_movement': \"tracking shot\"}}"""
-        ok, result_json = api_clients._reason_with_model(run_config.model, motion_analysis_prompt, use_chat_api=run_config.use_chat_api, temperature=0.1, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Video Motion Style Analysis")
+        ok, result_json = api_clients._reason_with_model(
+            run_config.model,
+            motion_analysis_prompt,
+            use_chat_api=run_config.use_chat_api,
+            temperature=0.1,
+            seed=run_config.seed,
+            debug_mode=run_config.debug_mode,
+            debug_title="Video Motion Style Analysis",
+            timeout=run_config.timeout) # <-- ADD THIS LINE
 
         motion_type_adjective = "subtle, natural"
         camera_movement_suggestion = "static shot"
@@ -1183,7 +1216,15 @@ Example: {{'motion_style': \"dynamic, cinematic\", 'camera_movement': \"tracking
 
         for i in range(run_config.max_retries + 1):
             critique_prompt = self._build_refinement_prompt(current_prompt, mode, primary_items_list, all_allowed, style_rules, run_config, ask_for_json=True)
-            ok, result_json = api_clients._reason_with_model(run_config.model, critique_prompt, use_chat_api=run_config.use_chat_api, temperature=run_config.temperature, seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title=f"Image/Video Refine & Check (Try {i+1})")
+            ok, result_json = api_clients._reason_with_model(
+                run_config.model,
+                critique_prompt,
+                use_chat_api=run_config.use_chat_api,
+                temperature=run_config.temperature,
+                seed=run_config.seed,
+                timeout=run_config.timeout, # <-- ADD THIS LINE
+                debug_mode=run_config.debug_mode,
+                debug_title=f"Image/Video Refine & Check (Try {i+1})")
 
             if not ok or not isinstance(result_json, dict):
                 print(f"\033[93m[PromptCrafter] Warning: Refinement step failed to return valid JSON. Using previous version. Error: {result_json}\033[0m")
@@ -1477,6 +1518,8 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
         if "pipeline_mode" in types["required"]: del types["required"]["pipeline_mode"]
         if "target_model_format" in types["optional"]: del types["optional"]["target_model_format"]
 
+        types["optional"]['signal'] = ('*', {})
+
         types["optional"].update({
             "style_tags": ("STRING", {"multiline": False, "default": "", "tooltip": "Combine styles by typing their names, separated by commas (e.g., Cyberpunk, Film Noir). Overrides the dropdown."} ),
             "audio_folder_path": ("STRING", {"multiline": False, "default": "input/audio"}),
@@ -1493,15 +1536,161 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             "whisper_language": (["auto-detect", "en", "es", "fr", "de", "it", "pt", "is", "ru", "ja", "ko", "zh"], {"default": "auto-detect", "tooltip": "Language of the audio. 'is' for Icelandic. Providing this greatly improves accuracy."}),
             "whisper_engine": (["faster-whisper", "insanely-fast-whisper"], {"default": "faster-whisper", "tooltip": "Default: faster-whisper. Alternative: insanely-fast-whisper (optimized for batch processing)."} ),
             "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "Generic Video (Wan, etc.)"], {"default": "Generic Video (Wan, etc.)", "tooltip": "Format the prompt for a specific model's syntax. OVI speech format is handled automatically."}),
+            # VRGDG Music Video Prompt Creator inputs
+            "use_vrg_prompt_builder": ("BOOLEAN", {"default": False, "tooltip": "If True, use the detailed music video prompt builder inputs below, overriding the main user_text input."}),
+            "character_description": ("STRING", {"multiline": True, "default": "The Women."}),
+            "song_theme_style": ("STRING", {"multiline": True, "default": "cinematic realism, emotional storytelling, soft surrealism, naturalistic tone, dreamlike nostalgia, modern drama, poetic symbolism, intimate atmosphere"}),
+            "word_count_min": ("INT", {"default": 30, "min": 10, "max": 200}),
+            "word_count_max": ("INT", {"default": 50, "min": 10, "max": 200}),
+            "list_handling_mode": (["Strict Cycle (use each once, then repeat)", "Reference Guide (LLM creates variations inspired by list)", "Random Selection (pick randomly from list)", "Free Interpretation (LLM can ignore or combine items)"], {"default": "Reference Guide (LLM creates variations inspired by list)"}),
+            "environment": ("STRING", {"multiline": True, "default": "open field at dusk, dimly lit bedroom, empty city street at night, forest clearing with morning fog, seaside cliff at golden hour, rainy urban alley, sunlit living room, desert road at sunrise"}),
+            "lighting": ("STRING", {"multiline": True, "default": "warm amber glow, cool window light, neon reflections, diffused morning light, soft backlight haze, flickering streetlights, gentle afternoon sun, pink-orange dawn light"}),
+            "camera_motion": ("STRING", {"multiline": True, "default": "zoom in, zoom out, tilt down, rotate around, tilt up, pan, track"}),
+            "physical_interaction": ("STRING", {"multiline": True, "default": "walking through tall grass, lying on bed staring upward, leaning against a wall in stillness, reaching toward sunlight, hair moving in wind, footsteps in puddles, brushing hand across furniture, standing motionless in breeze"}),
+            "facial_expression": ("STRING", {"multiline": True, "default": "Intense raw emotion"}),
+            "shots": ("STRING", {"multiline": True, "default": "Close up, medium, wide angle, over the shoulder, point of view, overhead, ground level"}),
+            "outfit_rules": ("STRING", {"multiline": True, "default": "a white dress"}),
+            "character_visibility": ("STRING", {"multiline": True, "default": "mostly visible, half-shadowed, silhouetted, reflected or obscured, seen from behind, partially out of frame, emerging from light, fading into darkness"}),
         })
         types["optional"]["generate_schedule"] = ("BOOLEAN", {"default": True})
         types["optional"]["interpolate_keyframes"] = ("BOOLEAN", {"default": False})
         types["optional"]["interpolation_frame_interval"] = ("INT", {"default": 0, "min": 0, "max": 16})
         return types
     MAX_IMAGES = 5
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "DICT") + ("IMAGE",) * MAX_IMAGES
-    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt", "clean_lyrics_txt", "lyrics_srt", "model_out", "seed_out", "audio_meta") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))    FUNCTION = "execute"
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "DICT", "IMAGE") + ("IMAGE",) * MAX_IMAGES + ('*',)
+    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt", "clean_lyrics_txt", "lyrics_srt", "model_out", "seed_out", "audio_meta", "spectrogram_preview") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1)) + ('signal',)
+    FUNCTION = "execute"
     CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
+
+    def _build_vrg_prompt_instructions(self, pipe_separated_lyrics, num_fragments, character_description, song_theme_style, word_count_min, word_count_max, list_handling_mode, environment, lighting, camera_motion, physical_interaction, facial_expression, shots, outfit_rules, character_visibility):
+        # Generate list handling instructions based on mode
+        if "Strict Cycle" in list_handling_mode:
+            list_instructions = """8. List Handling:
+- If multiple options are provided for any of the below categories, treat them as a list.
+- Cycle through list items across prompts in order.
+- Do not repeat an item until all others have been used.
+- Once all have been used, restart the cycle.
+- Each prompt must use exactly one item from each category."""
+        
+        elif "Reference Guide" in list_handling_mode:
+            list_instructions = """8. List Handling:
+- The categories below are INSPIRATION and REFERENCE GUIDES.
+- Use them as starting points to create variations and similar ideas.
+- Feel free to combine elements or create new options in the same style.
+- Prioritize what works best for each lyric fragment and the overall narrative flow.
+- Maintain variety across prompts - avoid repeating the exact same choices.
+- Stay true to the overall aesthetic and mood of the provided examples."""
+        
+        elif "Random Selection" in list_handling_mode:
+            list_instructions = """8. List Handling:
+- If multiple options are provided for any category, select randomly from the list.
+- Items can repeat across prompts - there is no cycling requirement.
+- Prioritize what works best for each lyric fragment and the overall narrative flow.
+- Ensure overall variety across the full sequence of prompts.
+- Each prompt should feel fresh even if some elements repeat."""
+        
+        else:  # Free Interpretation
+            list_instructions = """8. List Handling:
+- The categories below are LOOSE GUIDELINES ONLY.
+- You may use them as-is, combine them, modify them, or create entirely new options.
+- Prioritize what works best for each lyric fragment and the overall narrative flow.
+- Feel free to ignore any category if it doesn't serve the visual storytelling.
+- Creativity and coherence are more important than strict adherence to the lists."""
+        
+        full_string = f"""
+AI Music Video Prompt Creator
+
+User Input:
+Character: {character_description.strip()}
+Style/Theme: {song_theme_style.strip()}
+Lyrics: {pipe_separated_lyrics.strip()}
+
+*** CRITICAL INSTRUCTION - PRIORITY OVERRIDE ***
+The following general style/character/environment keywords (e.g., 'Alien in alien skin', 'dark alien science laboratory') must be treated ONLY as a background style guide. 
+
+The most important element of the final prompt MUST be the UNIQUE action, emotion, or narrative point described in the specific lyric segment. Do not allow the general keywords to overwhelm the unique lyric-driven action. Your final prompt should focus the camera and attention on the unique event described by the lyric.
+
+Core Rules:
+
+1. Lyric-Driven Prompts (MOST IMPORTANT):
+   - The lyrics provided above are pipe-separated (|).
+   - There are exaclty {num_fragments} lyric fragments and each one corresponds to ONE video prompt.
+   - FIRST, read through ALL the lyrics to understand the full narrative arc and emotional journey of the song.
+   - Understand the overall story, themes, and progression before creating any individual prompts.
+   - Then, create one prompt per lyric fragment that reflects both:
+     a) The specific meaning/mood of THAT lyric fragment
+     b) How it fits into the larger narrative and aesthetic of the FULL song
+   - The NUMBER of prompts MUST MATCH the NUMBER of lyric fragments exactly this will always be {num_fragments}.
+   - Each prompt's visual content should be INSPIRED BY and REFLECT the meaning, mood, and imagery of its corresponding lyric fragment.
+   - The visuals should enhance and complement what the lyric is expressing.
+
+2. Structure (this order must always be followed):
+   [Shot Type] -> [Character + Outfit] -> [Physical Interaction] -> [Environment] -> [Lighting] -> [Camera Motion] -> [Cinematic Detail] -> [Facial Expression]
+
+3. Continuity Between Prompts:
+   - Each prompt should flow naturally from the previous one.
+   - Connect the ending visual detail of one prompt to the beginning of the next.
+   - Create a cohesive visual narrative that follows the lyrical journey.
+
+4. Visual Requirements:
+   Every prompt must include:
+   - Character + Outfit
+   - Physical Interaction
+   - Environment
+   - Lighting
+   - Camera Motion
+   - Facial Expression
+
+5. Language Rules:
+   - Clear, direct, natural wording only.
+   - No abstract or poetic terms, no sound descriptions, no static shots.
+   - Do not use quotation marks, colons, semicolons, or special characters.
+   - The ONLY allowed special character is the "|" PIPE separator BETWEEN prompts.
+   - Never use "|" inside a prompt itself.
+
+6. Word Count:
+   - Every prompt must be between {word_count_min} and {word_count_max} words.
+
+7. Endings:
+   - End each prompt on a strong visual detail.
+   - Never end with mood labels or trailing phrases like "captivated gaze," "vulnerable," or "conveying emotion."
+   - Mood must be shown through visuals, not named.
+
+{list_instructions}
+
+Environment: {environment.strip()}
+Lighting: {lighting.strip()}
+Camera Motion/Angles: {camera_motion.strip()}
+Physical Interaction: {physical_interaction.strip()}
+Facial Expression: {facial_expression.strip()}
+Shots: {shots.strip()}
+Outfit Rules: {outfit_rules.strip()}
+Character Visibility: {character_visibility.strip()}
+
+Prompt Structure (for every lyric fragment, {word_count_min}–{word_count_max} words):
+
+-Start with the Shot Type
+-Then add in the Character and Outfit if any
+-Then add their Physical Interaction
+-Then add the Environment
+-Then add the Lighting
+-Then add the Camera Motion
+-Then provide the Cinematic Detail
+-Then mention the Facial Expression / Emotion
+
+Formatting Rules:
+- Input lyrics are split by "|"
+- Output prompts MUST be joined with "|" (one prompt per lyric)
+- Do NOT insert "|" anywhere inside a prompt
+- Use simple everyday words.
+- There should be exaclly {num_fragments} prompts that are PIPE separated. 
+- Remember that the prompts should be lyric driven while taking into account user input.
+
+Example prompt using this Structure:
+Close up of a woman in a white dress as she touches a broad jungle leaf, in a vibrant jungle under a sun-dappled canopy, slow tracking reveals textured leaves. Intense raw emotion
+
+"""
+        return full_string.strip()
 
     def execute(self, user_text, model, **kwargs):
         try:
@@ -1511,53 +1700,75 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             lyrics_file = kwargs.get("lyrics_file", "<none>")
             audio_path = utils._get_audio_path(kwargs.get("audio_folder_path"), audio_file)
 
-            # --- FIX: Auto-detect song length if not provided ---
             song_length_seconds = kwargs.get("song_length_seconds", 0.0)
             if song_length_seconds <= 0 and audio_path:
                 try:
                     import librosa
                     print("[PromptCrafter] Song length not provided, calculating from audio file...")
-                    # Use a different variable name to avoid y/sr scope issues if they exist elsewhere
                     audio_y, audio_sr = librosa.load(audio_path)
                     duration = librosa.get_duration(y=audio_y, sr=audio_sr)
                     kwargs["song_length_seconds"] = duration
                     print(f"[PromptCrafter] Calculated song length: {duration:.2f} seconds.")
                 except Exception as e:
                     print(f"[PromptCrafter] Warning: Could not calculate song length from audio: {e}")
-            # --- END FIX ---
 
-            # --- NEW WORKFLOW ---
-            # 1. Get user-provided lyrics (ground truth for content)
             user_lyrics, _, _ = utils._get_lyrics_from_input(user_text, kwargs.get("lyrics_folder_path"), kwargs.get("lyrics_file", "<none>"), kwargs.get("debug_mode", False))
-
-            # 2. Get timed segments from audio (ground truth for timing)
-            audio_path = utils._get_audio_path(kwargs.get("audio_folder_path"), kwargs.get("audio_file", "<none>"))
             whisper_transcript, initial_timed_segments, _ = self._transcribe_audio(audio_path, kwargs.get("whisper_model_size", "large-v3"), kwargs.get("whisper_engine", "faster-whisper"), kwargs.get("whisper_language", "auto-detect"))
 
-            # 3. Set up the run configuration
             lyrics_for_analysis = user_lyrics if user_lyrics else (whisper_transcript or "")
             run_config = self._setup_config("Lyrics", lyrics_for_analysis, model, images_with_weights=images_with_weights, **kwargs)
 
-            # 4. Align and Correct
-            final_lyrics_text, final_timed_segments = self._align_and_correct_lyrics(
+            final_lyrics_text, final_timed_segments, spectrogram_preview_pil = self._align_and_correct_lyrics(
                 whisper_transcript, initial_timed_segments, user_lyrics, audio_path, run_config
             )
 
-            # --- Pipeline Step 3: Generate Prompts ---
-            prompt, schedule, image_context, negative_prompt = self._generate_prompts_from_lyrics(
-                lyrics=final_lyrics_text,
-                timed_segments=final_timed_segments,
-                images_with_weights=images_with_weights,
-                user_instructions=user_text,
-                config=run_config,
-                negative_prompt=kwargs.get("negative_prompt", ""),
-                **kwargs
-            )
+            spectrogram_preview = None
+            if spectrogram_preview_pil:
+                spectrogram_preview = utils.pil2tensor(spectrogram_preview_pil)
+
+            use_vrg_prompt_builder = kwargs.get("use_vrg_prompt_builder", False)
+
+            if use_vrg_prompt_builder:
+                print("\033[94m[PromptCrafter] VRGDG Music Video Prompt Builder enabled. Constructing detailed instructions...\033[0m")
+                
+                lyric_fragments = []
+                if final_timed_segments:
+                    lyric_fragments = [seg[2] for seg in final_timed_segments]
+                elif final_lyrics_text:
+                    scenes = self._group_lyrics_into_scenes(final_lyrics_text, run_config)
+                    if scenes:
+                        lyric_fragments = scenes
+                    else:
+                        lyric_fragments = [line for line in final_lyrics_text.splitlines() if line.strip()]
+
+                if not lyric_fragments:
+                    return self._handle_creator_exception(Exception("Could not extract any lyric fragments to use with the VRGDG Prompt Builder."))
+
+                pipe_separated_lyrics = " | ".join(lyric_fragments)
+                num_fragments = len(lyric_fragments)
+
+                vrg_kwargs = {k: v for k, v in kwargs.items() if k in ['character_description', 'song_theme_style', 'word_count_min', 'word_count_max', 'list_handling_mode', 'environment', 'lighting', 'camera_motion', 'physical_interaction', 'facial_expression', 'shots', 'outfit_rules', 'character_visibility']}
+                
+                instructions_for_generation = self._build_vrg_prompt_instructions(pipe_separated_lyrics, num_fragments, **vrg_kwargs)
+                
+                # Use the specialized handler for this type of prompt
+                (prompt, _, image_context, negative_prompt, model_out, seed_out, *_) = self._handle_lyrics_to_prompt_request(instructions_for_generation, images_with_weights, run_config)
+                schedule = ""
+
+            else:
+                prompt, schedule, image_context, negative_prompt = self._generate_prompts_from_lyrics(
+                    lyrics=final_lyrics_text,
+                    timed_segments=final_timed_segments,
+                    images_with_weights=images_with_weights,
+                    user_instructions=user_text,
+                    config=run_config,
+                    negative_prompt=kwargs.get("negative_prompt", ""),
+                    **kwargs
+                )
 
             passthrough_images = [img for img, _ in images_with_weights]
             passthrough_images.extend([None] * (self.MAX_IMAGES - len(passthrough_images)))
             
-            # ... (SRT string generation remains unchanged) ...
             final_srt_string = ""
             if final_timed_segments:
                 def to_srt_time(seconds):
@@ -1577,8 +1788,6 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     srt_lines.append("")
                 final_srt_string = "\n".join(srt_lines)
 
-            # --- START MODIFICATION ---
-            # Create the new audio_meta dictionary
             audio_meta = {
                 "timed_segments": final_timed_segments,
                 "fps": kwargs.get("fps", 16.0),
@@ -1587,8 +1796,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 "max_scene_duration_seconds": kwargs.get("max_scene_duration_seconds", 5.0)
             }
 
-            return (prompt, schedule, image_context, negative_prompt, final_lyrics_text, final_srt_string, model, str(run_config.seed), audio_meta) + tuple(passthrough_images)
-            # --- END MODIFICATION ---
+            return (prompt, schedule, image_context, negative_prompt, final_lyrics_text, final_srt_string, model, str(run_config.seed), audio_meta, spectrogram_preview) + tuple(passthrough_images) + (kwargs.get('signal'),)
 
         except Exception as e:
             return self._handle_creator_exception(e)
@@ -1671,51 +1879,44 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
     def _align_and_correct_lyrics(self, whisper_transcript, initial_timed_segments, user_lyrics, audio_path, config):
         """
         The core logic to align user-provided lyrics with Whisper's timing.
+        Returns a tuple of (lyrics_text, timed_segments, spectrogram_image).
         """
+        spectrogram_img = None  # Initialize to None
+
         # Case 1: No timing data available. Use user lyrics and AI scene splitting.
         if not initial_timed_segments:
             print("\033[94m[PromptCrafter] No timing data available. Using AI to segment lyrics.\033[0m")
-            return user_lyrics, None # Returning None for segments triggers AI grouping later
+            # No audio, so no spectrogram can be generated.
+            return user_lyrics, None, None
+
+        # If we have audio, we can generate a spectrogram regardless of other conditions.
+        if audio_path:
+            spectrogram_img = utils.audio_to_spectrogram(audio_path)
+            if isinstance(spectrogram_img, str):
+                print(f"\033[91m[PromptCrafter] Error: Spectrogram generation failed. Reason: {spectrogram_img}\033[0m")
+                spectrogram_img = None # Ensure it's None on failure
+            else:
+                print(f"\033[94m[PromptCrafter] Spectrogram generated successfully. Type: {type(spectrogram_img)}\033[0m")
 
         # Case 2: Timing data is available, but no separate user lyrics are provided. Trust Whisper.
         if not user_lyrics or user_lyrics.strip() == whisper_transcript.strip():
             print("\033[94m[PromptCrafter] Using Whisper transcript and timing directly.\033[0m")
-            return whisper_transcript, initial_timed_segments
+            return whisper_transcript, initial_timed_segments, spectrogram_img
 
-        # Case 3: Both timing and user lyrics are available.
-        #
-        # <<< MODIFICATION START >>>
-        #
-        # The VLM-based re-segmentation step (`_resegment_lyrics_with_vlm`)
-        # is failing to produce valid JSON for a song of this length,
-        # as seen in the debug log [cite: 36-38].
-        #
-        # This new fix bypasses that failing step entirely.
-        # We will return `None` for the segments. This will force
-        # the `_process_lyrics_storyboard` function to use its
-        # fallback logic: `_group_lyrics_into_scenes`.
-        #
-        # This alternate path will use AI to split the correct
-        # `user_lyrics` into logical scenes (verses, choruses, etc.)
-        # which will then be properly scheduled across the song's duration.
+        # Case 3: Both timing and user lyrics are available. Attempt VLM alignment.
+        # This requires a valid spectrogram image.
+        if not spectrogram_img:
+            print(f"\033[93m[PromptCrafter] Warning: Cannot attempt VLM alignment without a valid spectrogram. Falling back to Whisper transcript.\033[0m")
+            return whisper_transcript, initial_timed_segments, spectrogram_img
+
+        print("\033[94m[PromptCrafter] Aligning ground truth lyrics with Whisper timing using VLM...\033[0m")
         
-        print("\033[92m[PromptCrafter] VLM re-segmentation failed. Bypassing and switching to AI-based scene grouping.\033[0m")
-        
-        # Return the correct lyrics, but `None` for the segments
-        # to trigger the AI scene grouping logic.
-        return user_lyrics, None
-        
-        # The VLM's job is to correct the Whisper transcript *using* the user's lyrics as a guide.
-        # This helps it understand the correct words while seeing the audio's structure.
         alignment_prompt = textwrap.dedent(f"""
             You are an expert audio-lyric alignment specialist. Your task is to correct an inaccurate ASR transcript by using a provided "Ground Truth" lyric sheet as a reference, guided by an audio spectrogram.
-
             - **ASR Transcript (Potentially Inaccurate):** This is the raw output from the speech recognition. It has good timing but may have wrong words.
             - **Ground Truth Lyrics (Accurate Content):** This is the correct text of the song.
             - **Spectrogram:** This is the visual representation of the audio.
-
             **Your Goal:** Produce a corrected, full-text transcript that has the structure and flow of the ASR transcript but with the accurate words from the Ground Truth Lyrics. Preserve structural tags like `[Chorus]` or `[Verse]` from the ASR transcript.
-
             ---
             **ASR Transcript (for structure and timing):**
             ```
@@ -1727,20 +1928,28 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             {user_lyrics}
             ```
             ---
-
             Return ONLY the final, 100% corrected full-text transcript.
         """).strip()
 
+        # No need for a separate debug print, the main query_model_auto will handle it
+        # print(f"\033[94m[PromptCrafter] VLM Alignment Prompt:\n{alignment_prompt}\033[0m")
         ok, corrected_lyrics = api_clients.query_model_auto(config.model, alignment_prompt, images=[spectrogram_img], prefer_chat=True, temperature=0.0, seed=config.seed, debug_mode=config.debug_mode, timeout=config.timeout, debug_title="Audio-Lyric Alignment")
+        # print(f"\033[94m[PromptCrafter] VLM Alignment Result: ok={ok}, corrected_lyrics='{corrected_lyrics[:200]}...'\033[0m")
 
+        # --- FALLBACK LOGIC ---
         if not ok or not corrected_lyrics.strip():
-            print(f"\033[93m[PromptCrafter] Warning: VLM alignment failed. Falling back to original transcript. Error: {corrected_lyrics}\033[0m")
-            return whisper_transcript, initial_timed_segments
+            print(f"\033[93m[PromptCrafter] Warning: VLM alignment failed (Error: {corrected_lyrics}). Falling back to the raw Whisper transcript and its {len(initial_timed_segments)} timed segments.\033[0m")
+            return whisper_transcript, initial_timed_segments, spectrogram_img
 
         print("\033[92m[PromptCrafter] VLM alignment complete. Re-segmenting corrected lyrics...\033[0m")
-        # Now, re-segment the newly corrected full text based on the original segment timings.
         final_segments = self._resegment_lyrics_with_vlm(corrected_lyrics, initial_timed_segments, config)
-        return corrected_lyrics, final_segments
+        
+        # --- FINAL SANITY CHECK ---
+        if not final_segments:
+            print(f"\033[93m[PromptCrafter] Warning: VLM re-segmentation failed. Falling back to raw Whisper transcript and its {len(initial_timed_segments)} timed segments.\033[0m")
+            return whisper_transcript, initial_timed_segments, spectrogram_img
+
+        return corrected_lyrics, final_segments, spectrogram_img
 
     def _analyze_audio_mood(self, audio_path, lyrics_text, config):
         if not audio_path:
@@ -1915,7 +2124,15 @@ LYRICS (for emotional context):
             }}
         """ ).strip()
 
-        ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Lyric Scene Grouping")
+        ok, result_json = api_clients._reason_with_model(
+            run_config.model,
+            prompt,
+            use_chat_api=run_config.use_chat_api,
+            temperature=0.0,
+            seed=run_config.seed,
+            debug_mode=run_config.debug_mode,
+            debug_title="Lyric Scene Grouping",
+            timeout=run_config.timeout) # <-- ADD THIS LINE
         
         if ok and isinstance(result_json, dict) and "scenes" in result_json and isinstance(result_json["scenes"], list):
             print(f"\033[92m[PromptCrafter] Successfully grouped lyrics into {len(result_json['scenes'])} scenes.\033[0m")
@@ -1941,6 +2158,7 @@ LYRICS (for emotional context):
             3.  For each original segment, find the corresponding portion of text in the `CORRECTED_FULL_TEXT` to assign to it.
             4.  Create a new segment object that keeps the original `start` and `end` times but uses the new, correct text.
             5.  **CRITICAL RULE**: The goal is to map the *entire* `CORRECTED_FULL_TEXT` onto the sequence of `ORIGINAL_SEGMENTS`. Do not leave out any lyrics. If an original segment contains only a structural tag (e.g., `[Verse]`), you MUST include the lyrical lines that follow that tag in the corrected text, distributing them across the timed segments until the next tag is reached. Avoid creating long segments that contain only a tag.
+            6.  **IMPORTANT FOR LARGE INPUTS**: The provided text and segments may be very long. Process them carefully from beginning to end. Ensure the output is a single, valid, complete JSON array. Do not truncate the output.
 
             ---
             **CORRECTED_FULL_TEXT:**
@@ -1957,7 +2175,18 @@ LYRICS (for emotional context):
             Return ONLY the new, corrected JSON array of segment objects. The text from all segments, when joined, should perfectly match the `CORRECTED_FULL_TEXT`.
         """).strip()
 
-        ok, result_json = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=True, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Lyric Re-segmentation", timeout=run_config.timeout)
+        # Increased timeout for potentially long-running re-segmentation task.
+        timeout = max(300, run_config.timeout)
+
+        ok, result_json = api_clients._reason_with_model(
+            run_config.model,
+            prompt,
+            use_chat_api=True,
+            temperature=0.0,
+            seed=run_config.seed,
+            debug_mode=run_config.debug_mode,
+            debug_title="Lyric Re-segmentation",
+            timeout=timeout)
 
         if ok and isinstance(result_json, list):
             # Convert the JSON list of dicts back to a list of tuples
@@ -2298,6 +2527,13 @@ class PromptCrafter_AudioSplitter(PromptCrafter_BaseCreator):
 
     def execute(self, audio, audio_meta, set_index=0):
         try:
+            # --- DEBUG: Inspect incoming audio_meta ---
+            if isinstance(audio_meta, dict):
+                print(f"\033[95m[PromptCrafter_AudioSplitter DEBUG] Received audio_meta keys: {list(audio_meta.keys())}\033[0m")
+            else:
+                print(f"\033[95m[PromptCrafter_AudioSplitter DEBUG] Received audio_meta is not a dictionary. Type: {type(audio_meta)}\033[0m")
+            # -----------------------------------------
+
             # --- 1. Unpack Audio and Meta ---
             if not isinstance(audio, dict) or "waveform" not in audio:
                 raise ValueError("Invalid AUDIO input. Expected a dictionary with 'waveform' and 'sample_rate'.")
@@ -2751,7 +2987,7 @@ class PromptCrafter_FileOrganizer:
         if vision_model and any(r[0] == 'content_keyword' for r in rules):
             try:
                 pil_image = Image.open(file_path).convert("RGB")
-                image_tensor = comfy.utils.pil2tensor(pil_image)
+                image_tensor = utils.pil2tensor(pil_image)
                 
                 prompt = "Describe this image in a few keywords. Focus on the main subject, style, and setting. Example: 'photo, car, city street, nighttime'"
                 ok, caption = api_clients.query_model_auto(vision_model, prompt=prompt, images=[image_tensor[0]], prefer_chat=True, temperature=0.1, seed=1, timeout=60)
@@ -3134,16 +3370,74 @@ class PromptCrafter_CacheUtility:
             status_message = f"Cache contains {config.CACHE.size} of {config.CACHE.max_size} items."
         return (status_message,)
 
-NNODE_CLASS_MAPPINGS = {
+# ------------------------------------------------------------------------------------
+# PromptCrafter_ImageSwitcher Node
+# ------------------------------------------------------------------------------------
+# In nodes.py, locate and replace the PromptCrafter_ImageSwitcher class:
+
+class PromptCrafter_ImageSwitcher:
+    DESCRIPTION = "Switches between multiple image inputs based on an index or randomly, triggered by a signal."
+    
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                # NEW: Switching mode selector
+                "image_count": ("INT", {"default": 2, "min": 2, "max": 16, "step": 1, "tooltip": "The number of image input pins to generate. Use the 'Manual Refresh' button to apply changes."}),
+                "switching_mode": (["Chronological (Index)", "Random Select"], {"default": "Chronological (Index)", "tooltip": "Method to choose the image: incremental using the index or pure random selection."}),
+                "signal": ("*", {"optional": True, "tooltip": "A signal from another node to force execution/switching."}),
+            },
+            "optional": {
+                # Input for the chronological mode
+                "current_index": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1, "tooltip": "The 0-based index of the image to select (only used in Chronological mode)."}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT")
+    RETURN_NAMES = ("selected_image", "selected_index")
+    FUNCTION = "switch_image"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+
+    def switch_image(self, switching_mode, image_count, current_index=0, signal=None, **kwargs):
+        images = []
+        
+        # 1. Collect all connected dynamic image inputs based on image_count
+        for i in range(1, image_count + 1):
+            key = f"image_{i}"
+            # Only append the image tensor if the pin exists and is connected
+            if key in kwargs and kwargs[key] is not None:
+                images.append(kwargs[key])
+        
+        if not images:
+            raise ValueError("PromptCrafter_ImageSwitcher: No images were provided or connected to the dynamic pins.")
+
+        num_images = len(images)
+        selected_index = 0
+
+        # 2. Implement switching logic based on mode
+        if switching_mode == "Chronological (Index)":
+            # Use the user's index (clamped to prevent out-of-bounds error)
+            selected_index = max(0, min(num_images - 1, current_index))
+        
+        elif switching_mode == "Random Select":
+            # Select a random index from the connected images (0 to num_images - 1)
+            selected_index = random.randint(0, num_images - 1)
+        
+        # 3. Return the selected image and the index used
+        selected_image = images[selected_index]
+        return (selected_image, selected_index)
+
+NODE_CLASS_MAPPINGS = {
     "PromptCrafter_QnA": PromptCrafter_QnA,
     "PromptCrafter_Captioner": PromptCrafter_Captioner,
     "PromptCrafter_VisualCreator": PromptCrafter_VisualCreator,
     "PromptCrafter_LyricsCreator": PromptCrafter_LyricsCreator,
-    "PromptCrafter_AudioSplitter": PromptCrafter_AudioSplitter, # <-- ADD THIS
+    "PromptCrafter_AudioSplitter": PromptCrafter_AudioSplitter,
     "PromptCrafter_CacheUtility": PromptCrafter_CacheUtility,
     "PromptCrafter_FileOrganizer": PromptCrafter_FileOrganizer,
     "PromptCrafter_Formatter": PromptCrafter_Formatter,
     "PromptCrafter_SaveTextFile": PromptCrafter_SaveTextFile,
+    "PromptCrafter_ImageSwitcher": PromptCrafter_ImageSwitcher,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -3151,9 +3445,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_Captioner": "PromptCrafter Image Captioner",
     "PromptCrafter_VisualCreator": "PromptCrafter Visual Creator",
     "PromptCrafter_LyricsCreator": "PromptCrafter Lyrics-to-Prompt Creator",
-    "PromptCrafter_AudioSplitter": "PromptCrafter Audio Splitter", # <-- ADD THIS
+    "PromptCrafter_AudioSplitter": "PromptCrafter Audio Splitter",
     "PromptCrafter_CacheUtility": "PromptCrafter Cache Utility",
     "PromptCrafter_FileOrganizer": "PromptCrafter File Organizer",
     "PromptCrafter_Formatter": "PromptCrafter Text Formatter",
     "PromptCrafter_SaveTextFile": "PromptCrafter Save Text File",
+    "PromptCrafter_ImageSwitcher": "PromptCrafter Image Switcher",
 }

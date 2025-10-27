@@ -316,6 +316,10 @@ def encode_image(img):
     pil.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
+def pil2tensor(image: Image.Image) -> torch.Tensor:
+    """Converts a PIL image to a PyTorch tensor."""
+    return torch.from_numpy(np.array(image).astype(np.float32) / 255.0).unsqueeze(0)
+
 def _add_metadata_to_image(image_path, caption_text):
     """
     Adds the provided caption text to the image's metadata and saves it in place.
