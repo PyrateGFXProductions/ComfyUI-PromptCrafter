@@ -695,7 +695,7 @@ def _should_perform_web_search(user_query, model, seed, debug_mode, timeout=40):
         - Format: {{"search_needed": true, "search_query": "optimized search keywords for a search engine"}}
         - If no search is needed: {{"search_needed": false, "search_query": null}}
     """).strip()
-    check_prompt = prompt_template.format(query=user_query)
+    check_prompt = prompt_template
     ok, result_json = api_clients._reason_with_model(model, check_prompt, use_chat_api=True, temperature=0.0, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title="Web Search Check")
     if ok and isinstance(result_json, dict) and result_json.get("search_needed") and result_json.get("search_query"):
         return True, result_json.get("search_query")
@@ -972,7 +972,7 @@ def _deep_think_and_refine(model, generation_prompt_text, max_iterations=3, conf
         
         if not ok or not isinstance(critique_json, dict):
             _debug_print(kwargs.get("debug_mode", False), f"Deep Think - Iteration {iteration_num} Critique Failed", f"Error: {critique_json}")
-            return (True, current_prompt) if current_prompt else (False, "Deep Think process failed at initial generation.")
+            return (True, current_prompt) if current_prompt else (False, f"Deep Think process failed at initial generation. Reason: {critique_json}")
         
         confidence_score = critique_json.get("confidence_score", 0.0)
         refined_prompt = critique_json.get("refined_prompt")

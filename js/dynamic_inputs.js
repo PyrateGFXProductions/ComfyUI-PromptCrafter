@@ -117,7 +117,7 @@ app.registerExtension({
             if (nodeType.comfyClass === "PromptCrafter_VisualCreator") {
                 numStandardOutputs = 6;
             } else if (nodeType.comfyClass === "PromptCrafter_LyricsCreator") {
-                numStandardOutputs = 10;
+                numStandardOutputs = 20;
             } else {
                 numStandardOutputs = 6; // Default value
             }
@@ -133,6 +133,8 @@ app.registerExtension({
                 }
             };
 
+            // In your updateNodeImageInputs function, fix the output management:
+
             const updateNodeImageInputs = function(targetCount) {
                 if (targetCount === undefined) return;
 
@@ -143,6 +145,7 @@ app.registerExtension({
                 const currentInputs = this.inputs?.filter(input => /^image_\d+$/.test(input.name)) || [];
                 let currentInputCount = currentInputs.length;
 
+                // Handle inputs
                 if (targetCount < currentInputCount) {
                     for (let i = currentInputCount; i > targetCount; i--) {
                         this.removeInput(this.findInputSlot(`${inputPrefix}${i}`));
@@ -153,6 +156,7 @@ app.registerExtension({
                     }
                 }
 
+                // Handle widgets
                 const currentWidgets = this.widgets.filter(w => w.name?.startsWith(weightPrefix));
                 let currentWidgetCount = currentWidgets.length;
 
@@ -173,16 +177,26 @@ app.registerExtension({
                 
                 updateWeightsJSON(this);
 
-                const currentOutputCount = this.outputs.length - numStandardOutputs;
+                // Handle outputs - this is the key fix
+                // We need to manage only the dynamic reference_image outputs
+                const currentDynamicOutputs = this.outputs.length - numStandardOutputs;
 
-                if (targetCount < currentOutputCount) {
-                    for (let i = currentOutputCount; i > targetCount; i--) {
-                        this.removeOutput(this.outputs.length - 1);
+                if (targetCount < currentDynamicOutputs) {
+                    // Remove excess dynamic outputs
+                    for (let i = currentDynamicOutputs; i > targetCount; i--) {
+                        const slotToRemove = this.outputs.findIndex(output => output.name === `${outputPrefix}${i}`);
+                        if (slotToRemove !== -1) {
+                            this.removeOutput(slotToRemove);
+                        }
                     }
-                } else if (targetCount > currentOutputCount) {
-                    for (let i = currentOutputCount; i < targetCount; i++) {
+                } else if (targetCount > currentDynamicOutputs) {
+                    // Add missing dynamic outputs
+                    for (let i = currentDynamicOutputs; i < targetCount; i++) {
                         const name = `${outputPrefix}${i + 1}`;
-                        this.addOutput(name, "IMAGE");
+                        // Make sure we don't add duplicates
+                        if (!this.outputs.find(output => output.name === name)) {
+                            this.addOutput(name, "IMAGE");
+                        }
                     }
                 }
 
@@ -190,32 +204,38 @@ app.registerExtension({
                 this.setDirtyCanvas(true, true);
             };
 
+            // Also, in your onNodeCreated, make sure to initialize properly:
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 onNodeCreated?.apply(this, arguments);
 
                 const imageCountWidget = this.widgets.find(w => w.name === "image_count");
 
-                const numStandardOutputs = this.numStandardOutputs;
+                // Add the update button
                 this.addWidget("button", "Update Image Inputs", null, () => {
                     if (imageCountWidget) {
                         updateNodeImageInputs.call(this, imageCountWidget.value);
                     }
                 });
 
+                // Hide JSON widget
                 const jsonWidget = this.widgets.find(w => w.name === "image_weights_json");
                 if (jsonWidget && jsonWidget.inputEl) {
                     jsonWidget.inputEl.style.display = "none";
                 }
+                
+                // Set up callback for image_count changes
                 if (imageCountWidget) {
                     const originalCallback = imageCountWidget.callback;
                     imageCountWidget.callback = (value) => {
                         originalCallback?.(value);
                         updateNodeImageInputs.call(this, value);
                     };
-                    setTimeout(() => updateNodeImageInputs.call(this, imageCountWidget.value), 10);
+                    // Initialize with default value (usually 1)
+                    setTimeout(() => updateNodeImageInputs.call(this, imageCountWidget.value || 1), 10);
                 }
             };
+
 
 
             const onConfigure = nodeType.prototype.onConfigure;

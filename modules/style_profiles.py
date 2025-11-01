@@ -64,6 +64,31 @@ class StyleEngine:
         """Returns a sensible default profile."""
         return {"persona": "You are an expert art historian.", "inspiration": "Composition inspired by Akira Kurosawa."}
     
+    def _get_style_profile_options(self):
+        """Get all available style profile options for dropdown menus."""
+        return list(NAMED_STYLE_PROFILES.keys()) + ["None (Manual)", "Custom"]
+    
+    def get_keywords(self):
+        """Returns a list of keywords for the style profile."""
+        self.get_profile()
+        if isinstance(self._style_profile, dict) and "name" in self._style_profile:
+            return STYLE_KEYWORDS.get(self._style_profile["name"], "")
+        return ""
+    
+    def get_keywords_str(self):
+        """Returns a string of keywords for the style profile."""
+        keywords = self.get_keywords()
+        if isinstance(keywords, str) and len(keywords) > 0:
+            return f" ({keywords})"
+        return ""
+    
+    def get_profile_str(self):
+        """Returns a string of the style profile."""
+        self.get_profile()
+        if isinstance(self._style_profile, dict) and "name" in self._style_profile:
+            return self._style_profile.get("name", "Unknown Profile")
+        return "Default Profile"
+    
     def _select_profile_with_ai(self, prompt_text, images, profiles_to_select_from, **kwargs):
         """Queries the AI with a given prompt to select a style profile."""
         ok, result_json = api_clients._reason_with_model(
@@ -84,7 +109,8 @@ class StyleEngine:
         Orchestrates the analysis of content to determine the best style profile.
         This method handles caching and calls helper methods for the analysis steps.
         """
-        if self._style_profile is not None: return self._style_profile
+        if self._style_profile is not None: 
+            return self._style_profile
 
         cache_key = utils._get_cache_key(self.model, self.use_chat_api, self.temperature, self.seed, self.image, self.text, self.timeout, "style_engine_analysis_v9", **self.__dict__)
         if config.CACHE.has(cache_key):
@@ -147,6 +173,7 @@ class StyleEngine:
         if isinstance(self._style_profile, dict):
             return self._style_profile.get("persona", "You are a helpful assistant.")
         return "You are a helpful assistant."
+    
     def get_composition_rules(self):
         self.get_profile()
         if isinstance(self._style_profile, dict):

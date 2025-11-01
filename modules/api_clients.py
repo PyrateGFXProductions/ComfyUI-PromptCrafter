@@ -61,7 +61,14 @@ class OllamaClient:
         error_details = f"HTTP {status_code} {reason}."
         try:
             error_json = e.response.json()
-            error_message = error_json.get("error", {}).get("message") or error_json.get("error") or json.dumps(error_json)
+            if isinstance(error_json, dict):
+                error_content = error_json.get("error")
+                if isinstance(error_content, dict):
+                    error_message = error_content.get("message") or json.dumps(error_content)
+                else:
+                    error_message = error_content or json.dumps(error_json)
+            else:
+                error_message = str(error_json)
             error_details += f" Details: {error_message}"
         except json.JSONDecodeError:
             error_details += f" Raw response: {e.response.text[:500]}"
@@ -104,6 +111,8 @@ class OllamaClient:
             content = data.get("response", "")
         elif "message" in data and isinstance(data["message"], dict): # /api/chat
             content = data["message"].get("content", "")
+            if not content: # FIX: Check for 'thinking' field if 'content' is empty
+                content = data["message"].get("thinking", "")
         
         return (True, content.strip()) if content else (False, f"Could not find response content in Ollama output: {json.dumps(data)}")
 
@@ -202,10 +211,10 @@ def _reason_with_model(model, prompt, images=None, **kwargs):
     if 'use_chat_api' in kwargs:
         kwargs['prefer_chat'] = kwargs.pop('use_chat_api')
 
-    # Set defaults for reasoning tasks
+    # Set defaults for reasoning tasks, but allow timeout to be overridden
     kwargs.setdefault('prefer_chat', True)
     kwargs.setdefault('temperature', 0.0)
-    kwargs.setdefault('timeout', 40)
+    kwargs.setdefault('timeout', 120) # Default, but can be overridden by user
 
     ok, resp = query_model_auto(model, prompt, images=images, **kwargs)
     if not ok: return False, f"Model reasoning query failed: {resp}"
@@ -229,7 +238,7 @@ class ModelInspector:
     # This makes it easy to update as new model families are released.
     VISION_KEYWORDS = {
         "llava", "moondream", "bakllava", "fuyu", "idefics", 
-        "qwen2.5vl", "vision", "clip", "mmproj"
+        "qwen", "qwen2.5vl", "qwen3-vl", "vision", "clip", "mmproj"
     }
 
     @classmethod

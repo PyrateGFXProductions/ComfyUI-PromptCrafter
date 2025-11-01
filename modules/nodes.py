@@ -66,7 +66,8 @@ class PromptCrafter_QnA:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "user_text": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT, "tooltip": "Your question or instruction for the model."}),
+                "instruction": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT, "tooltip": "Your primary question or instruction for the model."}),
+                "subject": ("STRING", {"multiline": True, "default": "", "tooltip": "Optional: The subject, topic, or any additional text to provide context for your instruction."}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The language model (text or vision) to use for the answer."}),
                 "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Controls creativity. Lower is more deterministic."}),
                 "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff, "step": 1, "tooltip": "Seed for reproducible results. -1 for random. Set Temperature to 0 for full determinism."}),
@@ -95,7 +96,7 @@ class PromptCrafter_QnA:
     FUNCTION = "execute"
     CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
     
-    def execute(self, user_text, model, **kwargs):
+    def execute(self, instruction, subject, model, **kwargs):
         try:
             # Extract parameters from kwargs with defaults
             image = kwargs.get("image")
@@ -153,7 +154,7 @@ class PromptCrafter_QnA:
                     raw_context = context
                     context_source = f"File ({file_name}) - Not Found"
             elif enable_web_search:
-                search_needed, search_query = utils._should_perform_web_search(user_text, llm_model, seed, debug_mode, timeout=timeout)
+                search_needed, search_query = utils._should_perform_web_search(instruction, llm_model, seed, debug_mode, timeout=timeout)
                 if search_needed and isinstance(search_query, str) and search_query.strip():
                     web_context = utils._perform_web_search(search_query, num_results=3, debug_mode=debug_mode, fast_search=fast_web_search)
                     context = web_context
@@ -168,28 +169,36 @@ class PromptCrafter_QnA:
             if chunk_large_context and context and not context.startswith("[Error"):
                 if len(context.split()) > chunk_size_words:
                     print(f"\033[94m[PromptCrafter] Context from {context_source} is large. Summarizing...\033[0m")
-                    context = utils._summarize_large_text(raw_context, chunk_size_words, llm_model, temperature, seed, debug_mode, timeout, strategy=strategy_key, user_query=user_text)
+                    context = utils._summarize_large_text(raw_context, chunk_size_words, llm_model, temperature, seed, debug_mode, timeout, strategy=strategy_key, user_query=instruction)
                     utils._debug_print(debug_mode, "Summarized Context", context)
 
-            final_user_text, raw_user_text = user_text, user_text
-            if chunk_large_context and len(user_text.split()) > chunk_size_words and user_text.strip() != config.DEFAULT_PROMPT_TEXT:
+            final_user_text, raw_user_text = instruction, instruction
+            if chunk_large_context and len(instruction.split()) > chunk_size_words and instruction.strip() != config.DEFAULT_PROMPT_TEXT:
                 print(f"\033[94m[PromptCrafter] User text is large. Summarizing...\033[0m")
-                final_user_text = utils._summarize_large_text(user_text, chunk_size_words, llm_model, temperature, seed, debug_mode, timeout, strategy=strategy_key)
+                final_user_text = utils._summarize_large_text(instruction, chunk_size_words, llm_model, temperature, seed, debug_mode, timeout, strategy=strategy_key)
                 utils._debug_print(debug_mode, "Summarized User Text", final_user_text)
 
-            if (context or image is not None) and user_text.strip() == config.DEFAULT_PROMPT_TEXT:
+            if (context or image is not None) and instruction.strip() == config.DEFAULT_PROMPT_TEXT:
                 final_user_text = "Describe this image in detail." if image is not None else "Summarize the key points of the provided context."
+
+            user_query = final_user_text
+            if subject and subject.strip():
+                user_query = f"SUBJECT:\n{subject}\n\nINSTRUCTION:\n{final_user_text}"
 
             safety_rule = f"\n\n{config.SAFE_MODE_RULE}" if safe_mode else ""
             history_section = f"CONVERSATION HISTORY (for context):\n{history_text}\n\n" if history_text else ""
             context_section = f"ADDITIONAL CONTEXT (for this query only):\n{context}\n\n" if context else ""
-            prompt = f"You are a helpful Q&A assistant. Answer the user's query based on the conversation history and any additional context provided.\n\n{history_section}{context_section}CURRENT USER QUERY:\n{final_user_text}{safety_rule}".strip()
+            prompt = f"You are a helpful Q&A assistant. Answer the user's query based on the conversation history and any additional context provided.\n\n{history_section}{context_section}CURRENT USER QUERY:\n{user_query}{safety_rule}".strip()
 
             images_to_pass = [image] if image is not None else None
             ok, resp = api_clients.query_model_auto(llm_model, prompt, images=images_to_pass, prefer_chat=True, temperature=temperature, seed=seed, debug_mode=debug_mode, debug_title="QnA Prompt", timeout=timeout)
 
-            response_text = utils.TextCleaner.single_paragraph(resp if ok else f"Ollama error: {resp}")
-            new_history_entry = f"User: {final_user_text}\nAssistant: {response_text}"
+            response_text = resp if ok else f"Ollama error: {resp}"
+            # If the response looks like a JSON object or array, don't clean it to preserve its structure.
+            stripped_response = response_text.strip()
+            if not (stripped_response.startswith('{') and stripped_response.endswith('}')) and not (stripped_response.startswith('[') and stripped_response.endswith(']')):
+                response_text = utils.TextCleaner.single_paragraph(response_text)
+            new_history_entry = f"User: {user_query}\nAssistant: {response_text}"
             updated_history = f"{history_text}\n{new_history_entry}".strip() if history_text else new_history_entry
 
             return (response_text, updated_history)
@@ -476,7 +485,7 @@ class PromptCrafter_BaseCreator: # noqa
             subject_description = "A subject" # Default fallback
             if primary_subjects:
                 # Clean up the subject description, removing any [PRIMARY] tags etc.
-                subject_description = re.sub(r'^\[PRIMARY\]\\s*', '', primary_subjects[0]).strip()
+                subject_description = re.sub(r'^\s*\[PRIMARY\]\s*', '', primary_subjects[0]).strip()
             
             # 2. Use an LLM to fill in the user's template.
             prompt = textwrap.dedent(f'''
@@ -815,10 +824,24 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" # noqa
                 return ("No reference images provided.", [])
             return cached
 
-        description_objects = []
-        for idx, (img, weight) in enumerate(images_with_weights, start=1):
-            if weight <= 0: continue
-            description_objects.append(self._describe_one_image_with_persona(img, weight, idx, run_config))
+        description_objects = [None] * len(images_with_weights)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_to_index = {
+                executor.submit(self._describe_one_image_with_persona, img, weight, idx, run_config): idx - 1
+                for idx, (img, weight) in enumerate(images_with_weights, start=1)
+                if weight > 0
+            }
+
+            for future in concurrent.futures.as_completed(future_to_index):
+                index = future_to_index[future]
+                try:
+                    description_objects[index] = future.result()
+                except Exception as e:
+                    print(f"\033[91m[PromptCrafter] Error describing image at index {index}: {e}\033[0m")
+                    description_objects[index] = {"full_text": f"Image {index + 1}: [Error describing image]", "primary_subject": ""}
+        
+        # Filter out None values from images that were skipped (weight <= 0) or failed
+        description_objects = [d for d in description_objects if d is not None]
         
         full_text_descriptions = [d.get("full_text", "") for d in description_objects]
         primary_subjects = [d.get("primary_subject", "") for d in description_objects if d.get("primary_subject")]
@@ -871,14 +894,14 @@ The final output must be in {language} only.{safety_rule}"""
     def _generate_visual_prompt_pipeline(self, mode, user_text, images_with_weights, run_config, negative_prompt="", **kwargs): # noqa
         images = [img for img, _ in images_with_weights]
         if not images_with_weights and not (user_text and user_text.strip() and user_text.strip() != config.DEFAULT_PROMPT_TEXT):
-            return ("No inputs provided.", None, None)
+            return ("No inputs provided.", None, "")
             
         ok_context, context_data = self._prepare_visual_prompt_context(user_text, images_with_weights, run_config)
-        if not ok_context: return (context_data[0], None, None)
+        if not ok_context: return (context_data[0], None, "")
         image_context, user_instructions, user_context, mandatory_tokens, primary_subjects_from_images = context_data
 
         ok_draft, draft_or_err = self._generate_initial_draft(mode, user_instructions, user_context, image_context, mandatory_tokens, images, run_config, primary_subjects_from_images) # noqa
-        if not ok_draft: return (draft_or_err, image_context, None)
+        if not ok_draft: return (draft_or_err, image_context, "")
         scene_prompt = draft_or_err
         
         # Ensure we always pass strings to _build_style_and_composition_rules to avoid type issues
@@ -1205,11 +1228,11 @@ Example: {{'motion_style': \"dynamic, cinematic\", 'camera_movement': \"tracking
         current_prompt = draft_prompt
         
         # Extract the subject names from the tagged list
-        primary_items_list = [re.sub(r'^ Electrochemical_cell_diagram_with_labels_and_explanation_of_components_and_reactions_in_a_clear_and_concise_manner', '', t) for t in (mandatory_tokens or {}).get("primary", [])]
+        primary_items_list = [re.sub(r'^\[\w+\]\\s*', '', t) for t in (mandatory_tokens or {}).get("primary", [])]
 
         if not primary_items_list:
             critique_prompt = self._build_refinement_prompt(current_prompt, mode, [], [], style_rules, run_config, ask_for_json=False)
-            ok, revised_prompt = api_clients.query_model_auto(run_config.model, critique_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature, seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title="Image/Video Refine (Single Pass)")
+            ok, revised_prompt = api_clients.query_model_auto(run_config.model, critique_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature, seed=run_config.seed, timeout=run_config.timeout, debug_mode=run_config.debug_mode, debug_title="Image/Video Refine (Single Pass)")
             return utils.TextCleaner.single_paragraph(revised_prompt if ok else current_prompt)
 
         all_allowed = (mandatory_tokens or {}).get("allowed_list", [])
@@ -1293,7 +1316,7 @@ Return ONLY a single JSON object with three keys:
         )
 
     def _finalize_visual_prompt_output(self, scene_prompt, image_context, user_text, mandatory_tokens, run_config, user_negative_prompt=""): # noqa
-        ai_negative_prompt = utils._generate_negative_prompt(scene_prompt, run_config, user_negative_prompt="")
+        ai_negative_prompt = utils._generate_negative_prompt(scene_prompt, run_config, user_negative_prompt=user_negative_prompt)
         parts = [p for p in [user_negative_prompt, ai_negative_prompt] if p and p.strip()]
         final_negative_prompt = ", ".join(parts)
         return final_negative_prompt
@@ -1426,7 +1449,8 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
         return {
             "required": {
                 "pipeline_mode": (["Image", "Video"], {"default": "Image"}),
-                "user_text": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT}),
+                "instruction": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT, "tooltip": "Your primary instruction for the model (e.g., 'Create a cinematic shot of...')."}),
+                "subject": ("STRING", {"multiline": True, "default": "", "tooltip": "Optional: The subject, topic, or any additional text to provide context for your instruction."}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The language model to use for all analysis and generation. Vision-capable models are required if using images."} ),
                 "image_count": ("INT", {"default": 1, "min": 1, "max": 5, "step": 1}),
                 # --- Generation Control ---
@@ -1459,8 +1483,13 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
     FUNCTION = "execute"
     CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
 
-    def execute(self, user_text, model, negative_prompt="", **kwargs):
+    def execute(self, instruction, subject, model, negative_prompt="", **kwargs):
         try:
+            # Combine instruction and subject to form the user_text
+            user_text = instruction
+            if subject and subject.strip():
+                user_text = f"SUBJECT:\n{subject}\n\nINSTRUCTION:\n{instruction}"
+
             pipeline_mode = kwargs.get("pipeline_mode", "Image")
             target_model_format = kwargs.get("target_model_format", "Generic")
             
@@ -1538,6 +1567,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "Generic Video (Wan, etc.)"], {"default": "Generic Video (Wan, etc.)", "tooltip": "Format the prompt for a specific model's syntax. OVI speech format is handled automatically."}),
             # VRGDG Music Video Prompt Creator inputs
             "use_vrg_prompt_builder": ("BOOLEAN", {"default": False, "tooltip": "If True, use the detailed music video prompt builder inputs below, overriding the main user_text input."}),
+            "automate_vrg_variables": ("BOOLEAN", {"default": False, "tooltip": "If True, use an LLM to automatically fill the VRGDG variables based on the lyrics."}),
             "character_description": ("STRING", {"multiline": True, "default": "The Women."}),
             "song_theme_style": ("STRING", {"multiline": True, "default": "cinematic realism, emotional storytelling, soft surrealism, naturalistic tone, dreamlike nostalgia, modern drama, poetic symbolism, intimate atmosphere"}),
             "word_count_min": ("INT", {"default": 30, "min": 10, "max": 200}),
@@ -1556,9 +1586,56 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
         types["optional"]["interpolate_keyframes"] = ("BOOLEAN", {"default": False})
         types["optional"]["interpolation_frame_interval"] = ("INT", {"default": 0, "min": 0, "max": 16})
         return types
-    MAX_IMAGES = 5
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "DICT", "IMAGE") + ("IMAGE",) * MAX_IMAGES + ('*',)
-    RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt", "clean_lyrics_txt", "lyrics_srt", "model_out", "seed_out", "audio_meta", "spectrogram_preview") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1)) + ('signal',)
+    
+    STATIC_RETURN_TYPES = (
+        "STRING",    # prompt
+        "STRING",    # schedule
+        "STRING",    # image_context
+        "STRING",    # negative_prompt
+        "STRING",    # clean_lyrics_txt
+        "STRING",    # lyrics_srt
+        "STRING",    # model_out
+        "STRING",    # seed_out
+        "DICT",      # audio_meta
+        "IMAGE",     # spectrogram_preview
+        "*",         # signal
+        "STRING",    # auto_character
+        "STRING",    # auto_theme
+        "STRING",    # auto_environment
+        "STRING",    # auto_lighting
+        "STRING",    # auto_interaction
+        "STRING",    # auto_expression
+        "STRING",    # auto_shots
+        "STRING",    # auto_outfit
+        "STRING",    # auto_visibility
+    )
+    
+    STATIC_RETURN_NAMES = (
+        "prompt",
+        "schedule", 
+        "image_context",
+        "negative_prompt",
+        "clean_lyrics_txt",
+        "lyrics_srt",
+        "model_out",
+        "seed_out",
+        "audio_meta",
+        "spectrogram_preview",
+        "signal",
+        "auto_character",
+        "auto_theme",
+        "auto_environment",
+        "auto_lighting",
+        "auto_interaction",
+        "auto_expression",
+        "auto_shots",
+        "auto_outfit",
+        "auto_visibility",
+    )
+    
+    MAX_DYNAMIC_IMAGES = 5
+    RETURN_TYPES = STATIC_RETURN_TYPES + ("IMAGE",) * MAX_DYNAMIC_IMAGES
+    RETURN_NAMES = STATIC_RETURN_NAMES + tuple(f"reference_image_{i}" for i in range(1, MAX_DYNAMIC_IMAGES + 1))
     FUNCTION = "execute"
     CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
 
@@ -1692,8 +1769,13 @@ Close up of a woman in a white dress as she touches a broad jungle leaf, in a vi
 """
         return full_string.strip()
 
-    def execute(self, user_text, model, **kwargs):
+    def execute(self, instruction, subject, model, **kwargs):
         try:
+            # Combine instruction and subject to form the user_text
+            user_text = instruction
+            if subject and subject.strip():
+                user_text = f"SUBJECT:\n{subject}\n\nINSTRUCTION:\n{instruction}"
+            
             images_with_weights = self._collect_images_with_weights(**kwargs)
 
             audio_file = kwargs.get("audio_file", "<none>")
@@ -1727,6 +1809,106 @@ Close up of a woman in a white dress as she touches a broad jungle leaf, in a vi
                 spectrogram_preview = utils.pil2tensor(spectrogram_preview_pil)
 
             use_vrg_prompt_builder = kwargs.get("use_vrg_prompt_builder", False)
+
+            # --- NEW: Automated VRGDG Variable Filling ---
+            auto_vrg_vars = {
+                "auto_character": "", "auto_theme": "", "auto_environment": "",
+                "auto_lighting": "", "auto_interaction": "", "auto_expression": "",
+                "auto_shots": "", "auto_outfit": "", "auto_visibility": ""
+            }
+            automate_vrg_variables = kwargs.get("automate_vrg_variables", False)
+
+            # Keep a local copy of vrg_kwargs to modify
+            vrg_kwargs = {k: v for k, v in kwargs.items() if k in ['character_description', 'song_theme_style', 'word_count_min', 'word_count_max', 'list_handling_mode', 'environment', 'lighting', 'camera_motion', 'physical_interaction', 'facial_expression', 'shots', 'outfit_rules', 'character_visibility']}
+
+            if use_vrg_prompt_builder and automate_vrg_variables and final_lyrics_text:
+                print("\033[94m[PromptCrafter] Automating VRGDG variables from lyrics and/or images...\033[0m")
+
+                # Get image descriptions if available
+                image_context, _ = self._describe_images(images_with_weights, run_config)
+                if "No reference images" in image_context:
+                    image_context = "" # Clear if no images are actually present
+
+                image_context_section = ""
+                if image_context:
+                    image_context_section = f'''
+                    REFERENCE IMAGE DESCRIPTIONS:
+                    ---
+                    {image_context}
+                    ---
+                    '''
+
+                analysis_prompt = textwrap.dedent(f'''
+                    You are a world-class music video creative director. Analyze the following song lyrics and optional reference image descriptions to generate a creative concept for a music video.
+
+                    {image_context_section}
+
+                    LYRICS:
+                    ---
+                    {final_lyrics_text}
+                    ---
+
+                    Based on the lyrics AND any reference images provided, provide a detailed concept by filling out the following fields in a JSON object.
+                    If reference images are provided, the "character_description" and "outfit_rules" MUST be based on them.
+
+                    - "character_description": (string) A brief, evocative description of the main character.
+                    - "song_theme_style": (string) A comma-separated list of 8-10 keywords describing the overall theme, style, and mood.
+                    - "environment": (string) A comma-separated list of 8 distinct, evocative environments or settings that fit the song's narrative.
+                    - "lighting": (string) A comma-separated list of 8 specific lighting styles that match the environments and mood.
+                    - "physical_interaction": (string) A comma-separated list of 8 physical actions the character might perform.
+                    - "facial_expression": (string) A general description of the character's emotional state or facial expressions.
+                    - "shots": (string) A comma-separated list of 8 standard camera shots (e.g., "Close up, medium, wide angle, over the shoulder").
+                    - "outfit_rules": (string) A description of the character's primary outfit.
+                    - "character_visibility": (string) A comma-separated list of 8 ways the character might be framed or obscured.
+
+                    Return ONLY the raw JSON object and nothing else.
+                ''')
+
+                ok, result_json = api_clients._reason_with_model(
+                    run_config.model,
+                    analysis_prompt,
+                    use_chat_api=run_config.use_chat_api,
+                    temperature=0.4, # Slightly more creative for this task
+                    seed=run_config.seed,
+                    debug_mode=run_config.debug_mode,
+                    debug_title="VRGDG Variable Automation",
+                    timeout=run_config.timeout
+                )
+
+                if ok and isinstance(result_json, dict):
+                    print("\u001b[92m[PromptCrafter] Successfully generated automated VRGDG variables.\u001b[0m")
+                    
+                    # Update the kwargs with the new values, then populate the output variables
+                    auto_vrg_vars["auto_character"] = result_json.get("character_description", "").strip()
+                    if auto_vrg_vars["auto_character"]: vrg_kwargs["character_description"] = auto_vrg_vars["auto_character"]
+
+                    auto_vrg_vars["auto_theme"] = result_json.get("song_theme_style", "").strip()
+                    if auto_vrg_vars["auto_theme"]: vrg_kwargs["song_theme_style"] = auto_vrg_vars["auto_theme"]
+
+                    auto_vrg_vars["auto_environment"] = result_json.get("environment", "").strip()
+                    if auto_vrg_vars["auto_environment"]: vrg_kwargs["environment"] = auto_vrg_vars["auto_environment"]
+                    
+                    auto_vrg_vars["auto_lighting"] = result_json.get("lighting", "").strip()
+                    if auto_vrg_vars["auto_lighting"]: vrg_kwargs["lighting"] = auto_vrg_vars["auto_lighting"]
+
+                    auto_vrg_vars["auto_interaction"] = result_json.get("physical_interaction", "").strip()
+                    if auto_vrg_vars["auto_interaction"]: vrg_kwargs["physical_interaction"] = auto_vrg_vars["auto_interaction"]
+
+                    auto_vrg_vars["auto_expression"] = result_json.get("facial_expression", "").strip()
+                    if auto_vrg_vars["auto_expression"]: vrg_kwargs["facial_expression"] = auto_vrg_vars["auto_expression"]
+
+                    auto_vrg_vars["auto_shots"] = result_json.get("shots", "").strip()
+                    if auto_vrg_vars["auto_shots"]: vrg_kwargs["shots"] = auto_vrg_vars["auto_shots"]
+
+                    auto_vrg_vars["auto_outfit"] = result_json.get("outfit_rules", "").strip()
+                    if auto_vrg_vars["auto_outfit"]: vrg_kwargs["outfit_rules"] = auto_vrg_vars["auto_outfit"]
+                    
+                    auto_vrg_vars["auto_visibility"] = result_json.get("character_visibility", "").strip()
+                    if auto_vrg_vars["auto_visibility"]: vrg_kwargs["character_visibility"] = auto_vrg_vars["auto_visibility"]
+
+                else:
+                    print(f"\u001b[93m[PromptCrafter] Warning: Failed to generate automated VRGDG variables. Using manual inputs. Error: {result_json}\u001b[0m")
+            # --- END: Automated VRGDG Variable Filling ---
 
             if use_vrg_prompt_builder:
                 print("\033[94m[PromptCrafter] VRGDG Music Video Prompt Builder enabled. Constructing detailed instructions...\033[0m")
@@ -1796,7 +1978,7 @@ Close up of a woman in a white dress as she touches a broad jungle leaf, in a vi
                 "max_scene_duration_seconds": kwargs.get("max_scene_duration_seconds", 5.0)
             }
 
-            return (prompt, schedule, image_context, negative_prompt, final_lyrics_text, final_srt_string, model, str(run_config.seed), audio_meta, spectrogram_preview) + tuple(passthrough_images) + (kwargs.get('signal'),)
+            return (prompt, schedule, image_context, negative_prompt, final_lyrics_text, final_srt_string, model, str(run_config.seed), audio_meta, spectrogram_preview) + tuple(passthrough_images) + (kwargs.get('signal'),) + (auto_vrg_vars["auto_character"], auto_vrg_vars["auto_theme"], auto_vrg_vars["auto_environment"], auto_vrg_vars["auto_lighting"], auto_vrg_vars["auto_interaction"], auto_vrg_vars["auto_expression"], auto_vrg_vars["auto_shots"], auto_vrg_vars["auto_outfit"], auto_vrg_vars["auto_visibility"])
 
         except Exception as e:
             return self._handle_creator_exception(e)
@@ -1995,13 +2177,17 @@ LYRICS (for emotional context):
             if not lyrics or not lyrics.strip(): return "No lyrics provided.", "", "No reference images provided.", ""
             
             audio_path = utils._get_audio_path(kwargs.get("audio_folder_path"), kwargs.get("audio_file", "<none>"))
-            mood_keywords = self._analyze_audio_mood(audio_path, lyrics, config)
             
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_mood = executor.submit(self._analyze_audio_mood, audio_path, lyrics, config)
+                future_context = executor.submit(self._prepare_lyrics_generation_context, user_instructions, images_with_weights, lyrics, config)
+
+                mood_keywords = future_mood.result()
+                image_context, mandatory_tokens, style_inspiration_section, instructions_section, context_section = future_context.result()
+
             if lyrics.startswith("[Error"):
                 return f"Failed to process lyrics input: {lyrics}", "", "No reference images provided.", ""
 
-            image_context, mandatory_tokens, style_inspiration_section, instructions_section, context_section = self._prepare_lyrics_generation_context(user_instructions, images_with_weights, lyrics, config)
-            
             theme_ok, global_theme_or_err = self._generate_storyboard_global_theme(lyrics, instructions_section, context_section, image_context, config, mood_keywords=mood_keywords)
             if not theme_ok: return global_theme_or_err, "", image_context, ""
 
@@ -2346,11 +2532,10 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
         return processed_prompts, segments
 
     def _create_prompt_for_scene(self, scene_name, scene_text, global_theme, storyboard_rules_text, mandatory_tokens, run_config):
-        """Generates a final prompt for a lyric scene in two steps: Concept and Refinement."""
+        """Generates a final prompt for a lyric scene in a single, optimized step."""
         
-        # --- STEP 1: Conceptualize the Shot ---
-        concept_prompt = textwrap.dedent(f"""
-            You are a creative music video director. Your goal is to invent a single, clear visual concept for a short 5-second video clip that represents the lyrics provided.
+        merged_prompt = textwrap.dedent(f"""
+            You are an expert prompt engineer for advanced video generation models (e.g., Sora, VEO, Wan2.2). Your task is to create a rich, detailed, and cinematic final prompt for a short 5-second video clip that represents the lyrics provided.
 
             --- GLOBAL THEME (for visual consistency) ---
             {global_theme}
@@ -2359,53 +2544,28 @@ Return ONLY the Global Theme description in a single, concise paragraph."""
             {scene_text}
             ---
             
-            TASK: Describe a single, compelling camera shot. Focus on ONE core action or visual moment.
-            - What is the subject doing?
-            - What is the key visual element?
-            - Keep the concept description to a single, simple sentence (under 20 words).
-
-            Return ONLY the shot concept sentence. Do not add any labels or titles.
-        """ ).strip()
-
-        concept_ok, shot_concept = api_clients.query_model_auto(
-            run_config.model, concept_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature,
-            seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title=f"Concept for '{scene_name}'"
-        )
-
-        if not concept_ok:
-            error_msg = f"Failed to generate concept for '{scene_name}': {shot_concept}"
-            print(f"\033[93m[PromptCrafter] Warning: {error_msg}\033[0m")
-            return f"[Error: {error_msg}]"
-
-        # --- STEP 2: Refine the Concept into a Final Prompt ---
-        refine_prompt = textwrap.dedent(f"""
-            You are an expert prompt engineer for advanced video generation models (e.g., Sora, VEO, Wan2.2). Your task is to expand the SHOT CONCEPT into a rich, detailed, and cinematic final prompt.
-
-            --- SHOT CONCEPT ---
-            {shot_concept}
-            ---
-            
             --- STYLE & COMPOSITION RULES ---
             {storyboard_rules_text}
             ---
             
             TASK:
-            1.  **Elevate the Concept**: Transform the simple SHOT CONCEPT into a powerful, descriptive, and cinematic prompt.
-            2.  **Add Cinematic Detail**: Incorporate dynamic camera work (e.g., 'cinematic dolly zoom', 'dramatic slow-motion tracking shot', 'low-angle shot', 'epic aerial shot').
-            3.  **Specify Lighting & Atmosphere**: Describe the lighting and atmosphere with evocative terms (e.g., 'volumetric god rays piercing through dark clouds', 'eerie twilight casting long shadows', 'flickering firelight illuminating the warrior\'s face').
-            4.  **Integrate Rules**: Naturally weave in the style and composition rules.
-            5.  **Emphasize Motion**: Ensure the prompt has a clear subject performing a core ACTION with realistic, physics-based MOTION.
+            1.  **Invent a Concept**: First, invent a single, clear visual concept for the clip based on the LYRIC SCENE. Focus on ONE core action or visual moment.
+            2.  **Elevate the Concept**: Transform your concept into a powerful, descriptive, and cinematic prompt.
+            3.  **Add Cinematic Detail**: Incorporate dynamic camera work (e.g., 'cinematic dolly zoom', 'dramatic slow-motion tracking shot', 'low-angle shot', 'epic aerial shot').
+            4.  **Specify Lighting & Atmosphere**: Describe the lighting and atmosphere with evocative terms (e.g., 'volumetric god rays piercing through dark clouds', 'eerie twilight casting long shadows', 'flickering firelight illuminating the warrior\'s face').
+            5.  **Integrate Rules**: Naturally weave in the style and composition rules.
+            6.  **Emphasize Motion**: Ensure the prompt has a clear subject performing a core ACTION with realistic, physics-based MOTION.
 
             Return ONLY the final, polished, and cinematic prompt. Do not include any titles, labels, or markdown like "**Final Prompt:**".
-        """ ).strip()
+        """).strip()
 
         final_ok, final_prompt = api_clients.query_model_auto(
-            run_config.model, refine_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature,
-            seed=run_config.seed, timeout=90, debug_mode=run_config.debug_mode, debug_title=f"Refine Prompt for '{scene_name}'"
+            run_config.model, merged_prompt, prefer_chat=run_config.use_chat_api, temperature=run_config.temperature,
+            seed=run_config.seed, timeout=120, debug_mode=run_config.debug_mode, debug_title=f"Create Prompt for '{scene_name}'"
         )
         
         if not final_ok:
-            error_msg = f"Failed to refine prompt for '{scene_name}': {final_prompt}"
+            error_msg = f"Failed to generate prompt for '{scene_name}': {final_prompt}"
             print(f"\033[93m[PromptCrafter] Warning: {error_msg}\033[0m")
             return f"[Error: {error_msg}]"
 
