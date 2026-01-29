@@ -5,7 +5,7 @@ import textwrap
 
 # Local module imports
 # Import 'cache' here to resolve the circular dependency and allow direct initialization.
-from . import cache
+from . import pgfx_cache as cache
 
 # --- Constants ---
 DEFAULT_PROMPT_TEXT = "Describe your idea here. You can use multiple paragraphs to define scenes for a schedule."
@@ -20,16 +20,28 @@ DEFAULT_CAPTION_PROMPT = textwrap.dedent("""
     - Example: a photo of a black cat, sitting on a red couch, in a dimly lit room, high quality.
 """).strip()
 
+MAX_RETRIES = 3
+RETRY_BACKOFF_FACTOR = 1.5
+DEFAULT_MAX_TOKENS = 4096
+
 
 # --- Path and Global State Configuration ---
 # This assumes the custom_nodes folder is directly under ComfyUI
 COMFYUI_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+LLM_MODEL_DIR = os.path.join(COMFYUI_ROOT_DIR, "models", "LLM")
+QWEN_MODEL_DIR = os.path.join(COMFYUI_ROOT_DIR, "models", "Qwen")
 # Initialize the disk cache directly here to prevent race conditions.
 cache_dir = os.path.join(COMFYUI_ROOT_DIR, "temp", "comfyui-promptcrafter_cache")
 CACHE = cache.DiskCache(cache_dir=cache_dir, max_size_gb=2.0)
 SHARED_SESSION = None
 
+# --- Model Caching ---
+PRELOAD_MODELS = [] # List of model_ids (e.g., "gguf/llama-3-8b-instruct.Q4_K_M.gguf") to load at startup
+MAX_CACHED_MODELS = 2 # Maximum number of GGUF models to keep in VRAM/RAM cache
+
 # --- Dependency Flags (set at runtime in __init__.py) ---
+LLAMA_CPP_AVAILABLE = False
+QWEN_VL_AVAILABLE = False
 LANGDETECT_AVAILABLE = False
 PYPDF_AVAILABLE = False
 DUCKDUCKGO_SEARCH_AVAILABLE = False
@@ -40,15 +52,18 @@ PIEXIF_AVAILABLE = False
 # --- API Configuration ---
 LOCAL_SERVER_CONFIG = {
     "ollama": {
-        "base_url": os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+                "base_url": os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+        "timeout": int(os.getenv("OLLAMA_TIMEOUT", "120")),
         "enabled": True,
     },
     "lmstudio": {
-        "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234"),
+                "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234"),
+        "timeout": int(os.getenv("LMSTUDIO_TIMEOUT", "120")),
         "enabled": False, # Users can enable this if they use LM Studio
     },
     "text-generation-webui": {
-        "base_url": os.getenv("OOBABOOGA_BASE_URL", "http://127.0.0.1:5000"),
+                "base_url": os.getenv("OOBABOOGA_BASE_URL", "http://127.0.0.1:5000"),
+        "timeout": int(os.getenv("OOBABOOGA_TIMEOUT", "120")),
         "enabled": False, # Users can enable this if they use text-generation-webui
     }
 }
@@ -95,6 +110,8 @@ class PromptCrafterRunConfig:
     deep_think_confidence: float = 0.8
     negative_concepts: str = ""
     style_profile: dict = field(default_factory=dict)
+    thinking_model: str = ""
+    instruct_model: str = ""
 
     # Lyrics-specific params
     interpolate_keyframes: bool = False
@@ -102,6 +119,10 @@ class PromptCrafterRunConfig:
     fps: float = 16.0
     song_length_seconds: float = 0.0
     use_audio_alignment: bool = True
+
+    # Brain/Lobe controls
+    artistry: float = 0.5
+    creativity: float = 0.5
 
     def __post_init__(self):
         # Ensure numeric types are correct
@@ -114,3 +135,5 @@ class PromptCrafterRunConfig:
         # Ensure lyrics-specific numeric types are correct
         self.fps = float(self.fps)
         self.song_length_seconds = float(self.song_length_seconds)
+        self.artistry = float(self.artistry)
+        self.creativity = float(self.creativity)

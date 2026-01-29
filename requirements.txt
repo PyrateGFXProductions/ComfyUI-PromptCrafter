@@ -1,6 +1,7 @@
 requests
 langdetect
 python-dotenv
+llama-cpp-python
 # Optional but recommended for full functionality
 duckduckgo-search
 pypdf
@@ -8,3 +9,9 @@ librosa
 matplotlib
 faster-whisper
 insanely-fast-whisper
+Pillow
+whisperx
+whisper-ctranslate2
+g2p_en
+speechbrain
+torchaudio

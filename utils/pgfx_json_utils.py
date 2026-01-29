@@ -22,30 +22,50 @@ class JSONParsingError(ValueError):
 
 def _find_json_candidate(text: str) -> str | None:
     """Finds the most likely JSON string candidate from raw text returned by an LLM."""
+    if not text:
+        return None
+        
+    # First, try to find a JSON block within markdown code fences
+    # We look for the FIRST one that looks like JSON
     match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```", text, re.DOTALL)
     if match:
         return match.group(1)
 
-    last_brace = text.rfind('{')
-    last_bracket = text.rfind('[')
+    # If no markdown block is found, find the first opening brace or bracket
+    first_brace = text.find('{')
+    first_bracket = text.find('[')
 
-    if last_brace == -1 and last_bracket == -1:
+    # Determine the starting position of the JSON
+    start_pos = -1
+    if first_brace != -1 and first_bracket != -1:
+        start_pos = min(first_brace, first_bracket)
+    elif first_brace != -1:
+        start_pos = first_brace
+    elif first_bracket != -1:
+        start_pos = first_bracket
+    
+    if start_pos == -1:
         return None
 
-    start_pos = max(last_brace, last_bracket)
     start_char = text[start_pos]
     end_char = '}' if start_char == '{' else ']'
 
-    balance, in_string = 1, False
+    balance, in_string, is_escaped = 1, False, False
     for i in range(start_pos + 1, len(text)):
         char = text[i]
-        if char == '"' and (i == 0 or text[i-1] != '\\'):
+        
+        if char == '"' and not is_escaped:
             in_string = not in_string
+        
         if not in_string:
             if char == start_char: balance += 1
             elif char == end_char: balance -= 1
+        
         if balance == 0:
             return text[start_pos : i + 1]
+            
+        is_escaped = (char == "\\" and not is_escaped)
+        
     return None
 
 def _escape_newlines_in_strings(text: str):
@@ -65,28 +85,56 @@ def _escape_newlines_in_strings(text: str):
 
 def _clean_json_string(json_str: str) -> str:
     """Cleans a JSON string candidate to fix common, non-standard syntax produced by LLMs."""
-    cleaned_str = re.sub(r'</?ref>', '', json_str)
-    cleaned_str = re.sub(r"^\s*//.*$", "", json_str, flags=re.MULTILINE)
+    # Remove markdown code fences if they somehow got in
+    cleaned_str = re.sub(r"```(?:json)?", "", json_str)
+    cleaned_str = re.sub(r"```", "", cleaned_str)
+    
+    # Remove common LLM-specific garbage
+    cleaned_str = re.sub(r'</?ref>', '', cleaned_str)
+    cleaned_str = re.sub(r"^\s*//.*$", "", cleaned_str, flags=re.MULTILINE)
     cleaned_str = re.sub(r'/\*[\s\S]*?\*/', '', cleaned_str)
-    cleaned_str = re.sub(r"([{,]\\s*)([a-zA-Z0-9_.-]+)(\\s*:)", r'\1"\2"\3', cleaned_str)
+    
+    # Handle unquoted keys (e.g., {key: "value"} -> {"key": "value"})
+    cleaned_str = re.sub(r"([{,]\s*)([a-zA-Z0-9_.-]+)(\s*:)", r'\1"\2"\3', cleaned_str)
+    
+    # Handle single-quoted keys and values
+    cleaned_str = re.sub(r"([{\,]\s*)'([^']*)'(\s*:)", r'\1"\2"\3', cleaned_str)
     cleaned_str = re.sub(r'(:\s*)\'([^\']*)\'', r'\1"\2"', cleaned_str)
+    
+    # Remove trailing commas in objects and arrays
     cleaned_str = re.sub(r",\s*([}\]])", r"\1", cleaned_str)
+    
+    # Standardize booleans and nulls
     cleaned_str = re.sub(r'\bTrue\b', 'true', cleaned_str, flags=re.IGNORECASE)
     cleaned_str = re.sub(r'\bFalse\b', 'false', cleaned_str, flags=re.IGNORECASE)
     cleaned_str = re.sub(r'\bNone\b', 'null', cleaned_str, flags=re.IGNORECASE)
+    
     return "".join(_escape_newlines_in_strings(cleaned_str)).strip()
 
-def _extract_and_parse_json(text: str):
-    """Extracts and parses a JSON object from a string that may contain other text."""
-    if not text or not text.strip(): raise JSONParsingError("Input text is empty or contains only whitespace.")
+def extract_and_parse_json(text: str):
+    """
+    Extracts and parses a JSON object from a string that may contain other text.
+    Handles common LLM formatting errors and provides Pythonic literal fallback.
+    """
+    if not text or not text.strip(): 
+        return None
+        
     json_str_candidate = _find_json_candidate(text)
-    text_to_parse, source_label = (json_str_candidate, "extracted JSON candidate") if json_str_candidate else (text, "full text response")
-    cleaned_json_str = _clean_json_string(text_to_parse)
+    if not json_str_candidate:
+        return None
+        
+    cleaned_json_str = _clean_json_string(json_str_candidate)
+    
     try:
         return json.loads(cleaned_json_str)
-    except json.JSONDecodeError as json_err:
+    except json.JSONDecodeError:
+        # Fallback to Python literal evaluation if JSON fails
         try:
-            pythonic_str = cleaned_json_str.replace('true', 'True').replace('false', 'False').replace('null', 'None')
+            pythonic_str = (cleaned_json_str
+                .replace('true', 'True')
+                .replace('false', 'False')
+                .replace('null', 'None'))
             return ast.literal_eval(pythonic_str)
-        except (ValueError, SyntaxError, MemoryError, TypeError, RecursionError) as ast_err:
-            raise JSONParsingError(f"Failed to parse {source_label} as JSON or Python literal.", text=cleaned_json_str, original_exception=ast_err) from ast_err
+        except Exception:
+            # If everything fails, return None or raise specific error
+            return None

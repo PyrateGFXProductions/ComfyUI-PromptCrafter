@@ -4,9 +4,9 @@ import json
 import textwrap
 
 # Local module imports
-from . import config
-from . import utils
-from . import api_clients
+from .. import pgfx_config as config
+from ...utils import pgfx_utils as utils
+from .. import pgfx_api_clients as api_clients
 
 # --- Global Style Data Structures ---
 STYLE_PROFILES = []
@@ -16,7 +16,7 @@ STYLE_KEYWORDS = {}
 def _load_style_profiles():
     """Loads style profiles from the JSON file."""
     global STYLE_PROFILES, NAMED_STYLE_PROFILES, STYLE_KEYWORDS
-    style_file_path = os.path.join(os.path.dirname(__file__), '..', 'style_profiles.json')
+    style_file_path = os.path.join(os.path.dirname(__file__), '..', '..', 'style_profiles.json')
     try:
         with open(style_file_path, 'r', encoding='utf-8') as f:
             STYLE_PROFILES = json.load(f)

@@ -58,7 +58,6 @@ class DiskCache:
             self._enforce_size_limit()
         except (pickle.PicklingError, TypeError) as e:
             print(f"\033[91m[PromptCrafter Cache] Error: Could not serialize value for key '{key}'. Error: {e}\033[0m")
-            print(f"\033[91m[PromptCrafter Cache] Error: Could not serialize value for key '{key}'. Error: {e}\033[0m")
 
     def clear(self) -> int:
         """Removes all items from the cache directory."""

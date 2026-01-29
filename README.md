@@ -10,10 +10,13 @@
 
 - **🎬 Advanced Prompt Engineering**: A unified **Visual Creator** node with a dynamic **Style Engine**, "Deep Think" self-critique, and anti-hallucination checks for polished, cinematic prompts for both images and videos.
 - **🎵 Lyrics-to-Video Storyboarding**: Convert song lyrics or SRT files into a series of consistent, thematically-linked video prompts. Features **Audio Mood Analysis**, multiple transcription engines, and AI-powered scene grouping.
+- **🗣️ Advanced Viseme & Animation**:
+    - **Studio Animator**: A comprehensive animation node for creating lip-synced videos with dynamic camera moves and lighting.
+    - **Script-Guided Visemes**: A standalone utility for generating precise 2D viseme animations from audio, supporting multiple drawing styles and coarticulation profiles.
 - **✍️ Image & Video Storyboarding**: Generate a sequence of prompts from a multi-paragraph story for image series or multi-shot video scenes.
 - **🗂️ Intelligent File Organization**: Caption, rename, and organize your image library with customizable rules based on `filename`, `caption text`, `metadata`, `resolution`, and `AI content analysis`.
 - **💬 Conversational Q&A**: Have a continuous conversation with the AI using text files, PDFs, or web search results as context.
-- **🛠️ Modular Utilities**: Includes a flexible **Text Formatter** for building reusable prompt structures and a powerful **Save Text File** node with dynamic, template-based naming.
+- **🛠️ Modular Utilities**: Includes a flexible **Text Formatter**, **Save Text File** node, and various shared utilities for streamlined workflows.
 
 ---
 
@@ -97,6 +100,18 @@ This section provides a detailed overview of each node's capabilities and option
 * **`image`**: Connect an image and ask a question about it (requires a vision model).
 * **`auto_select_model`**: Automatically switches to a vision model if an image is connected, or a text model if not.
 * **`history_in` / `clear_history`**: Use these to manage conversational memory between runs.
+
+</details>
+
+<details>
+<summary><code>PGFX_ScriptGuidedVisemes</code></summary>
+
+**Purpose:** A specialized node for generating precise, audio-driven lip-sync animations (visemes). It analyzes audio phonemes and generates a sequence of face landmarks or drawn shapes.
+**How to Use:** Connect `audio_meta` (from a loaded audio source) and configure your output visual style.
+* **`coarticulation_profile`**: Selects a specific blending profile (e.g., "Singing", "Speech") to control how mouth shapes transition.
+* **`draw_style`**: Choose between "Dots", "Outline", or "Filled Outline" for the visual representation.
+* **`emotion_intensity`**: Controls how expressive the mouth shapes are.
+* **`face_template`**: Optional image input to guide the placement of the visemes.
 
 </details>
 
