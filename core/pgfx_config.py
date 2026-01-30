@@ -30,6 +30,9 @@ DEFAULT_MAX_TOKENS = 4096
 COMFYUI_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 LLM_MODEL_DIR = os.path.join(COMFYUI_ROOT_DIR, "models", "LLM")
 QWEN_MODEL_DIR = os.path.join(COMFYUI_ROOT_DIR, "models", "Qwen")
+# List of directories to scan for HuggingFace models
+HF_MODEL_DIRS = [LLM_MODEL_DIR, QWEN_MODEL_DIR]
+
 # Initialize the disk cache directly here to prevent race conditions.
 cache_dir = os.path.join(COMFYUI_ROOT_DIR, "temp", "comfyui-promptcrafter_cache")
 CACHE = cache.DiskCache(cache_dir=cache_dir, max_size_gb=2.0)

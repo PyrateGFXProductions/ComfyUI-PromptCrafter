@@ -66,7 +66,6 @@ try:
     from transformers import (
         AutoProcessor,
         AutoModelForCausalLM,
-        AutoModelForConditionalGeneration,
         AutoConfig,
         BitsAndBytesConfig,
     )
@@ -92,7 +91,6 @@ except ImportError as e:
         @classmethod
         def from_pretrained(cls, *args, **kwargs): return DummyProcessor()
     class AutoModelForCausalLM(DummyModel): pass
-    class AutoModelForConditionalGeneration(DummyModel): pass
     class AutoConfig:
         @classmethod
         def from_pretrained(cls, *args, **kwargs): return {"architectures": ["DummyModel"]}
@@ -291,6 +289,9 @@ class GGUFClient:
                 chat_kwargs = {"messages": messages, "max_tokens": int(max_tokens)}
                 if temperature is not None: chat_kwargs["temperature"] = temperature
                 if seed is not None and int(seed) >= 0: chat_kwargs["seed"] = int(seed)
+                
+                # Add stop tokens to prevent infinite generation or "hanging"
+                chat_kwargs["stop"] = ["<|end_of_text|>", "<|im_end|>", "<|endoftext|>", "User:", "###"]
 
                 output = llm.create_chat_completion(**chat_kwargs)
                 content = output['choices'][0]['message']['content'].strip()
@@ -835,7 +836,7 @@ def get_local_llm_gguf_files():
         # Recursively scan for .gguf files
         for root, _, files in os.walk(llm_dir):
             for file in files:
-                if file.lower().endswith('.gguf'):
+                if file.lower().endswith('.gguf') and "mmproj" not in file.lower():
                     local_models.append(os.path.relpath(os.path.join(root, file), llm_dir).replace('\\', '/'))
         
         if not local_models:

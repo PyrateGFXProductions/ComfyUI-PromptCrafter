@@ -267,7 +267,7 @@ def _get_unique_filepath(directory, base_name, extension):
 
 # Make the JSON parsing functions available through the 'utils' module for other files that use them.
 JSONParsingError = json_utils.JSONParsingError
-_extract_and_parse_json = json_utils._extract_and_parse_json
+_extract_and_parse_json = json_utils.extract_and_parse_json
 
 class TextCleaner:
     """A utility class for various text cleaning and formatting operations."""

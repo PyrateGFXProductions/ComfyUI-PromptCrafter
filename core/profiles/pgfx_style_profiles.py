@@ -180,3 +180,5 @@ class StyleEngine:
             inspiration = self._style_profile.get("inspiration", "")
             return [f"- {inspiration}"] if inspiration else []
         return []
+# Load profiles on module import
+_load_style_profiles()

@@ -23,18 +23,18 @@ import librosa
 import comfy.utils
 
 # Local module imports
-from . import api_clients
-from . import config
-from . import style_profiles
-from . import utils
-from . import organization_profiles
-from . import PromptCrafter_AudioSplitter_v2 as pgfx_splitter_v2
-from . import PromptCrafter_SRTCreator as pgfx_srt_creator
-from . import captioner_profiles
-from . import captioner_profiles as captioner
-from . import thinking_process
-from . import json_utils
-from . import PromptCrafter_TalentDirector
+# Local module imports
+from . import pgfx_api_clients as api_clients
+from . import pgfx_config as config
+from . import pgfx_thinking_engine as thinking_process
+from .profiles import pgfx_style_profiles as style_profiles
+from .profiles import pgfx_organization_profiles as organization_profiles
+from .profiles import pgfx_captioner_profiles as captioner_profiles
+from .profiles import pgfx_captioner_profiles as captioner
+
+from ..utils import pgfx_utils as utils
+from ..utils import pgfx_json_utils as json_utils
+from ..nodes import pgfx_deprecated_talent_director as PromptCrafter_TalentDirector
 
 class PromptCrafter_BaseCreator:
     # noqa

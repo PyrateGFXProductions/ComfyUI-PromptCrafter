@@ -11,6 +11,10 @@ import folder_paths
 
 
 # Attempt to import dependent nodes
+nodes_sampler = None
+nodes_controlnet = None
+viseme_utils = None
+
 try:
     from g2p_en import G2p
     from PIL import Image, ImageDraw
@@ -1588,6 +1592,13 @@ class PGFX_Studio_ScriptSupervisor:
 class PGFX_Studio_Animator:
     @classmethod
     def INPUT_TYPES(cls):
+        # Helper to get coarticulation keys safely
+
+        # Helper to get coarticulation keys safely
+        coarticulation_keys = ["Singing"]
+        if viseme_utils and hasattr(viseme_utils, 'COARTICULATION_PROFILES'):
+            coarticulation_keys = list(viseme_utils.COARTICULATION_PROFILES.keys())
+
         return {
             "required": {
                 "AUDIO_META": ("DICT",),
@@ -1600,7 +1611,7 @@ class PGFX_Studio_Animator:
                 "line_thickness": ("INT", {"default": 2, "min": 1, "max": 20}),
             },
             "optional": {
-                "coarticulation_profile": (list(viseme_utils.COARTICULATION_PROFILES.keys()), {"default": "Singing"}),
+                "coarticulation_profile": (coarticulation_keys, {"default": "Singing"}),
                 "emotion_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1}),
                 "draw_style": (["Dots", "Outline", "Filled Outline"], {"default": "Filled Outline"}),
                 "dot_color": ("STRING", {"default": "white"}),
@@ -1884,10 +1895,16 @@ NODE_CLASS_MAPPINGS = {
     "PGFX_Studio_Stylist": PGFX_Studio_Stylist,
     "PGFX_Studio_Animator": PGFX_Studio_Animator,
     "PGFX_Studio_ScriptSupervisor": PGFX_Studio_ScriptSupervisor,
-    "PGFX_Studio_Sampler": nodes_sampler.PGFX_Studio_Sampler,
-    "PGFX_Studio_ControlNet": nodes_controlnet.PGFX_Studio_ControlNet,
-
+    "PGFX_Studio_Stylist": PGFX_Studio_Stylist,
+    "PGFX_Studio_Animator": PGFX_Studio_Animator,
+    "PGFX_Studio_ScriptSupervisor": PGFX_Studio_ScriptSupervisor,
 }
+
+if nodes_sampler:
+    NODE_CLASS_MAPPINGS["PGFX_Studio_Sampler"] = nodes_sampler.PGFX_Studio_Sampler
+
+if nodes_controlnet:
+    NODE_CLASS_MAPPINGS["PGFX_Studio_ControlNet"] = nodes_controlnet.PGFX_Studio_ControlNet
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_Studio_Producer": "🎬 Studio Producer (Config)",

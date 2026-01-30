@@ -49,7 +49,7 @@ for module in NODE_MODULES:
 
 # Expose web directory if any module has it
 # For now, ComfyGuard is the main one with web assets
-WEB_DIRECTORY = "./ComfyGuard/web"
+WEB_DIRECTORY = "./js"
 
 print(f"\033[92m[PGFX] Loaded {len(NODE_CLASS_MAPPINGS)} nodes successfully.\033[0m")
 print("\033[95m[PGFX] PromptCrafter Project: Refactored & Ready.\033[0m")

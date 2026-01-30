@@ -130,10 +130,9 @@ app.registerExtension({
                 }
                 const jsonWidget = node.widgets.find(w => w.name === "image_weights_json");
                 if (jsonWidget) {
+                    jsonWidget.value = JSON.stringify(weights);
                 }
             };
-
-            // In your updateNodeImageInputs function, fix the output management:
 
             const updateNodeImageInputs = function(targetCount) {
                 if (targetCount === undefined) return;
@@ -142,13 +141,17 @@ app.registerExtension({
                 const weightPrefix = "image_weight_";
                 const outputPrefix = "reference_image_";
 
+                // Count existing image inputs (excluding other inputs)
                 const currentInputs = this.inputs?.filter(input => /^image_\d+$/.test(input.name)) || [];
                 let currentInputCount = currentInputs.length;
 
                 // Handle inputs
                 if (targetCount < currentInputCount) {
                     for (let i = currentInputCount; i > targetCount; i--) {
-                        this.removeInput(this.findInputSlot(`${inputPrefix}${i}`));
+                        const slotToRemove = this.findInputSlot(`${inputPrefix}${i}`);
+                        if (slotToRemove !== -1) {
+                            this.removeInput(slotToRemove);
+                        }
                     }
                 } else if (targetCount > currentInputCount) {
                     for (let i = currentInputCount; i < targetCount; i++) {
@@ -156,18 +159,23 @@ app.registerExtension({
                     }
                 }
 
-                // Handle widgets
+                // Handle widgets (Weights)
+                // Filter specifically for our dynamic weights to avoid confusion
                 const currentWidgets = this.widgets.filter(w => w.name?.startsWith(weightPrefix));
                 let currentWidgetCount = currentWidgets.length;
 
                 if (targetCount < currentWidgetCount) {
+                    // Remove excess widgets
                     for (let i = currentWidgetCount; i > targetCount; i--) {
-                        const widgetToRemove = this.widgets.find(w => w.name === `${weightPrefix}${i}`);
-                        if (widgetToRemove) {
-                            this.widgets.splice(this.widgets.indexOf(widgetToRemove), 1);
+                        const widgetName = `${weightPrefix}${i}`;
+                        const widgetIndex = this.widgets.findIndex(w => w.name === widgetName);
+                        if (widgetIndex !== -1) {
+                             // Properly remove widget from the array and clean up linked DOM elements if any
+                            this.widgets.splice(widgetIndex, 1);
                         }
                     }
                 } else if (targetCount > currentWidgetCount) {
+                    // Add new widgets
                     for (let i = currentWidgetCount; i < targetCount; i++) {
                         this.addWidget("number", `${weightPrefix}${i + 1}`, 1.0, (value) => {
                             updateWeightsJSON(this);
@@ -177,23 +185,30 @@ app.registerExtension({
                 
                 updateWeightsJSON(this);
 
-                // Handle outputs - this is the key fix
-                // We need to manage only the dynamic reference_image outputs
+                // Handle dynamic outputs (reference images)
+                // We calculate base outputs based on the node class logic defined earlier
                 const currentDynamicOutputs = this.outputs.length - numStandardOutputs;
+                // Ensure we don't have negative dynamic outputs (if standard outputs changed)
+                const validDynamicOutputs = Math.max(0, currentDynamicOutputs);
 
-                if (targetCount < currentDynamicOutputs) {
-                    // Remove excess dynamic outputs
-                    for (let i = currentDynamicOutputs; i > targetCount; i--) {
-                        const slotToRemove = this.outputs.findIndex(output => output.name === `${outputPrefix}${i}`);
-                        if (slotToRemove !== -1) {
-                            this.removeOutput(slotToRemove);
-                        }
+
+                if (targetCount < validDynamicOutputs) {
+                    // Remove excess dynamic outputs from the end
+                    for (let i = validDynamicOutputs; i > targetCount; i--) {
+                        // We assume dynamic outputs are appended at the end. 
+                        // To be safe, look for specifically named outputs if possible, 
+                        // otherwise pop from end if confirmed to be dynamic.
+                        // Ideally, we search by name:
+                         const slotToRemove = this.outputs.findIndex(output => output.name === `${outputPrefix}${i}`);
+                         if (slotToRemove !== -1) {
+                             this.removeOutput(slotToRemove);
+                         }
                     }
-                } else if (targetCount > currentDynamicOutputs) {
+                } else if (targetCount > validDynamicOutputs) {
                     // Add missing dynamic outputs
-                    for (let i = currentDynamicOutputs; i < targetCount; i++) {
+                    for (let i = validDynamicOutputs; i < targetCount; i++) {
                         const name = `${outputPrefix}${i + 1}`;
-                        // Make sure we don't add duplicates
+                        // Avoid duplicates
                         if (!this.outputs.find(output => output.name === name)) {
                             this.addOutput(name, "IMAGE");
                         }
@@ -204,52 +219,65 @@ app.registerExtension({
                 this.setDirtyCanvas(true, true);
             };
 
-            // Also, in your onNodeCreated, make sure to initialize properly:
+            // Initialization Logic (Wrapped in function for reuse)
+            const setupDynamicInputs = function(node) {
+                 if (!node.widgets) return;
+
+                 const imageCountWidget = node.widgets.find(w => w.name === "image_count");
+                 if (!imageCountWidget) return;
+
+                 // Idempotency: Check if button already exists
+                 const existingBtn = node.widgets.find(w => w.name === "Update Image Inputs");
+                 if (!existingBtn) {
+                     // Add the update button if missing
+                     node.addWidget("button", "Update Image Inputs", null, () => {
+                         updateNodeImageInputs.call(node, imageCountWidget.value);
+                     });
+                 }
+
+                 // Hide JSON widget if present
+                 const jsonWidget = node.widgets.find(w => w.name === "image_weights_json");
+                 if (jsonWidget && jsonWidget.inputEl) {
+                     jsonWidget.inputEl.style.display = "none";
+                 }
+                 
+                 // Hook into the callback
+                 // We wrap the callback to ensure it triggers our logic
+                 // Remove old callback wrapper if we are re-running to avoid stack overflow? 
+                 // Difficult to detect, so we assume standard Comfy behavior of replacing or chaining.
+                 // We will overwrite and call original if it exists and isn't ours.
+                 
+                 if (!imageCountWidget.pgfx_hooked) {
+                     const originalCallback = imageCountWidget.callback;
+                     imageCountWidget.callback = (value) => {
+                         if (originalCallback) originalCallback(value);
+                         updateNodeImageInputs.call(node, value);
+                     };
+                     imageCountWidget.pgfx_hooked = true;
+                 }
+                 
+                 // Trigger initial update
+                 updateNodeImageInputs.call(node, imageCountWidget.value || 1);
+            };
+
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 onNodeCreated?.apply(this, arguments);
-
-                const imageCountWidget = this.widgets.find(w => w.name === "image_count");
-
-                // Add the update button
-                this.addWidget("button", "Update Image Inputs", null, () => {
-                    if (imageCountWidget) {
-                        updateNodeImageInputs.call(this, imageCountWidget.value);
-                    }
-                });
-
-                // Hide JSON widget
-                const jsonWidget = this.widgets.find(w => w.name === "image_weights_json");
-                if (jsonWidget && jsonWidget.inputEl) {
-                    jsonWidget.inputEl.style.display = "none";
-                }
-                
-                // Set up callback for image_count changes
-                if (imageCountWidget) {
-                    const originalCallback = imageCountWidget.callback;
-                    imageCountWidget.callback = (value) => {
-                        originalCallback?.(value);
-                        updateNodeImageInputs.call(this, value);
-                    };
-                    // Initialize with default value (usually 1)
-                    setTimeout(() => updateNodeImageInputs.call(this, imageCountWidget.value || 1), 10);
-                }
+                // Delay setup to ensure widgets are ready
+                setTimeout(() => {
+                    setupDynamicInputs(this);
+                }, 50);
             };
-
-
 
             const onConfigure = nodeType.prototype.onConfigure;
             nodeType.prototype.onConfigure = function() {
                 onConfigure?.apply(this, arguments);
-                const imageCountWidget = this.widgets?.find(w => w.name === "image_count");
-                if (imageCountWidget) {
-                    setTimeout(() => {
-                        const count = parseInt(imageCountWidget.value, 10);
-                        if (!isNaN(count))
-                            updateNodeImageInputs.call(this, count);
-                    }, 10);
-                }
+                // Delay setup for loaded workflows
+                setTimeout(() => {
+                    setupDynamicInputs(this);
+                }, 50);
             };
+
 
             nodeType.prototype.numStandardOutputs = numStandardOutputs;
         }
