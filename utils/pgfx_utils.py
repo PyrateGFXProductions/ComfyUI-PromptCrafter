@@ -1388,14 +1388,26 @@ def chain_of_thought_process(thinking_prompt, thinking_model, instruct_prompt, i
     if "{reasoning}" in instruct_prompt:
         final_instruct_prompt = instruct_prompt.replace("{reasoning}", reasoning_text)
     else:
-        final_instruct_prompt = f"{instruct_prompt}\n\n--- REASONING FOR CONTEXT ---\n{reasoning_text}"
+        # Improved fallback format that's more explicit
+        final_instruct_prompt = f"{instruct_prompt}\n\n**CONTEXT FROM REASONING:**\n{reasoning_text}\n\n**YOUR TASK:** Generate the complete output as requested above. Do not just acknowledge - provide the full response."
+    
+    # Debug: Show a preview of the final prompt
+    if debug_mode:
+        _debug_print(debug_mode, "Dual-Model Stage 2: Final Instruct Prompt", final_instruct_prompt)
+    else:
+        print(f"\033[94m[PromptCrafter] Stage 2 prompt length: {len(final_instruct_prompt)} chars\033[0m")
 
     instructor_kwargs = kwargs.copy()
     instructor_kwargs['images'] = None
     instructor_kwargs['timeout'] = timeout  # Pass timeout to instructor
+    
+    # Ensure max_tokens is set to prevent truncation
+    if 'max_tokens' not in instructor_kwargs:
+        instructor_kwargs['max_tokens'] = 2048
 
     if expect_json:
-        instructor_kwargs.setdefault('temperature', 0.0)
+        # Use a slightly higher temperature to prevent the model from stopping immediately
+        instructor_kwargs.setdefault('temperature', 0.1)  # Changed from 0.0 to 0.1
         instructor_kwargs.setdefault('debug_title', "Dual-Model Stage 2: Instructor (JSON)")
         ok, final_output = api_clients._reason_with_model(
             instruct_model,
@@ -1413,6 +1425,12 @@ def chain_of_thought_process(thinking_prompt, thinking_model, instruct_prompt, i
 
     if not ok:
         error_message = f"Dual-Model Stage 2 (Instruct) failed: {final_output}"
+        print(f"\033[91m[PromptCrafter] {error_message}\033[0m")
+        return False, error_message, reasoning_text
+
+    # Check if Stage 2 returned an empty response (even if ok=True)
+    if not final_output or (isinstance(final_output, str) and not final_output.strip()):
+        error_message = "Dual-Model Stage 2 (Instruct) returned an empty response. The model may not support JSON output or the prompt is too complex."
         print(f"\033[91m[PromptCrafter] {error_message}\033[0m")
         return False, error_message, reasoning_text
 
