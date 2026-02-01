@@ -496,7 +496,6 @@ The final output must be in {language} only.{safety_rule}"""
         if max_length_words == original_max_len:
             if prompt_type == "Image": max_length_words = 200
             elif prompt_type == "Video": max_length_words = 80
-            elif prompt_type == "Lyrics": max_length_words = 40
         return temperature, max_length_words
 
     def _setup_config(self, mode, user_text, model, images_with_weights=None, **kwargs): # noqa

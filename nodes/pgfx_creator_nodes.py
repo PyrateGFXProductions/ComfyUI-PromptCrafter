@@ -18,6 +18,7 @@ from typing import Union
 import torch
 from PIL import Image
 import librosa
+import torchaudio
 
 # ComfyUI imports
 import comfy.utils
@@ -76,7 +77,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 "creativity_level": ("INT", {"default": 5, "min": 1, "max": 10, "step": 1}),
                 "logicality_level": ("INT", {"default": 5, "min": 1, "max": 10, "step": 1}),
                 "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
-                "max_length_words": ("INT", {"default": 0, "min": 0, "max": 400, "step": 10}),
+                "max_length_words": ("INT", {"default": 0, "min": 0, "max": 10000, "step": 10}),
                 "style_override": (style_profiles.get_style_override_options("Image"), {"default": "None"}),
                 "critique_strength": (["Subtle", "Normal", "Heavy"], {"default": "Normal"}),
                 "deep_think_refinements": ("INT", {"default": 3, "min": 0, "max": 10, "step": 1}),
@@ -325,7 +326,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
         types = copy.deepcopy(PromptCrafter_VisualCreator.INPUT_TYPES())
         types["required"]["model"] = (combined_models, {"tooltip": "The language model to use. Can be a local GGUF file or an API-based model."} )
         types["required"]["temperature"] = ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01})
-        types["required"]["max_length_words"] = ("INT", {"default": 40, "min": 0, "max": 400, "step": 10})
+        types["required"]["max_length_words"] = ("INT", {"default": 2000, "min": 0, "max": 10000, "step": 100})
         types["required"]["style_override"] = (style_profiles.get_style_override_options("Lyrics"), {"default": "None"})
         types["required"]["simplify_for_diffusion"] = ("BOOLEAN", {"default": False})
         
@@ -424,9 +425,71 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             if thinking_model and instruct_model and "None" not in thinking_model and "None" not in instruct_model:
                 print(f"\033[94m[PromptCrafter] Dual-Model mode activated for Lyrics Creator.\033[0m")
                 
-                audio_meta_result = thinking_process.ThoughtProcess.Lobe_Music(self, run_config, user_text, **kwargs)
-                if audio_meta_result is None or not isinstance(audio_meta_result, dict):
-                     return self._handle_creator_exception(Exception("Failed to process audio and lyrics in dual-model mode."))
+                # Inline implementation of audio processing (replacing missing Lobe_Music)
+                clean_lyrics_txt = user_text
+                lyrics_srt = ""
+                timed_segments = []
+                audio_meta = {}
+                spectrogram_preview = None
+                
+                audio_folder = kwargs.get("audio_folder_path", "input/audio")
+                audio_filename = kwargs.get("audio_file", "<none>")
+                
+                if audio_filename != "<none>":
+                    audio_path = utils._get_verified_path(audio_folder, audio_filename)
+                    if audio_path:
+                        try:
+                            try:
+                                waveform, sample_rate = torchaudio.load(audio_path)
+                            except Exception as e:
+                                print(f"[PromptCrafter] torchaudio load failed, trying librosa: {e}")
+                                audio_np, sample_rate = librosa.load(audio_path, sr=None, mono=False)
+                                waveform = torch.from_numpy(audio_np)
+                                if waveform.ndim == 1:
+                                    waveform = waveform.unsqueeze(0)
+                            audio_data = {"waveform": waveform.unsqueeze(0) if waveform.ndim == 2 else waveform, "sample_rate": sample_rate}
+                            
+                            srt_node = pgfx_srt_creator.PromptCrafter_SRTCreator()
+                            
+                            lyrics_folder = kwargs.get("lyrics_folder_path", "input/lyrics")
+                            lyrics_filename = kwargs.get("lyrics_file", "<none>")
+                            ground_truth_text = ""
+                            if lyrics_filename != "<none>":
+                                lpath = utils._get_verified_path(lyrics_folder, lyrics_filename)
+                                if lpath: ground_truth_text = utils.safe_read(lpath)
+                            
+                            whisper_model = kwargs.get("whisper_model", "large-v3")
+                            language = kwargs.get("whisper_language", "auto-detect")
+                            if language == "auto-detect": language = None
+                            
+                            srt_res = srt_node.execute(
+                                audio_data, whisper_model, language if language else "en",
+                                bool(ground_truth_text), instruct_model, False, False,
+                                kwargs.get("debug_mode", False), ground_truth_text
+                            )
+                            
+                            lyrics_srt = srt_res[0]
+                            clean_lyrics_txt = srt_res[1]
+                            if srt_res[3]:
+                                timed_segments = json.loads(srt_res[3])
+                                
+                            audio_meta = {
+                                "audio_total_duration": float(waveform.shape[-1]) / sample_rate,
+                                "sample_rate": sample_rate,
+                                "timed_segments": timed_segments,
+                                "word_segments": timed_segments,
+                                "vocal_audio": audio_data
+                            }
+                        except Exception as e:
+                            print(f"\033[91m[PromptCrafter] Audio processing failed: {e}\033[0m")
+
+                audio_meta_result = {
+                    "clean_lyrics_txt": clean_lyrics_txt,
+                    "lyrics_srt": lyrics_srt,
+                    "timed_segments": timed_segments,
+                    "audio_meta": audio_meta,
+                    "spectrogram_preview": spectrogram_preview
+                }
                 
                 clean_lyrics = audio_meta_result.get("clean_lyrics_txt", "")
                 timed_segments = audio_meta_result.get("timed_segments", [])
@@ -514,10 +577,18 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 passthrough_images.extend([None] * (self.MAX_DYNAMIC_IMAGES - len(passthrough_images)))
                 
                 audio_meta_dict = audio_meta_result.get("audio_meta") if isinstance(audio_meta_result.get("audio_meta"), dict) else {}
+                
+                # Ensure spectrogram_preview is a valid tensor to prevent downstream errors
+                spec_preview = audio_meta_result.get("spectrogram_preview")
+                if spec_preview is None:
+                    spec_preview = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
+                elif isinstance(spec_preview, Image.Image):
+                    spec_preview = utils.pil2tensor(spec_preview)
+
                 return (
                     "", schedule_json, "", "", clean_lyrics, audio_meta_result.get("lyrics_srt", ""),
                     model, str(run_config.seed), audio_meta_dict,
-                    audio_meta_result.get("spectrogram_preview"), kwargs.get("signal"),
+                    spec_preview, kwargs.get("signal"),
                     kwargs.get("character_description"), kwargs.get("song_theme_style"), kwargs.get("environment"),
                     kwargs.get("lighting"), kwargs.get("physical_interaction"), kwargs.get("facial_expression"),
                     kwargs.get("shots"), kwargs.get("outfit_rules"),
