@@ -3,7 +3,7 @@ import torch
 import torchaudio
 import math
 
-class PromptCrafter_AudioSplitter_v2:
+class PromptCrafter_AudioSplitter_v2_Legacy:
     """
     V2 of the audio splitter. Takes an audio input and splits it into 16 scenes based on a duration.
     It processes the audio in sets, allowing to process long audio files chunk by chunk.
@@ -98,9 +98,9 @@ class PromptCrafter_AudioSplitter_v2:
         return (meta, total_duration, total_sets, set_index) + tuple(segments)
 
 NODE_CLASS_MAPPINGS = {
-    "PromptCrafter_AudioSplitter_v2": PromptCrafter_AudioSplitter_v2
+    "PromptCrafter_AudioSplitter_v2_Legacy": PromptCrafter_AudioSplitter_v2_Legacy
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_AudioSplitter_v2": "Audio Splitter v2"
+    "PromptCrafter_AudioSplitter_v2_Legacy": "Audio Splitter v2 Legacy"
 }

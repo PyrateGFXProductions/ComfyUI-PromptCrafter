@@ -22,6 +22,7 @@ try:
     from . import pgfx_audio_srt as PromptCrafter_SRTCreator
     from ..core import pgfx_api_clients as api_clients
     from ..utils import pgfx_utils as utils
+    from ..utils import pgfx_json_utils as json_utils
     from ..core.profiles import pgfx_sound_engineer_profiles as sound_engineer_profiles
     from ..core.profiles import pgfx_screenwriter_profiles as screenwriter_profiles
     from ..core.profiles import pgfx_editor_profiles as editor_profiles
@@ -43,6 +44,21 @@ except Exception as e:
 
 
 # --- NEW HELPER FOR MODEL SELECTION ---
+def _normalize_model_name(model_entry):
+    if isinstance(model_entry, (list, tuple)) and model_entry:
+        return model_entry[0]
+    return model_entry
+
+def _select_model_default(sorted_llm_models, predicate, fallback="disabled"):
+    for model_entry in sorted_llm_models:
+        model_name = _normalize_model_name(model_entry)
+        if isinstance(model_name, str) and predicate(model_name):
+            return model_name
+    if sorted_llm_models:
+        first = _normalize_model_name(sorted_llm_models[0])
+        return first if isinstance(first, str) else fallback
+    return fallback
+
 def _get_sorted_models_by_preference(all_llm_models):
     """Optimized model sorting with better fallback logic"""
     if not all_llm_models:
@@ -51,8 +67,11 @@ def _get_sorted_models_by_preference(all_llm_models):
     # Common GPU-friendly quants - higher preference
     quant_preference = ['q4_k_m', 'q5_k_m', 'q6_k', 'q4_0', 'q5_0', 'q4_1', 'q5_1', 'q3_k_m', 'q2_k']
 
-    def get_model_rank(model_name_list):
-        model_name = model_name_list[0].lower()
+    def get_model_rank(model_entry):
+        model_name = _normalize_model_name(model_entry)
+        if not isinstance(model_name, str):
+            return 2
+        model_name = model_name.lower()
 
         # Check for specific problematic models
         if "qwen3-vl-8b-thinking" in model_name and "q8_0" in model_name:
@@ -115,6 +134,10 @@ class PGFX_Studio_Producer:
 
 # --- THE SOUND ENGINEER ---
 class PGFX_Studio_SoundEngineer:
+    """
+    Stateful: caches VAD/emotion models at class-level for reuse.
+    Reset occurs on process restart or node reload.
+    """
     _vad_model = None
     _get_speech_timestamps = None
     _emotion_classifier = None
@@ -409,17 +432,23 @@ class PGFX_Studio_Screenwriter:
             profile_options = screenwriter_profiles.get_profile_options()
             all_llm_models = creator_nodes.get_combined_models()
             if not all_llm_models:
-                all_llm_models = [["disabled"]]
+                all_llm_models = ["disabled"]
             
             sorted_llm_models = _get_sorted_models_by_preference(all_llm_models)
             
-            thinking_default = next((m[0] for m in sorted_llm_models if "Qwen3-VL-8b-Thinking" in m[0]), sorted_llm_models[0][0] if sorted_llm_models else "disabled")
-            instruct_default = next((m[0] for m in sorted_llm_models if "Qwen3-VL-8b-Instruct" in m[0]), sorted_llm_models[0][0] if sorted_llm_models else "disabled")
+            thinking_default = _select_model_default(
+                sorted_llm_models,
+                lambda name: "Qwen3-VL-8b-Thinking" in name
+            )
+            instruct_default = _select_model_default(
+                sorted_llm_models,
+                lambda name: "Qwen3-VL-8b-Instruct" in name
+            )
 
         except Exception:
-            whisper_models = [["disabled"]]
+            whisper_models = ["disabled"]
             profile_options = ["None (Manual Input)"]
-            all_llm_models = [["disabled"]]
+            all_llm_models = ["disabled"]
             thinking_default = "disabled"
             instruct_default = "disabled"
 
@@ -479,8 +508,9 @@ class PGFX_Studio_Screenwriter:
             timed_segments_json = "[]"
         
         try:
-            word_segments = json.loads(timed_segments_json)
-        except (getattr(json, 'JSONDecodeError', Exception), TypeError) as e:
+            parsed_segments = json_utils.extract_and_parse_json(timed_segments_json)
+            word_segments = parsed_segments if isinstance(parsed_segments, list) else []
+        except Exception:
             print("[Screenwriter] Error: Failed to parse Whisper JSON or result was None. Proceeding without lyrics.")
             word_segments = []
         
@@ -547,14 +577,20 @@ class PGFX_Studio_CreativeDirector:
     def INPUT_TYPES(cls):
         try:
             all_llm_models = creator_nodes.get_combined_models()
-            if not all_llm_models: all_llm_models = [["disabled"]]
+            if not all_llm_models: all_llm_models = ["disabled"]
 
             sorted_llm_models = _get_sorted_models_by_preference(all_llm_models)
 
-            thinking_default = next((m[0] for m in sorted_llm_models if "qwen" in m[0].lower() and ("thinking" in m[0].lower() or "32b" in m[0].lower() or "72b" in m[0].lower())), sorted_llm_models[0][0] if sorted_llm_models else "disabled")
-            instruct_default = next((m[0] for m in sorted_llm_models if "qwen" in m[0].lower() and "instruct" in m[0].lower()), sorted_llm_models[0][0] if sorted_llm_models else "disabled")
+            thinking_default = _select_model_default(
+                sorted_llm_models,
+                lambda name: "qwen" in name.lower() and ("thinking" in name.lower() or "32b" in name.lower() or "72b" in name.lower())
+            )
+            instruct_default = _select_model_default(
+                sorted_llm_models,
+                lambda name: "qwen" in name.lower() and "instruct" in name.lower()
+            )
         except Exception:
-            all_llm_models = [["disabled"]]
+            all_llm_models = ["disabled"]
             thinking_default = "disabled"
             instruct_default = "disabled"
 
@@ -724,6 +760,8 @@ class PGFX_Studio_Director:
     """
     The Director. Creates an edit plan and generates a shot list based on the
     Creative Director's visual brief and the Screenwriter's script.
+    Stateful: caches the last shot list per input hash; resets on input change
+    or process restart.
     """
 
     @classmethod
@@ -735,17 +773,23 @@ class PGFX_Studio_Director:
 
             all_llm_models = creator_nodes.get_combined_models()
             if not all_llm_models:
-                all_llm_models = [["disabled"]]
+                all_llm_models = ["disabled"]
 
             sorted_llm_models = _get_sorted_models_by_preference(all_llm_models)
 
             # Set default models, falling back to the first available if not found
-            thinking_default = next((m[0] for m in sorted_llm_models if "Qwen3-VL-8b-Thinking" in m[0]), sorted_llm_models[0][0] if sorted_llm_models else "disabled")
-            instruct_default = next((m[0] for m in sorted_llm_models if "Qwen3-VL-8b-Instruct" in m[0]), sorted_llm_models[0][0] if sorted_llm_models else "disabled")
+            thinking_default = _select_model_default(
+                sorted_llm_models,
+                lambda name: "Qwen3-VL-8b-Thinking" in name
+            )
+            instruct_default = _select_model_default(
+                sorted_llm_models,
+                lambda name: "Qwen3-VL-8b-Instruct" in name
+            )
         except Exception as e:
             print(f"[Director] Error loading models or profiles: {e}")
             profile_options = ["None (Manual Input)"]
-            all_llm_models = [["disabled"]]
+            all_llm_models = ["disabled"]
             thinking_default = "disabled"
             instruct_default = "disabled"
             
@@ -885,37 +929,16 @@ class PGFX_Studio_Director:
         # Add robust JSON parsing
         try:
             assignments = []
-            if isinstance(result_data, dict) and "scene_assignments" in result_data:
-                assignments = result_data["scene_assignments"]
-            elif isinstance(result_data, list):
-                assignments = result_data
+            parsed = result_data
+            if isinstance(result_data, str):
+                parsed = json_utils.extract_and_parse_json(result_data)
+
+            if isinstance(parsed, dict) and "scene_assignments" in parsed:
+                assignments = parsed["scene_assignments"]
+            elif isinstance(parsed, list):
+                assignments = parsed
             else:
-                # Try to extract JSON from string if possible
-                if isinstance(result_data, str):
-                    import json
-                    try:
-                        parsed = json.loads(result_data)
-                        if isinstance(parsed, dict) and "scene_assignments" in parsed:
-                            assignments = parsed["scene_assignments"]
-                        elif isinstance(parsed, list):
-                            assignments = parsed
-                        else:
-                            raise ValueError("Unexpected JSON structure")
-                    except json.JSONDecodeError:
-                        # Try to extract JSON from markdown if present
-                        if "```json" in result_data:
-                            json_str = result_data.split("```json")[1].split("```")[0]
-                            parsed = json.loads(json_str)
-                            if isinstance(parsed, dict) and "scene_assignments" in parsed:
-                                assignments = parsed["scene_assignments"]
-                            elif isinstance(parsed, list):
-                                assignments = parsed
-                            else:
-                                raise ValueError("Unexpected JSON structure")
-                        else:
-                            raise ValueError("No valid JSON found")
-                else:
-                    raise ValueError("Unexpected result type")
+                raise ValueError("Unexpected JSON structure")
 
             # Validate assignments
             if not isinstance(assignments, list):
@@ -1203,6 +1226,7 @@ class PGFX_Studio_Cinematographer:
     Acts as the bridge between the data (SHOT_LIST, TIMING_MAP) and the generation loop.
     It fetches the correct prompt, audio, and data for the current scene index.
     Includes an auto-incrementing counter that resets per project, mimicking a trigger counter.
+    Stateful: auto-index resets when project_name changes or when reset_counter is True.
     """
     _auto_index = 0
     _last_project_name = "" # Initialize as empty string
@@ -1247,6 +1271,7 @@ class PGFX_Studio_Cinematographer:
             },
             "optional": {
                 "reset_counter": ("BOOLEAN", {"default": False, "tooltip": "If True, forces the 'Auto-Increment' counter back to 0."}),
+                "CHARACTER_TRACK": ("DICT",),
             }
         }
     RETURN_TYPES = ("STRING", "STRING", "INT", "AUDIO", "INT", "INT", "INT")
@@ -1262,7 +1287,7 @@ class PGFX_Studio_Cinematographer:
         except Exception as e:
             print(f"[Cinematographer] Warning: Could not send execution interruption signal. {e}")
 
-    def get_shot(self, SHOT_LIST, TIMING_MAP, PROJECT_CONFIG, mode, scene_index, reset_counter=False):
+    def get_shot(self, SHOT_LIST, TIMING_MAP, PROJECT_CONFIG, mode, scene_index, reset_counter=False, CHARACTER_TRACK=None):
         project_name = PROJECT_CONFIG.get("project_name", "")
         
         # --- Counter Management ---
@@ -1314,6 +1339,14 @@ class PGFX_Studio_Cinematographer:
         if shot is None or timing is None:
             print(f"[Cinematographer] Error: No shot or timing data found for index {effective_index}. Check SHOT_LIST/TIMING_MAP alignment.")
             return ("", "", 0, empty_audio, 0, effective_index, remaining_scenes)
+
+        # Optional character context (log-only, no prompt mutation yet)
+        if CHARACTER_TRACK and isinstance(CHARACTER_TRACK, dict):
+            timeline = CHARACTER_TRACK.get("timeline", [])
+            if isinstance(timeline, list):
+                match = next((t for t in timeline if t.get("scene_index") == effective_index), None)
+                if match:
+                    print(f"[Cinematographer] Character context: {match.get('character_id', 'unknown')} (scene {effective_index}).")
 
         num_frames = timing.get("num_frames", 0)
         audio_chunk = timing.get("audio_dict", empty_audio)
@@ -1481,16 +1514,22 @@ class PGFX_Studio_ScriptSupervisor:
         try:
             all_llm_models = creator_nodes.get_combined_models()
             if not all_llm_models:
-                all_llm_models = [["disabled"]]
+                all_llm_models = ["disabled"]
 
             sorted_llm_models = _get_sorted_models_by_preference(all_llm_models)
 
             # Generalize default model selection to avoid specific unsupported models
-            thinking_default = next((m[0] for m in sorted_llm_models if "qwen" in m[0].lower() and "thinking" in m[0].lower()), sorted_llm_models[0][0] if sorted_llm_models else "disabled")
-            instruct_default = next((m[0] for m in sorted_llm_models if "qwen" in m[0].lower() and "instruct" in m[0].lower()), sorted_llm_models[0][0] if sorted_llm_models else "disabled")
+            thinking_default = _select_model_default(
+                sorted_llm_models,
+                lambda name: "qwen" in name.lower() and "thinking" in name.lower()
+            )
+            instruct_default = _select_model_default(
+                sorted_llm_models,
+                lambda name: "qwen" in name.lower() and "instruct" in name.lower()
+            )
         except Exception as e:
             print(f"[Script Supervisor] Error loading models: {e}")
-            all_llm_models = [["disabled"]]
+            all_llm_models = ["disabled"]
             thinking_default = "disabled"
             instruct_default = "disabled"
 
@@ -1882,6 +1921,660 @@ class PGFX_Studio_PostMaster:
 
 
 
+# --- ADAPTERS ---
+class PGFX_Studio_AudioPinAdapter:
+    """
+    Adapter to bridge SoundEngineer output pin 'AUDIO' to nodes expecting 'audio'.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "AUDIO": ("AUDIO",),
+            }
+        }
+
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "adapt"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+
+    def adapt(self, AUDIO):
+        if not isinstance(AUDIO, dict) or "waveform" not in AUDIO or "sample_rate" not in AUDIO:
+            raise ValueError("PGFX_Studio_AudioPinAdapter expected AUDIO dict with 'waveform' and 'sample_rate'.")
+        return (AUDIO,)
+
+
+# --- PROJECT CONFIG ADAPTER ---
+class PGFX_Studio_ProjectConfigValidator:
+    """
+    Adapter to validate PROJECT_CONFIG core keys and allowed extended keys.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "PROJECT_CONFIG": ("DICT",),
+            },
+            "optional": {
+                "strict": ("BOOLEAN", {"default": False, "tooltip": "If True, raises on missing/invalid core keys."}),
+            }
+        }
+
+    RETURN_TYPES = ("DICT", "DICT", "STRING")
+    RETURN_NAMES = ("PROJECT_CONFIG", "PROJECT_CONFIG_CORE", "validation_report")
+    FUNCTION = "validate"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+
+    def _to_int(self, value, name, report, strict):
+        try:
+            return int(value)
+        except Exception:
+            msg = f"ERROR: {name} is not an int: {value}"
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return None
+
+    def _to_str(self, value, name, report, strict):
+        if value is None:
+            msg = f"ERROR: {name} missing."
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return ""
+        if isinstance(value, str):
+            return value
+        try:
+            report.append(f"WARNING: {name} coerced to string.")
+            return str(value)
+        except Exception:
+            msg = f"ERROR: {name} is not a string: {value}"
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return ""
+
+    def validate(self, PROJECT_CONFIG, strict=False):
+        if not isinstance(PROJECT_CONFIG, dict):
+            raise ValueError("PGFX_Studio_ProjectConfigValidator expected PROJECT_CONFIG as dict.")
+
+        report = []
+        cfg_out = dict(PROJECT_CONFIG)
+
+        project_name = self._to_str(cfg_out.get("project_name"), "project_name", report, strict)
+        root_path = self._to_str(cfg_out.get("root_path"), "root_path", report, strict)
+        fps = self._to_int(cfg_out.get("fps"), "fps", report, strict)
+
+        if fps is None:
+            fps = 24
+            report.append("WARNING: fps defaulted to 24.")
+        elif fps <= 0:
+            msg = f"WARNING: fps <= 0 ({fps}); clamped to 1."
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            fps = 1
+
+        # Optional extended keys
+        if "width" in cfg_out:
+            width = self._to_int(cfg_out.get("width"), "width", report, strict)
+            if width is None:
+                width = 0
+            if width <= 0:
+                report.append(f"WARNING: width <= 0 ({width}).")
+            cfg_out["width"] = width
+
+        if "height" in cfg_out:
+            height = self._to_int(cfg_out.get("height"), "height", report, strict)
+            if height is None:
+                height = 0
+            if height <= 0:
+                report.append(f"WARNING: height <= 0 ({height}).")
+            cfg_out["height"] = height
+
+        cfg_out["project_name"] = project_name
+        cfg_out["root_path"] = root_path
+        cfg_out["fps"] = fps
+
+        cfg_core = {
+            "project_name": project_name,
+            "root_path": root_path,
+            "fps": fps,
+        }
+
+        if not report:
+            report.append("PROJECT_CONFIG valid.")
+
+        return (cfg_out, cfg_core, "\n".join(report))
+
+
+# --- TIMING MAP ADAPTER ---
+class PGFX_Studio_TimingMapAdapter:
+    """
+    Adapter to validate and normalize TIMING_MAP:
+    - Ensures core key 'durations_frames' exists and is list[int].
+    - Preserves extended keys.
+    - Normalizes data[] entries to align with durations_frames.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "TIMING_MAP": ("DICT",),
+            },
+            "optional": {
+                "PROJECT_CONFIG": ("DICT",),
+                "strict": ("BOOLEAN", {"default": False, "tooltip": "If True, raises on invalid/missing core keys instead of best-effort normalization."}),
+            }
+        }
+
+    RETURN_TYPES = ("DICT", "DICT", "STRING")
+    RETURN_NAMES = ("TIMING_MAP", "TIMING_MAP_CORE", "validation_report")
+    FUNCTION = "adapt"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+
+    def _int_list(self, values, report, strict):
+        out = []
+        for i, v in enumerate(values):
+            try:
+                out.append(int(v))
+            except Exception:
+                msg = f"WARNING: durations_frames[{i}]='{v}' invalid; set to 0."
+                if strict:
+                    raise ValueError(msg)
+                report.append(msg)
+                out.append(0)
+        return out
+
+    def adapt(self, TIMING_MAP, PROJECT_CONFIG=None, strict=False):
+        if not isinstance(TIMING_MAP, dict):
+            raise ValueError("PGFX_Studio_TimingMapAdapter expected TIMING_MAP as dict.")
+
+        report = []
+        timing_out = dict(TIMING_MAP)
+
+        data_in = TIMING_MAP.get("data")
+        durations = TIMING_MAP.get("durations_frames")
+
+        # Derive durations from data if missing
+        if durations is None and isinstance(data_in, list) and data_in:
+            derived = []
+            ok = True
+            for entry in data_in:
+                if not isinstance(entry, dict) or "num_frames" not in entry:
+                    ok = False
+                    break
+                try:
+                    derived.append(int(entry.get("num_frames", 0)))
+                except Exception:
+                    ok = False
+                    break
+            if ok:
+                durations = derived
+                report.append("INFO: durations_frames derived from data[num_frames].")
+
+        if durations is None:
+            msg = "ERROR: TIMING_MAP missing 'durations_frames' and could not derive from 'data'."
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            durations = []
+        else:
+            durations = self._int_list(list(durations), report, strict)
+
+        # Normalize data list
+        data_out = []
+        if isinstance(data_in, list):
+            for entry in data_in:
+                if isinstance(entry, dict):
+                    data_out.append(dict(entry))
+                else:
+                    report.append("WARNING: Non-dict entry removed from TIMING_MAP['data'].")
+
+        # Build index map for fast lookup
+        by_index = {}
+        for entry in data_out:
+            idx = entry.get("index")
+            if isinstance(idx, int):
+                by_index[idx] = entry
+
+        # Optionally derive start/end from fps
+        fps = None
+        if isinstance(PROJECT_CONFIG, dict):
+            try:
+                fps_val = PROJECT_CONFIG.get("fps", None)
+                fps = float(fps_val) if fps_val is not None else None
+                if fps is not None and fps <= 0:
+                    fps = None
+            except Exception:
+                fps = None
+
+        if durations:
+            normalized_data = []
+            cumulative_sec = 0.0
+            for idx, frames in enumerate(durations):
+                entry = dict(by_index.get(idx, {}))
+                if entry.get("index") != idx:
+                    entry["index"] = idx
+                if entry.get("num_frames") != frames:
+                    if "num_frames" in entry:
+                        report.append(f"INFO: data[{idx}].num_frames normalized to durations_frames ({frames}).")
+                    entry["num_frames"] = frames
+
+                if fps:
+                    duration_sec = frames / fps
+                    if "start" not in entry:
+                        entry["start"] = cumulative_sec
+                    if "end" not in entry:
+                        entry["end"] = cumulative_sec + duration_sec
+                    cumulative_sec += duration_sec
+
+                normalized_data.append(entry)
+
+            data_out = normalized_data
+
+        timing_out["durations_frames"] = durations
+        timing_out["data"] = data_out
+
+        timing_core = {"durations_frames": durations}
+
+        if not report:
+            report.append("TIMING_MAP valid. Core key 'durations_frames' present and data normalized.")
+
+        return (timing_out, timing_core, "\n".join(report))
+
+
+# --- SCENE COUNT ADAPTER ---
+class PGFX_Studio_SceneCountAdapter:
+    """
+    Adapter to normalize scene count signals:
+    - SCENE_COUNT is the total number of scenes.
+    - remaining_scenes is scenes left AFTER current scene index.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "SCENE_COUNT": ("INT",),
+            },
+            "optional": {
+                "scene_index": ("INT",),
+                "remaining_scenes": ("INT",),
+                "strict": ("BOOLEAN", {"default": False, "tooltip": "If True, raise on invalid inputs instead of clamping."}),
+            }
+        }
+
+    RETURN_TYPES = ("INT", "INT", "STRING")
+    RETURN_NAMES = ("SCENE_COUNT", "remaining_scenes", "validation_report")
+    FUNCTION = "adapt"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+
+    def _to_int(self, value, name, report, strict):
+        try:
+            return int(value)
+        except Exception:
+            msg = f"ERROR: {name} is not an int: {value}"
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return 0
+
+    def adapt(self, SCENE_COUNT, scene_index=None, remaining_scenes=None, strict=False):
+        report = []
+
+        total = self._to_int(SCENE_COUNT, "SCENE_COUNT", report, strict)
+        if total < 0:
+            msg = f"WARNING: SCENE_COUNT < 0 ({total}); clamped to 0."
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            total = 0
+
+        idx = 0
+        if scene_index is not None:
+            idx = self._to_int(scene_index, "scene_index", report, strict)
+            if idx < 0:
+                msg = f"WARNING: scene_index < 0 ({idx}); clamped to 0."
+                if strict:
+                    raise ValueError(msg)
+                report.append(msg)
+                idx = 0
+
+        if remaining_scenes is None:
+            # Compute remaining scenes after current index
+            remaining = max(0, total - (idx + 1))
+            report.append("INFO: remaining_scenes computed from SCENE_COUNT and scene_index.")
+        else:
+            remaining = self._to_int(remaining_scenes, "remaining_scenes", report, strict)
+            if remaining < 0:
+                msg = f"WARNING: remaining_scenes < 0 ({remaining}); clamped to 0."
+                if strict:
+                    raise ValueError(msg)
+                report.append(msg)
+                remaining = 0
+            if total > 0 and remaining > total:
+                msg = f"WARNING: remaining_scenes ({remaining}) > SCENE_COUNT ({total}); clamped."
+                if strict:
+                    raise ValueError(msg)
+                report.append(msg)
+                remaining = total
+
+            expected = max(0, total - (idx + 1))
+            if total > 0 and scene_index is not None and remaining != expected:
+                report.append(
+                    f"WARNING: remaining_scenes ({remaining}) does not match SCENE_COUNT/scene_index ({expected})."
+                )
+
+        if not report:
+            report.append("Scene count valid.")
+
+        return (total, remaining, "\n".join(report))
+
+
+# --- SHOT LIST ADAPTER ---
+class PGFX_Studio_ShotListAdapter:
+    """
+    Adapter to validate and normalize SHOT_LIST against TIMING_MAP.
+    Ensures one entry per scene index and preserves creative metadata.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "SHOT_LIST": ("DICT",),
+                "TIMING_MAP": ("DICT",),
+            },
+            "optional": {
+                "strict": ("BOOLEAN", {"default": False, "tooltip": "If True, raises on missing/invalid entries."}),
+            }
+        }
+
+    RETURN_TYPES = ("DICT", "DICT", "STRING")
+    RETURN_NAMES = ("SHOT_LIST", "SHOT_LIST_CORE", "validation_report")
+    FUNCTION = "adapt"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+
+    def _to_int(self, value, name, report, strict):
+        try:
+            return int(value)
+        except Exception:
+            msg = f"ERROR: {name} is not an int: {value}"
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return None
+
+    def _to_str(self, value, name, report, strict):
+        if value is None:
+            msg = f"ERROR: {name} missing."
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return ""
+        if isinstance(value, str):
+            return value
+        try:
+            report.append(f"WARNING: {name} coerced to string.")
+            return str(value)
+        except Exception:
+            msg = f"ERROR: {name} is not a string: {value}"
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return ""
+
+    def adapt(self, SHOT_LIST, TIMING_MAP, strict=False):
+        if not isinstance(SHOT_LIST, dict):
+            raise ValueError("PGFX_Studio_ShotListAdapter expected SHOT_LIST as dict.")
+        if not isinstance(TIMING_MAP, dict):
+            raise ValueError("PGFX_Studio_ShotListAdapter expected TIMING_MAP as dict.")
+
+        report = []
+        shots_in = SHOT_LIST.get("data", [])
+        if not isinstance(shots_in, list):
+            report.append("WARNING: SHOT_LIST['data'] is not a list. Treating as empty.")
+            shots_in = []
+
+        durations = TIMING_MAP.get("durations_frames")
+        if isinstance(durations, list):
+            expected_count = len(durations)
+        else:
+            timing_data = TIMING_MAP.get("data", [])
+            if isinstance(timing_data, list):
+                expected_count = len(timing_data)
+                report.append("INFO: expected scene count derived from TIMING_MAP['data'].")
+            else:
+                expected_count = len(shots_in)
+                report.append("WARNING: TIMING_MAP missing durations_frames/data. Using SHOT_LIST length.")
+
+        # Build index -> shot mapping
+        by_index = {}
+        for entry in shots_in:
+            if not isinstance(entry, dict):
+                report.append("WARNING: Non-dict entry removed from SHOT_LIST['data'].")
+                continue
+            idx = self._to_int(entry.get("index"), "shot.index", report, strict)
+            if idx is None:
+                continue
+            if idx in by_index:
+                report.append(f"WARNING: Duplicate shot index {idx}; keeping first.")
+                continue
+            by_index[idx] = dict(entry)
+
+        normalized = []
+        core_list = []
+
+        for idx in range(max(0, expected_count)):
+            entry = dict(by_index.get(idx, {}))
+            if not entry:
+                report.append(f"WARNING: Missing shot for index {idx}; inserted placeholder.")
+                entry = {"index": idx}
+
+            # Ensure required keys
+            entry["index"] = idx
+            entry["positive"] = self._to_str(entry.get("positive"), "positive", report, strict)
+            entry["negative"] = self._to_str(entry.get("negative"), "negative", report, strict)
+            seed = self._to_int(entry.get("seed"), "seed", report, strict)
+            entry["seed"] = 0 if seed is None else seed
+            entry["style"] = self._to_str(entry.get("style"), "style", report, strict)
+
+            normalized.append(entry)
+            core_list.append({
+                "index": entry["index"],
+                "positive": entry["positive"],
+                "negative": entry["negative"],
+                "seed": entry["seed"],
+                "style": entry["style"],
+            })
+
+        extra_indices = [i for i in by_index.keys() if i < 0 or i >= expected_count]
+        if extra_indices:
+            report.append(f"WARNING: Dropped shots outside timing range: {sorted(extra_indices)}.")
+
+        shot_out = dict(SHOT_LIST)
+        shot_out["data"] = normalized
+        shot_core = {"data": core_list}
+
+        if not report:
+            report.append("SHOT_LIST valid.")
+
+        return (shot_out, shot_core, "\n".join(report))
+
+
+# --- CHARACTER TRACK ADAPTER ---
+class PGFX_Studio_CharacterTrackAdapter:
+    """
+    Adapter to validate and normalize CHARACTER_TRACK against TIMING_MAP.
+    Ensures scene indices align, normalizes character IDs, and derives frame ranges.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "CHARACTER_TRACK": ("DICT",),
+                "TIMING_MAP": ("DICT",),
+            },
+            "optional": {
+                "strict": ("BOOLEAN", {"default": False, "tooltip": "If True, raises on missing/invalid entries."}),
+            }
+        }
+
+    RETURN_TYPES = ("DICT", "DICT", "STRING")
+    RETURN_NAMES = ("CHARACTER_TRACK", "CHARACTER_TRACK_CORE", "validation_report")
+    FUNCTION = "adapt"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+
+    def _to_int(self, value, name, report, strict):
+        try:
+            return int(value)
+        except Exception:
+            msg = f"ERROR: {name} is not an int: {value}"
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return None
+
+    def _to_str(self, value, name, report, strict):
+        if value is None:
+            msg = f"ERROR: {name} missing."
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return ""
+        if isinstance(value, str):
+            return value
+        try:
+            report.append(f"WARNING: {name} coerced to string.")
+            return str(value)
+        except Exception:
+            msg = f"ERROR: {name} is not a string: {value}"
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            return ""
+
+    def adapt(self, CHARACTER_TRACK, TIMING_MAP, strict=False):
+        if not isinstance(CHARACTER_TRACK, dict):
+            raise ValueError("PGFX_Studio_CharacterTrackAdapter expected CHARACTER_TRACK as dict.")
+        if not isinstance(TIMING_MAP, dict):
+            raise ValueError("PGFX_Studio_CharacterTrackAdapter expected TIMING_MAP as dict.")
+
+        report = []
+        track_out = dict(CHARACTER_TRACK)
+
+        characters_in = CHARACTER_TRACK.get("characters", {})
+        if not isinstance(characters_in, dict):
+            report.append("WARNING: CHARACTER_TRACK['characters'] is not a dict. Treating as empty.")
+            characters_in = {}
+
+        timeline_in = CHARACTER_TRACK.get("timeline", [])
+        if not isinstance(timeline_in, list):
+            report.append("WARNING: CHARACTER_TRACK['timeline'] is not a list. Treating as empty.")
+            timeline_in = []
+
+        durations = TIMING_MAP.get("durations_frames", [])
+        if not isinstance(durations, list):
+            report.append("WARNING: TIMING_MAP missing durations_frames. Frame alignment will be skipped.")
+            durations = []
+
+        # Build frame ranges from durations
+        start_frames = []
+        acc = 0
+        for d in durations:
+            try:
+                frames = int(d)
+            except Exception:
+                frames = 0
+            start_frames.append(acc)
+            acc += max(0, frames)
+
+        def _frame_range(scene_index):
+            if scene_index < 0 or scene_index >= len(durations):
+                return (None, None)
+            start = start_frames[scene_index]
+            end = start + max(0, int(durations[scene_index]))
+            return (start, end)
+
+        # Normalize characters
+        characters_out = {}
+        for cid, meta in characters_in.items():
+            cid_norm = self._to_str(cid, "character_id", report, strict)
+            if not cid_norm:
+                continue
+            meta_dict = meta if isinstance(meta, dict) else {}
+            name = meta_dict.get("name") or meta_dict.get("display_name") or cid_norm
+            aliases = meta_dict.get("aliases") or []
+            if not isinstance(aliases, list):
+                aliases = [str(aliases)]
+            default_style = meta_dict.get("default_style")
+            characters_out[cid_norm] = {
+                "name": str(name),
+                "aliases": [str(a) for a in aliases],
+                "default_style": default_style if default_style is None else str(default_style),
+            }
+
+        # Normalize timeline
+        timeline_out = []
+        for entry in timeline_in:
+            if not isinstance(entry, dict):
+                report.append("WARNING: Non-dict timeline entry dropped.")
+                continue
+            scene_index = entry.get("scene_index")
+            if scene_index is None and "index" in entry:
+                scene_index = entry.get("index")
+            scene_index = self._to_int(scene_index, "scene_index", report, strict)
+            if scene_index is None:
+                continue
+
+            character_id = entry.get("character_id") or entry.get("speaker_id")
+            character_id = self._to_str(character_id, "character_id", report, strict) or "unknown"
+
+            if character_id not in characters_out:
+                characters_out[character_id] = {
+                    "name": entry.get("speaker_name") or character_id,
+                    "aliases": [],
+                    "default_style": None,
+                }
+
+            start_frame = entry.get("start_frame")
+            end_frame = entry.get("end_frame")
+            if start_frame is None or end_frame is None:
+                sf, ef = _frame_range(scene_index)
+                if sf is not None and ef is not None:
+                    start_frame = sf
+                    end_frame = ef
+                else:
+                    start_frame = start_frame if start_frame is not None else 0
+                    end_frame = end_frame if end_frame is not None else 0
+
+            text = entry.get("text", "")
+            is_dialogue = entry.get("is_dialogue")
+            if is_dialogue is None:
+                is_dialogue = bool(text)
+            emotion = entry.get("emotion")
+
+            timeline_out.append({
+                "scene_index": scene_index,
+                "start_frame": int(start_frame),
+                "end_frame": int(end_frame),
+                "character_id": character_id,
+                "text": str(text),
+                "emotion": None if emotion is None else str(emotion),
+                "is_dialogue": bool(is_dialogue),
+            })
+
+        track_out["characters"] = characters_out
+        track_out["timeline"] = timeline_out
+
+        core = {"characters": characters_out, "timeline": timeline_out}
+
+        if not report:
+            report.append("CHARACTER_TRACK valid.")
+
+        return (track_out, core, "\n".join(report))
+
+
 # --- NODE MAPPINGS ---
 NODE_CLASS_MAPPINGS = {
     "PGFX_Studio_Producer": PGFX_Studio_Producer,
@@ -1895,9 +2588,12 @@ NODE_CLASS_MAPPINGS = {
     "PGFX_Studio_Stylist": PGFX_Studio_Stylist,
     "PGFX_Studio_Animator": PGFX_Studio_Animator,
     "PGFX_Studio_ScriptSupervisor": PGFX_Studio_ScriptSupervisor,
-    "PGFX_Studio_Stylist": PGFX_Studio_Stylist,
-    "PGFX_Studio_Animator": PGFX_Studio_Animator,
-    "PGFX_Studio_ScriptSupervisor": PGFX_Studio_ScriptSupervisor,
+    "PGFX_Studio_AudioPinAdapter": PGFX_Studio_AudioPinAdapter,
+    "PGFX_Studio_ProjectConfigValidator": PGFX_Studio_ProjectConfigValidator,
+    "PGFX_Studio_TimingMapAdapter": PGFX_Studio_TimingMapAdapter,
+    "PGFX_Studio_SceneCountAdapter": PGFX_Studio_SceneCountAdapter,
+    "PGFX_Studio_ShotListAdapter": PGFX_Studio_ShotListAdapter,
+    "PGFX_Studio_CharacterTrackAdapter": PGFX_Studio_CharacterTrackAdapter,
 }
 
 if nodes_sampler:
@@ -1920,4 +2616,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_Studio_ScriptSupervisor": "📋 Studio Script Supervisor (Review)",
     "PGFX_Studio_Sampler": "🎤 Studio Sampler (Universal)",
     "PGFX_Studio_ControlNet": "👄 Studio ControlNet (Viseme Bridge)",
+    "PGFX_Studio_AudioPinAdapter": "🔌 Studio Adapter (AUDIO→audio)",
+    "PGFX_Studio_ProjectConfigValidator": "🔌 Studio Adapter (PROJECT_CONFIG core)",
+    "PGFX_Studio_TimingMapAdapter": "🔌 Studio Adapter (TIMING_MAP core)",
+    "PGFX_Studio_SceneCountAdapter": "Studio Adapter (Scene Count)",
+    "PGFX_Studio_ShotListAdapter": "🔌 Studio Adapter (SHOT_LIST core)",
+    "PGFX_Studio_CharacterTrackAdapter": "🔌 Studio Adapter (CHARACTER_TRACK core)",
 }

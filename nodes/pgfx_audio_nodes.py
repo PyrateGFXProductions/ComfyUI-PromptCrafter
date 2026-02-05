@@ -1,3 +1,26 @@
+# ---[PromptCrafter] Early torchaudio compatibility (needed before SpeechBrain import) ---
+try:
+    import torchaudio
+    if not hasattr(torchaudio, 'list_audio_backends'):
+        try:
+            from torchaudio.backend import list_audio_backends as _list_audio_backends
+
+            def patched_list_audio_backends():
+                try:
+                    backends = _list_audio_backends()
+                    return backends or ["soundfile"]
+                except Exception:
+                    return ["soundfile"]
+
+            torchaudio.list_audio_backends = patched_list_audio_backends
+        except Exception:
+            def list_audio_backends():
+                return ["soundfile"]
+            torchaudio.list_audio_backends = list_audio_backends
+except Exception:
+    pass
+# ---[End Early Patch]---
+
 # ---[PromptCrafter] SpeechBrain/Torch 2.8+ Compatibility Patch---
 try:
     import torch
@@ -18,16 +41,25 @@ try:
     if should_patch:
         # We only patch if the fix isn't already applied.
         if not hasattr(speechbrain.utils.importutils.LazyModule, '_sb_torch_patched'):
+            _orig_ensure_module = speechbrain.utils.importutils.LazyModule.ensure_module
+
+            def patched_ensure_module(self, stacklevel):
+                try:
+                    return _orig_ensure_module(self, stacklevel)
+                except RecursionError:
+                    # Break recursion loop during inspect/torch custom op registration.
+                    raise AttributeError()
 
             def patched_getattr(self, attr):
                 try:
                     # This is the original logic from SpeechBrain's LazyModule.__getattr__
                     return getattr(self.ensure_module(1), attr)
                 except RecursionError:
-                    # This is the fix: break the recursion loop for Torch's custom_op inspection.
+                    # Break recursion loop for Torch's custom_op inspection.
                     raise AttributeError(attr)
-            
+
             # Apply the patch and mark it as applied.
+            speechbrain.utils.importutils.LazyModule.ensure_module = patched_ensure_module
             speechbrain.utils.importutils.LazyModule.__getattr__ = patched_getattr
             speechbrain.utils.importutils.LazyModule._sb_torch_patched = True
             print("[PromptCrafter] SUCCESS: Applied runtime patch to SpeechBrain for Torch 2.8+ compatibility.")
@@ -297,7 +329,7 @@ class PromptCrafter_AudioSplitter_v2:
         """).strip()
         
         try:
-            from . import api_clients
+            from ..core import pgfx_api_clients as api_clients
             ok, corrected_script = api_clients.query_model_auto(
                 correction_model, correction_prompt, prefer_chat=True, temperature=0.0,
                 seed=-1, debug_mode=self.debug_mode, timeout=120, debug_title="AudioSplitter Script Correction"

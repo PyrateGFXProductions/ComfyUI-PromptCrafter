@@ -35,6 +35,9 @@ class PGFX_Studio_Sampler:
                 "negative": ("CONDITIONING", ),
                 "latent_image": ("LATENT", ),
                 "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "modality": (["image", "video", "audio", "multimodal"], {"default": "video"}),
+                "requires_fixed_frames": ("BOOLEAN", {"default": False}),
+                "frame_rule": ("STRING", {"default": "", "tooltip": "e.g., 4n+1, multiple_of_8"}),
             },
             "optional": {
                 "audio": ("AUDIO",),
@@ -87,7 +90,8 @@ class PGFX_Studio_Sampler:
         # Normalize roughly between 0 and 1
         return torch.clamp(torch.mean(energy) * 10.0, 0.0, 1.0).item()
 
-    def sample(self, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise, audio=None, audio_reactivity=0.0, frequency_band="All"):
+    def sample(self, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise,
+               modality, requires_fixed_frames, frame_rule, audio=None, audio_reactivity=0.0, frequency_band="All"):
         """
         Universal sampling function that works with ALL ComfyUI models.
         Optionally modulates CFG based on audio energy.

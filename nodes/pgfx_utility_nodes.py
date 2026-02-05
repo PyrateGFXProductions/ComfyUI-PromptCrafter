@@ -27,6 +27,8 @@ from ..core import pgfx_api_clients as api_clients
 from ..core import pgfx_config as config
 from ..core.profiles import pgfx_style_profiles as style_profiles
 from ..utils import pgfx_utils as utils
+from ..utils import pgfx_json_utils as json_utils
+from ..utils import pgfx_text_io as text_io
 from ..core.profiles import pgfx_organization_profiles as organization_profiles
 from . import pgfx_audio_nodes as pgfx_splitter_v2
 from . import pgfx_audio_srt as pgfx_srt_creator
@@ -98,6 +100,17 @@ class PromptCrafter_QnA:
                 "chunk_large_context": ("BOOLEAN", {"default": True, "tooltip": "Automatically chunk and summarize context files that are too large."} ),
                 "chunk_size_words": ("INT", {"default": 2000, "min": 500, "max": 8000, "step": 100, "tooltip": "The approximate size of each chunk in words for summarization."} ),
                 "summarization_strategy": (["Default (Abstractive)", "Extractive"], {"default": "Default (Abstractive)", "tooltip": "How to summarize large context. Abstractive creates new text, Extractive pulls key sentences."} ),
+                "instruct_output_mode": (["Answer JSON (Default)", "User Output (No Parsing)", "User Output (Parse JSON)"], {"default": "Answer JSON (Default)", "tooltip": "How to format/parse the instructor output."}),
+                "format_profile": (text_io.QNA_FORMAT_PROFILE_OPTIONS, {"default": "Custom", "tooltip": "Quick presets for output formatting and auto-save."}),
+                "output_target": (text_io.QNA_OUTPUT_TARGET_OPTIONS, {"default": "Response", "tooltip": "Which QnA output(s) to format."}),
+                "output_format": (text_io.FORMAT_OPTIONS, {"default": "Plain Text", "tooltip": "Format to apply to the selected output(s)."}),
+                "auto_save": ("BOOLEAN", {"default": False, "tooltip": "Auto-save the selected output(s) to a file."}),
+                "auto_save_target": (text_io.QNA_OUTPUT_TARGET_OPTIONS, {"default": "Response", "tooltip": "Which output(s) to auto-save."}),
+                "auto_save_folder_path": ("STRING", {"multiline": False, "default": "ComfyUI/output/PromptCrafter", "tooltip": "Folder to save files into."}),
+                "auto_save_filename_template": ("STRING", {"multiline": False, "default": "{seed}_{model_name}_{target}.txt", "tooltip": "Filename template. Supports {model_name}, {seed}, {user_text}, {custom_var}, {target}, {format}, {file_type}."}),
+                "auto_save_file_type": (text_io.AUTO_FILE_TYPE_OPTIONS, {"default": "Match Output Format", "tooltip": "File extension for auto-saved files."}),
+                "auto_save_custom_var": ("STRING", {"multiline": False, "default": "", "tooltip": "Custom placeholder value for {custom_var} in the filename template."}),
+                "max_tokens": ("INT", {"default": 4096, "min": 256, "max": 32768, "step": 256, "tooltip": "Max tokens for the instructor output. Increase for long JSON."}),
                 "history_in": ("STRING", {"multiline": False, "default": "", "input": "hidden"}),
                 "clear_history": ("BOOLEAN", {"default": False, "tooltip": "Set to True for one run to clear the conversation history."} ),
             },
@@ -117,6 +130,106 @@ class PromptCrafter_QnA:
             seed = kwargs.get('seed', -1)
             timeout = kwargs.get('timeout', 120)
             image = kwargs.get('image')
+            instruct_output_mode = kwargs.get('instruct_output_mode', "Answer JSON (Default)")
+            format_profile = kwargs.get('format_profile', "Custom")
+            output_target = kwargs.get('output_target', "Response")
+            output_format = kwargs.get('output_format', "Plain Text")
+            auto_save = kwargs.get('auto_save', False)
+            auto_save_target = kwargs.get('auto_save_target', "Response")
+            auto_save_folder_path = kwargs.get('auto_save_folder_path', "ComfyUI/output/PromptCrafter")
+            auto_save_filename_template = kwargs.get('auto_save_filename_template', "{seed}_{model_name}_{target}.txt")
+            auto_save_file_type = kwargs.get('auto_save_file_type', "Match Output Format")
+            auto_save_custom_var = kwargs.get('auto_save_custom_var', "")
+            max_tokens = kwargs.get('max_tokens', 4096)
+
+            if format_profile and format_profile != "Custom":
+                profile = text_io.QNA_FORMAT_PROFILES.get(format_profile)
+                if profile:
+                    output_target = profile.get("output_target", output_target)
+                    output_format = profile.get("output_format", output_format)
+                    auto_save = profile.get("auto_save", auto_save)
+                    auto_save_target = profile.get("auto_save_target", auto_save_target)
+                    auto_save_file_type = profile.get("auto_save_file_type", auto_save_file_type)
+
+            def _resolve_qna_targets(value):
+                if value == "All":
+                    return {"Response", "History", "Thinking"}
+                if value == "Response + Thinking":
+                    return {"Response", "Thinking"}
+                if value in {"Response", "History", "Thinking"}:
+                    return {value}
+                return {"Response"}
+
+            def _strip_code_fences(text):
+                if text is None:
+                    return ""
+                raw = str(text)
+                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.DOTALL)
+                if match:
+                    return match.group(1).strip()
+                return raw
+
+            def _format_and_maybe_save(response_text, history_text, thinking_text):
+                response_out = "" if response_text is None else str(response_text)
+                history_out = "" if history_text is None else str(history_text)
+                thinking_out = "" if thinking_text is None else str(thinking_text)
+
+                format_targets = _resolve_qna_targets(output_target)
+                if "Response" in format_targets:
+                    response_out = _strip_code_fences(response_out)
+                    parsed_json = None
+                    should_parse = output_format == "JSON" or instruct_output_mode == "User Output (Parse JSON)"
+                    if should_parse:
+                        parsed_json = json_utils.extract_and_parse_json(response_out)
+                    if parsed_json is not None:
+                        response_out = json.dumps(parsed_json, indent=2, ensure_ascii=False)
+                        if output_format == "JSON":
+                            format_targets = set(t for t in format_targets if t != "Response")
+                    elif output_format == "JSON":
+                        if response_out.lstrip().startswith(("{", "[")):
+                            format_targets = set(t for t in format_targets if t != "Response")
+                if "Response" in format_targets:
+                    response_out = text_io.format_text_payload(response_out, output_format, label="response")
+                if "History" in format_targets:
+                    history_out = text_io.format_text_payload(history_out, output_format, label="history")
+                if "Thinking" in format_targets:
+                    thinking_out = text_io.format_text_payload(thinking_out, output_format, label="thinking_process")
+
+                if auto_save:
+                    save_targets = _resolve_qna_targets(auto_save_target)
+                    resolved_type = text_io.resolve_file_type(auto_save_file_type, output_format)
+                    base_replacements = {
+                        "model_name": model,
+                        "seed": seed,
+                        "user_text": instruction,
+                        "custom_var": auto_save_custom_var,
+                        "format": output_format.replace(" ", "_").lower(),
+                        "file_type": resolved_type,
+                    }
+                    target_map = {
+                        "Response": response_out,
+                        "History": history_out,
+                        "Thinking": thinking_out,
+                    }
+                    for target_name, text_val in target_map.items():
+                        if target_name not in save_targets:
+                            continue
+                        if not text_val or not str(text_val).strip():
+                            continue
+                        replacements = dict(base_replacements)
+                        replacements["target"] = target_name.lower()
+                        try:
+                            text_io.save_text_to_file(
+                                text_val,
+                                auto_save_folder_path,
+                                auto_save_filename_template,
+                                resolved_type,
+                                replacements=replacements,
+                            )
+                        except Exception as e:
+                            print(f"\033[91m[PromptCrafter] Auto-save failed for {target_name}: {e}\033[0m")
+
+                return response_out, history_out, thinking_out
 
             # --- DUAL-MODEL Q&A PATH ---
             if thinking_model and instruct_model and thinking_model != "None" and instruct_model != "None":
@@ -138,23 +251,51 @@ class PromptCrafter_QnA:
                     Write down your detailed reasoning and a clear plan for the final response.
                 """).strip()
 
-                instruct_schema = {
-                    "answer": "string (The final, well-structured, and comprehensive answer to the user's query, written in clear language.)"
-                }
+                expect_json = True
+                if instruct_output_mode == "Answer JSON (Default)":
+                    instruct_schema = {
+                        "answer": "string (The final, well-structured, and comprehensive answer to the user's query, written in clear language.)"
+                    }
 
-                instruct_prompt = textwrap.dedent(f"""
-                    Based on the following detailed reasoning and plan, generate a final JSON object containing the complete answer.
+                    instruct_prompt = textwrap.dedent(f"""
+                        Based on the following detailed reasoning and plan, generate a final JSON object containing the complete answer.
 
-                    **REASONING & PLAN:**
-                    {{reasoning}}
+                        **REASONING & PLAN:**
+                        {{reasoning}}
 
-                    **JSON SCHEMA:**
-                    ```json
-                    {json.dumps(instruct_schema, indent=2)}
-                    ```
+                        **USER QUESTION:**
+                        {user_text}
 
-                    Return ONLY the JSON object containing the final answer.
-                """).strip()
+                        **JSON SCHEMA:**
+                        {json.dumps(instruct_schema, indent=2)}
+
+                        Return ONLY a raw JSON object. Do not wrap the JSON in markdown code fences.
+                    """).strip()
+                elif instruct_output_mode == "User Output (Parse JSON)":
+                    instruct_prompt = textwrap.dedent(f"""
+                        Use the user's instructions below to produce the final output.
+                        Follow all formatting and output rules exactly.
+                        Return ONLY a raw JSON object. Do not wrap the JSON in markdown code fences.
+
+                        **USER INSTRUCTIONS:**
+                        {user_text}
+
+                        **REASONING & PLAN:**
+                        {{reasoning}}
+                    """).strip()
+                else:
+                    expect_json = False
+                    instruct_prompt = textwrap.dedent(f"""
+                        Use the user's instructions below to produce the final output.
+                        Follow all formatting and output rules exactly (including code blocks if requested).
+                        Return ONLY the final output.
+
+                        **USER INSTRUCTIONS:**
+                        {user_text}
+
+                        **REASONING & PLAN:**
+                        {{reasoning}}
+                    """).strip()
 
                 # 2. Execute the chain of thought
                 ok, result_data, reasoning_log = utils.chain_of_thought_process(
@@ -166,17 +307,84 @@ class PromptCrafter_QnA:
                     debug_mode=debug_mode,
                     seed=seed,
                     timeout=timeout,
+                    expect_json=expect_json,
+                    max_tokens=max_tokens,
                 )
+
+                # 3. Unpack and return results (with a fallback if JSON parsing fails)
+                if ok:
+                    if instruct_output_mode == "Answer JSON (Default)" and isinstance(result_data, dict):
+                        final_answer = (result_data.get("answer") or "").strip()
+                        if final_answer:
+                            response_out, history_out, thinking_out = _format_and_maybe_save(final_answer, "", reasoning_log)
+                            return (response_out, history_out, thinking_out)
+                    elif instruct_output_mode == "User Output (Parse JSON)" and isinstance(result_data, (dict, list)):
+                        final_answer = json.dumps(result_data, indent=2, ensure_ascii=False)
+                        response_out, history_out, thinking_out = _format_and_maybe_save(final_answer, "", reasoning_log)
+                        return (response_out, history_out, thinking_out)
+                    elif instruct_output_mode == "User Output (No Parsing)" and isinstance(result_data, str) and result_data.strip():
+                        response_out, history_out, thinking_out = _format_and_maybe_save(result_data.strip(), "", reasoning_log)
+                        return (response_out, history_out, thinking_out)
+
+                # Fallback: if the instructor couldn't return valid JSON, request plain text.
+                fallback_answer = ""
+                ok_fallback = False
+                if reasoning_log and reasoning_log.strip():
+                    if instruct_output_mode == "Answer JSON (Default)":
+                        fallback_prompt = textwrap.dedent(f"""
+                            Use the reasoning below to answer the user's question directly.
+                            Return ONLY a raw JSON object matching this schema: {json.dumps({"answer": "string"}, ensure_ascii=False)}.
+                            Do not wrap the JSON in markdown code fences.
+
+                            REASONING & PLAN:
+                            {reasoning_log}
+
+                            USER QUESTION:
+                            {user_text}
+                        """).strip()
+                    elif instruct_output_mode == "User Output (Parse JSON)":
+                        fallback_prompt = textwrap.dedent(f"""
+                            Use the reasoning below to answer the user's instructions.
+                            Return ONLY a raw JSON object. Do not wrap the JSON in markdown code fences.
+
+                            USER INSTRUCTIONS:
+                            {user_text}
+
+                            REASONING & PLAN:
+                            {reasoning_log}
+                        """).strip()
+                    else:
+                        fallback_prompt = textwrap.dedent(f"""
+                            Use the reasoning below to answer the user's question directly.
+                            Return ONLY the final answer text. No JSON, no markdown, no extra commentary.
+
+                            REASONING & PLAN:
+                            {reasoning_log}
+
+                            USER QUESTION:
+                            {user_text}
+                        """).strip()
+
+                    ok_fallback, fallback_answer = api_clients.query_model_auto(
+                        instruct_model,
+                        prompt=fallback_prompt,
+                        images=[],
+                        prefer_chat=True,
+                        temperature=kwargs.get('temperature', 0.2),
+                        seed=seed,
+                        timeout=timeout,
+                        max_tokens=max_tokens,
+                        debug_mode=debug_mode,
+                        debug_title="Dual-Model Stage 2: Instructor (Text Fallback)"
+                    )
+
+                if ok_fallback and fallback_answer and fallback_answer.strip():
+                    response_out, history_out, thinking_out = _format_and_maybe_save(fallback_answer.strip(), "", reasoning_log)
+                    return (response_out, history_out, thinking_out)
 
                 if not ok:
                     raise Exception(f"Dual-Model Chain failed: {result_data}")
-
-                # 3. Unpack and return results
-                final_answer = result_data.get("answer", "Error: The instructor model did not return a valid answer.")
-                
-                # For Q&A, history management might need to be adapted or is less relevant.
-                # For now, we'll return an empty history string in dual-model mode for simplicity.
-                return (final_answer, "", reasoning_log)
+                raise Exception("Dual-Model Chain failed: Instructor returned invalid or empty JSON, and fallback text generation failed.")
 
             # --- SINGLE-MODEL (LEGACY) Q&A PATH ---
             else:
@@ -221,22 +429,85 @@ class PromptCrafter_QnA:
                 # 3. Instantiate and run the central thinking process
                 thought_process = thinking_process.ThoughtProcess(
                     run_config=run_config,
-                    images_with_weights=[],
                     user_text=instruction,
                     negative_prompt="",
+                    image_context="",
+                    primary_subjects_from_images=[],
                     mode="QnA",
                     **qna_params
                 )
 
                 response_text, updated_history = thought_process.run()
 
-                return (response_text, updated_history, "Thinking process not available in single-model mode.")
+                response_out, history_out, thinking_out = _format_and_maybe_save(
+                    response_text,
+                    updated_history,
+                    "Thinking process not available in single-model mode."
+                )
+                return (response_out, history_out, thinking_out)
 
         except Exception as e:
             print(f"\033[91m[PromptCrafter] Error in QnA node: {e}\033[0m")
             import traceback
             traceback.print_exc()
-            return (f"An error occurred: {e}", "")
+            return (f"An error occurred: {e}", "", "")
+
+# ------------------------------------------------------------------------------------
+# PromptCrafter_QnA_Simple Node
+# ------------------------------------------------------------------------------------
+class PromptCrafter_QnA_Simple:
+    DESCRIPTION = "Minimal Q&A node that mirrors the old Gemini API behavior. Instruction-only, no formatting."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT, "tooltip": "Your question or instructions for the model."}),
+                "model": (api_clients.get_all_models(), {"tooltip": "The model to use."}),
+            },
+            "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
+            "optional": {
+                "image": ("IMAGE", {"tooltip": "Optional reference image (requires a vision model)."}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("response",)
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+
+    def execute(self, prompt, model, image=None, **kwargs):
+        try:
+            user_text = "" if prompt is None else str(prompt)
+            if not user_text.strip():
+                return ("",)
+
+            ok, response = api_clients.query_model_auto(
+                model,
+                prompt=user_text,
+                images=[image] if image is not None else [],
+                prefer_chat=False,
+                temperature=0.0,
+                seed=0,
+                timeout=120,
+                max_tokens=8192,
+                debug_mode=False,
+                debug_title="Simple QnA"
+            )
+
+            if not ok:
+                return (f"An error occurred: {response}",)
+
+            response_text = "" if response is None else str(response).strip()
+            if not response_text:
+                return ("",)
+
+            return (response_text,)
+        except Exception as e:
+            print(f"\033[91m[PromptCrafter] Error in Simple QnA node: {e}\033[0m")
+            import traceback
+            traceback.print_exc()
+            return (f"An error occurred: {e}",)
 
 # ------------------------------------------------------------------------------------
 # PromptCrafter_Captioner Node
@@ -640,6 +911,8 @@ class PromptCrafter_Formatter:
                 "suffix": ("STRING", {"multiline": False, "default": "", "tooltip": "Text to add to the end of the prompt(s)."}),
                 "find_text": ("STRING", {"multiline": False, "default": "", "tooltip": "Text to find (case-sensitive)."}),
                 "replace_with": ("STRING", {"multiline": False, "default": "", "tooltip": "Text to replace with."}),
+                "output_target": (text_io.OUTPUT_TARGET_OPTIONS, {"default": "Prompt", "tooltip": "Which output(s) to format."}),
+                "output_format": (text_io.FORMAT_OPTIONS, {"default": "Plain Text", "tooltip": "Format to apply to the selected output(s)."}),
             }
         }
 
@@ -671,7 +944,7 @@ class PromptCrafter_Formatter:
         # Join with ", " only if multiple parts exist
         return ", ".join(parts)
 
-    def execute(self, mode, prompt_in="", schedule_in="", template_text="", var_a="", var_b="", var_c="", var_d="", prefix="", suffix="", find_text="", replace_with=""):
+    def execute(self, mode, prompt_in="", schedule_in="", template_text="", var_a="", var_b="", var_c="", var_d="", prefix="", suffix="", find_text="", replace_with="", output_target="Prompt", output_format="Plain Text"):
         
         out_prompt = prompt_in
         out_schedule = schedule_in
@@ -704,10 +977,11 @@ class PromptCrafter_Formatter:
                 return (prompt_in, "") # Pass prompt, return empty schedule
             
             try:
-                # We need the json module
-                import json
-                schedule_data = json.loads(schedule_in)
+                schedule_data = json_utils.extract_and_parse_json(schedule_in) or {}
                 
+                if not isinstance(schedule_data, dict):
+                    raise ValueError("schedule_in is not a JSON object")
+
                 new_schedule = {}
                 # Iterate through the schedule (which is a dict of "frame": "prompt")
                 for frame, prompt_text in schedule_data.items():
@@ -730,6 +1004,15 @@ class PromptCrafter_Formatter:
                 out_prompt = error_msg
                 out_schedule = schedule_in
 
+        if output_target in ("Prompt", "Both"):
+            out_prompt = text_io.format_text_payload(out_prompt, output_format, label="prompt")
+        if output_target in ("Schedule", "Both"):
+            formatted_schedule, schedule_err = text_io.format_schedule_text(out_schedule, output_format)
+            if schedule_err:
+                print(f"\033[91m[PromptCrafter Formatter] {schedule_err}\033[0m")
+            else:
+                out_schedule = formatted_schedule
+
         return (out_prompt, out_schedule)
 
 # ------------------------------------------------------------------------------------
@@ -749,6 +1032,7 @@ class PromptCrafter_SaveTextFile:
                 "seed": ("STRING", {"multiline": False, "default": ""}),
                 "user_text": ("STRING", {"multiline": False, "default": ""}),
                 "custom_var": ("STRING", {"multiline": False, "default": ""}),
+                "file_type": (text_io.FILE_TYPE_OPTIONS, {"default": "txt", "tooltip": "File extension to use."}),
             }
         }
 
@@ -757,29 +1041,28 @@ class PromptCrafter_SaveTextFile:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
 
-    def execute(self, text_to_save, folder_path, filename_template, model_name="", seed="", user_text="", custom_var=""):
-        # 1. ADD: Ensure all replacement values are strings
-        filename = filename_template.replace("{model_name}", str(model_name))
-        filename = filename.replace("{seed}", str(seed))
-        filename = filename.replace("{user_text}", str(user_text))
-        filename = filename.replace("{custom_var}", str(custom_var))
+    def execute(self, text_to_save, folder_path, filename_template, model_name="", seed="", user_text="", custom_var="", file_type="txt"):
+        replacements = {
+            "model_name": model_name,
+            "seed": seed,
+            "user_text": user_text,
+            "custom_var": custom_var,
+        }
 
-        # Sanitize the filename
+        filename = text_io.resolve_filename_template(filename_template, replacements)
         filename = utils.TextCleaner.sanitize_filename(filename)
+        filename = text_io.ensure_extension(filename, file_type)
 
-        # Ensure the directory exists (This is fine, but robust error handling is better)
+        # Ensure the directory exists
         os.makedirs(folder_path, exist_ok=True)
-        
-        # 2. ADD: Logic to get a unique filename and prevent overwrites
+
+        # Prevent overwrites by generating a unique filename
         base_name, ext = os.path.splitext(filename)
-        # The 'utils' function from the original good code is the best way to handle this
-        # Assuming the existence of utils._get_unique_filepath(directory, base_name, extension)
-        out_dir = os.path.abspath(folder_path) # Need absolute path for the utility
+        out_dir = os.path.abspath(folder_path)
         full_path, _ = utils._get_unique_filepath(out_dir, base_name, ext)
 
-        # Write the content to the file
         with open(full_path, "w", encoding="utf-8") as f:
-            f.write(text_to_save)
+            f.write("" if text_to_save is None else str(text_to_save))
 
         return (f"Saved to {full_path}",)
 
@@ -1445,6 +1728,7 @@ class PromptCrafter_PromptChunker:
 
 NODE_CLASS_MAPPINGS = {
     "PromptCrafter_QnA": PromptCrafter_QnA,
+    "PromptCrafter_QnA_Simple": PromptCrafter_QnA_Simple,
     "PromptCrafter_Captioner": PromptCrafter_Captioner,
     "PromptCrafter_AudioSplitter": PromptCrafter_AudioSplitter,
     "PromptCrafter_CacheUtility": PromptCrafter_CacheUtility,
@@ -1457,6 +1741,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_QnA": "PromptCrafter QnA",
+    "PromptCrafter_QnA_Simple": "PromptCrafter QnA (Simple)",
     "PromptCrafter_Captioner": "PromptCrafter Image Captioner",
     "PromptCrafter_VisualCreator": "PromptCrafter Creator (Visual)",
     "PromptCrafter_SRTCreator": "☠️PGFX SRT Creator",

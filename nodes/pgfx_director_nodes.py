@@ -6,6 +6,22 @@ import textwrap
 from ..core import pgfx_api_clients as api_clients
 from . import pgfx_creator_nodes as creator_nodes
 from ..utils import pgfx_utils as utils
+from ..utils import pgfx_json_utils as json_utils
+
+def _normalize_model_name(model_entry):
+    if isinstance(model_entry, (list, tuple)) and model_entry:
+        return model_entry[0]
+    return model_entry
+
+def _select_model_default(all_llm_models, predicate, fallback="disabled"):
+    for model_entry in all_llm_models:
+        model_name = _normalize_model_name(model_entry)
+        if isinstance(model_name, str) and predicate(model_name):
+            return model_name
+    if all_llm_models:
+        first = _normalize_model_name(all_llm_models[0])
+        return first if isinstance(first, str) else fallback
+    return fallback
 
 class PromptCrafter_DirectorAgent:
     """
@@ -20,13 +36,19 @@ class PromptCrafter_DirectorAgent:
         try:
             all_llm_models = creator_nodes.get_combined_models()
             if not all_llm_models:
-                all_llm_models = [["disabled"]]
+                all_llm_models = ["disabled"]
             # Set defaults using the robust pattern from nodes_studio.py
-            thinking_default = next((m[0] for m in all_llm_models if "Qwen3-VL-8b-Thinking" in m[0]), all_llm_models[0][0] if all_llm_models else "disabled")
-            instruct_default = next((m[0] for m in all_llm_models if "Qwen3-VL-8b-Instruct" in m[0]), all_llm_models[0][0] if all_llm_models else "disabled")
+            thinking_default = _select_model_default(
+                all_llm_models,
+                lambda name: "Qwen3-VL-8b-Thinking" in name
+            )
+            instruct_default = _select_model_default(
+                all_llm_models,
+                lambda name: "Qwen3-VL-8b-Instruct" in name
+            )
         except Exception as e:
             print(f"[DirectorAgent] Error loading models: {e}")
-            all_llm_models = [["disabled"]]
+            all_llm_models = ["disabled"]
             thinking_default = "disabled"
             instruct_default = "disabled"
 
@@ -53,7 +75,7 @@ class PromptCrafter_DirectorAgent:
         
         # 1. Parse and Validate Inputs
         try:
-            whisper_json = json.loads(whisper_data)
+            whisper_json = json_utils.extract_and_parse_json(whisper_data) or {}
             segments = whisper_json.get("segments", [])
             if not segments:
                 return ("{}", "[ERROR] Whisper data contains no segments.")

@@ -787,14 +787,18 @@ def _reason_with_model(model, prompt, images=None, **kwargs):
     kwargs.setdefault('temperature', 0.0)
     
     ok, resp = query_model_auto(model, prompt, images=images, **kwargs)
+    if not ok:
+        return False, resp
     # Added check for empty or whitespace-only response from the model
     if not resp or not resp.strip():
         return False, "Model returned an empty or whitespace-only response."
-    if not ok: return False, resp
     try:
-        return True, json_utils.extract_and_parse_json(resp)
+        parsed = json_utils.extract_and_parse_json(resp)
     except Exception as e:
         return False, f"Failed to parse JSON from model response. Error: {e}"
+    if parsed is None:
+        return False, "Failed to parse JSON from model response."
+    return True, parsed
 
 # Apply the decorator to the public entry points.
 # _reason_with_model = _with_ollama_throttle(_reason_with_model) # Removed to prevent deadlock as it calls query_model_auto which is already throttled

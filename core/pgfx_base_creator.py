@@ -34,6 +34,7 @@ from .profiles import pgfx_captioner_profiles as captioner
 
 from ..utils import pgfx_utils as utils
 from ..utils import pgfx_json_utils as json_utils
+from ..utils import pgfx_text_io as text_io
 from ..nodes import pgfx_deprecated_talent_director as PromptCrafter_TalentDirector
 
 class PromptCrafter_BaseCreator:
@@ -44,6 +45,68 @@ class PromptCrafter_BaseCreator:
         """Initialize base creator."""
         self.talent_director = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector
         self._content_analysis_cache = {}
+
+    def _format_output_text(self, text, output_format, label="text"):
+        return text_io.format_text_payload(text, output_format, label=label)
+
+    def _format_schedule_output(self, schedule_text, output_format):
+        formatted, err = text_io.format_schedule_text(schedule_text, output_format)
+        if err:
+            print(f"\033[91m[PromptCrafter] {err}\033[0m")
+            return schedule_text
+        return formatted
+
+    def _apply_output_formatting(self, prompt_text, schedule_text, output_target, output_format):
+        outputs = {
+            "Prompt": prompt_text,
+            "Schedule": schedule_text,
+        }
+        formatted = self._apply_output_formatting_map(outputs, output_target, output_format, text_io.OUTPUT_TARGET_OPTIONS)
+        return formatted.get("Prompt", prompt_text), formatted.get("Schedule", schedule_text)
+
+    def _apply_output_formatting_map(self, outputs, output_target, output_format, available_targets):
+        if not outputs:
+            return {}
+        formatted = dict(outputs)
+        selected = text_io.resolve_selected_targets(output_target, available_targets)
+        for target in selected:
+            if target not in formatted:
+                continue
+            if target == "Schedule":
+                formatted[target] = self._format_schedule_output(formatted[target], output_format)
+            else:
+                label = target.lower().replace(" ", "_")
+                formatted[target] = self._format_output_text(formatted[target], output_format, label=label)
+        return formatted
+
+    def _auto_save_outputs(self, outputs, auto_save_target, output_format, folder_path, filename_template, file_type, replacements):
+        if not outputs or not auto_save_target:
+            return
+
+        resolved_type = text_io.resolve_file_type(file_type, output_format)
+        base_replacements = dict(replacements or {})
+        base_replacements["format"] = output_format.replace(" ", "_").lower()
+        base_replacements["file_type"] = resolved_type
+
+        selected = text_io.resolve_selected_targets(auto_save_target, list(outputs.keys()))
+
+        for target_name, text_val in outputs.items():
+            if target_name not in selected:
+                continue
+            if text_val is None or not str(text_val).strip():
+                continue
+            replacements_for_target = dict(base_replacements)
+            replacements_for_target["target"] = target_name.lower().replace(" ", "_")
+            try:
+                text_io.save_text_to_file(
+                    text_val,
+                    folder_path,
+                    filename_template,
+                    resolved_type,
+                    replacements=replacements_for_target,
+                )
+            except Exception as e:
+                print(f"\033[91m[PromptCrafter] Auto-save failed for {target_name}: {e}\033[0m")
 
     def _analyze_content_for_direction(self, content, content_type="text"):
         """Placeholder for analysis. Returns empty dict."""
@@ -478,8 +541,10 @@ The final output must be in {language} only.{safety_rule}"""
         
         weights = {}
         try:
-            weights = json.loads(image_weights_json)
-        except (json.JSONDecodeError, TypeError):
+            parsed_weights = json_utils.extract_and_parse_json(image_weights_json)
+            if isinstance(parsed_weights, dict):
+                weights = parsed_weights
+        except Exception:
             print(f"\033[93m[PromptCrafter] Warning: Could not parse image_weights_json. Using default weights. Value: {image_weights_json}\033[0m")
 
         for i in range(1, image_count + 1):
@@ -523,8 +588,8 @@ The final output must be in {language} only.{safety_rule}"""
         config_params.update({
             'model': model, 'language': language, 'temperature': temperature, 
             'max_length_words': max_length_words,
-            'use_chat_api': True,
-            'use_deep_think': True,
+            'use_chat_api': kwargs.get('use_chat_api', True),
+            'use_deep_think': kwargs.get('use_deep_think', True),
         })
 
         from dataclasses import fields
@@ -842,7 +907,9 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
     def _enhance_schedule_with_talent_direction(self, schedule_json, original_content, target_model, timed_segments=None):
         """Enhance schedule with talent direction."""
         try:
-            schedule_data = json.loads(schedule_json)
+            schedule_data = json_utils.extract_and_parse_json(schedule_json)
+            if not isinstance(schedule_data, dict):
+                return schedule_json
             enhanced_schedule = {}
             
             if timed_segments is None:

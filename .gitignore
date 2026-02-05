@@ -20,3 +20,7 @@ build/
 # Logs and Temporary Files
 debug.log
 js/debug.log 
+agent.context.md
+agent.md
+agent.rules.md
+ARCHITECTURE.md

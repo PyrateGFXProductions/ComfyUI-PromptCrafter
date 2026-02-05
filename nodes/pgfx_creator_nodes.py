@@ -28,6 +28,8 @@ from ..core import pgfx_api_clients as api_clients
 from ..core import pgfx_config as config
 from ..core.profiles import pgfx_style_profiles as style_profiles
 from ..utils import pgfx_utils as utils
+from ..utils import pgfx_json_utils as json_utils
+from ..utils import pgfx_text_io as text_io
 from ..core.profiles import pgfx_organization_profiles as organization_profiles
 from . import pgfx_audio_srt as pgfx_srt_creator
 from ..core.profiles import pgfx_captioner_profiles as captioner_profiles
@@ -67,6 +69,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
         combined_models = get_combined_models()
         return {
             "required": {
+                "response_mode": (["Predictable", "Creative"], {"default": "Predictable", "tooltip": "Predictable = deterministic, instruction-only. Creative = current behavior."}),
                 "pipeline_mode": (["Image", "Video"], {"default": "Image"}),
                 "instruction": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT}),
                 "subject": ("STRING", {"multiline": True, "default": "" } ),
@@ -97,6 +100,15 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 "max_frames": ("INT", {"default": 240, "min": 1, "max": 99999}),
                 "interpolate_keyframes": ("BOOLEAN", {"default": False}),
                 "interpolation_frame_interval": ("INT", {"default": 10, "min": 0, "max": 16}),
+                "format_profile": (text_io.CREATOR_FORMAT_PROFILE_OPTIONS, {"default": "Custom", "tooltip": "Quick presets for output formatting and auto-save."}),
+                "output_target": (text_io.VISUAL_OUTPUT_TARGET_OPTIONS, {"default": "Prompt", "tooltip": "Which outputs to format."}),
+                "output_format": (text_io.FORMAT_OPTIONS, {"default": "Plain Text", "tooltip": "Format to apply to selected outputs."}),
+                "auto_save": ("BOOLEAN", {"default": False, "tooltip": "Auto-save the selected output(s) to a file."}),
+                "auto_save_target": (text_io.VISUAL_OUTPUT_TARGET_OPTIONS, {"default": "Prompt", "tooltip": "Which output(s) to auto-save."}),
+                "auto_save_folder_path": ("STRING", {"multiline": False, "default": "ComfyUI/output/PromptCrafter", "tooltip": "Folder to save files into."}),
+                "auto_save_filename_template": ("STRING", {"multiline": False, "default": "{seed}_{model_name}_{target}.txt", "tooltip": "Filename template. Supports {model_name}, {seed}, {user_text}, {custom_var}, {target}, {format}, {file_type}."}),
+                "auto_save_file_type": (text_io.AUTO_FILE_TYPE_OPTIONS, {"default": "Match Output Format", "tooltip": "File extension for auto-saved files."}),
+                "auto_save_custom_var": ("STRING", {"multiline": False, "default": "", "tooltip": "Custom placeholder value for {custom_var} in the filename template."}),
             },
         }
 
@@ -109,8 +121,23 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
     def execute(self, instruction, subject, model, negative_prompt="", **kwargs):
         """Execute with talent direction integration."""
         try:
-            thinking_model = kwargs.get("thinking_model")
-            instruct_model = kwargs.get("instruct_model")
+            response_mode = kwargs.get("response_mode", "Predictable")
+            mode_kwargs = dict(kwargs)
+            if response_mode == "Predictable":
+                mode_kwargs.update({
+                    "temperature": 0.0,
+                    "seed": 0,
+                    "use_chat_api": False,
+                    "use_deep_think": False,
+                    "deep_think_refinements": 0,
+                    "max_retries": 0,
+                })
+                thinking_model = None
+                instruct_model = None
+            else:
+                thinking_model = mode_kwargs.get("thinking_model")
+                instruct_model = mode_kwargs.get("instruct_model")
+            kwargs = mode_kwargs
 
             user_text = instruction
             if subject and subject.strip():
@@ -118,6 +145,24 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
 
             pipeline_mode = kwargs.get("pipeline_mode", "Image")
             target_model_format = kwargs.get("target_model_format", "Generic (SD1.5, SD2.1)")
+            format_profile = kwargs.get("format_profile", "Custom")
+            output_target = kwargs.get("output_target", "Prompt")
+            output_format = kwargs.get("output_format", "Plain Text")
+            auto_save = kwargs.get("auto_save", False)
+            auto_save_target = kwargs.get("auto_save_target", "Prompt")
+            auto_save_folder_path = kwargs.get("auto_save_folder_path", "ComfyUI/output/PromptCrafter")
+            auto_save_filename_template = kwargs.get("auto_save_filename_template", "{seed}_{model_name}_{target}.txt")
+            auto_save_file_type = kwargs.get("auto_save_file_type", "Match Output Format")
+            auto_save_custom_var = kwargs.get("auto_save_custom_var", "")
+
+            if format_profile and format_profile != "Custom":
+                profile = text_io.CREATOR_FORMAT_PROFILES.get(format_profile)
+                if profile:
+                    output_target = profile.get("output_target", output_target)
+                    output_format = profile.get("output_format", output_format)
+                    auto_save = profile.get("auto_save", auto_save)
+                    auto_save_target = profile.get("auto_save_target", auto_save_target)
+                    auto_save_file_type = profile.get("auto_save_file_type", auto_save_file_type)
             
             images_with_weights = self._collect_images_with_weights(**kwargs)
             initial_run_config = self._setup_config(pipeline_mode, user_text, model, images_with_weights=images_with_weights, **kwargs)
@@ -246,8 +291,42 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
 
 --- IMAGE CONTEXT ---
 {image_context} """ 
+                outputs_map = {
+                    "Prompt": final_prompt,
+                    "Schedule": "",
+                    "Image Context": final_image_context,
+                    "Negative Prompt": final_negative_prompt,
+                }
+                formatted_map = self._apply_output_formatting_map(
+                    outputs_map,
+                    output_target,
+                    output_format,
+                    text_io.VISUAL_OUTPUT_TARGET_OPTIONS,
+                )
+                if auto_save:
+                    self._auto_save_outputs(
+                        formatted_map,
+                        auto_save_target,
+                        output_format,
+                        auto_save_folder_path,
+                        auto_save_filename_template,
+                        auto_save_file_type,
+                        {
+                            "model_name": model,
+                            "seed": initial_run_config.seed,
+                            "user_text": user_text,
+                            "custom_var": auto_save_custom_var,
+                        },
+                    )
 
-                return (final_prompt, "", final_image_context, final_negative_prompt, model, str(initial_run_config.seed)) + tuple(passthrough_images)
+                return (
+                    formatted_map.get("Prompt", final_prompt),
+                    formatted_map.get("Schedule", ""),
+                    formatted_map.get("Image Context", final_image_context),
+                    formatted_map.get("Negative Prompt", final_negative_prompt),
+                    model,
+                    str(initial_run_config.seed),
+                ) + tuple(passthrough_images)
 
             # --- LEGACY SINGLE-MODEL PATH ---
             else:
@@ -255,7 +334,10 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 # All visual prompts now go through the main generation pipeline.
                 # The _is_speech_prompt_request and _is_lyrics_to_prompt_request checks are removed.
                 
-                error, new_user_text = self._handle_creative_intent(pipeline_mode, user_text, images_with_weights, initial_run_config)
+                if response_mode == "Predictable":
+                    error, new_user_text = None, None
+                else:
+                    error, new_user_text = self._handle_creative_intent(pipeline_mode, user_text, images_with_weights, initial_run_config)
                 if error: 
                     return (error,) + (None,) * (len(self.RETURN_TYPES) - 1)
                 final_user_text = new_user_text or user_text
@@ -273,8 +355,43 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     if schedule and schedule.strip() != "{}":
                         enhanced_schedule = self._enhance_schedule_with_talent_direction(schedule, final_user_text, model, timed_segments=None)
                         schedule = enhanced_schedule
-                    
-                    return (prompt, schedule, image_context, neg_prompt, model, str(run_config.seed)) + tuple(passthrough_images)
+
+                    outputs_map = {
+                        "Prompt": prompt,
+                        "Schedule": schedule,
+                        "Image Context": image_context,
+                        "Negative Prompt": neg_prompt,
+                    }
+                    formatted_map = self._apply_output_formatting_map(
+                        outputs_map,
+                        output_target,
+                        output_format,
+                        text_io.VISUAL_OUTPUT_TARGET_OPTIONS,
+                    )
+                    if auto_save:
+                        self._auto_save_outputs(
+                            formatted_map,
+                            auto_save_target,
+                            output_format,
+                            auto_save_folder_path,
+                            auto_save_filename_template,
+                            auto_save_file_type,
+                            {
+                                "model_name": model,
+                                "seed": run_config.seed,
+                                "user_text": final_user_text,
+                            "custom_var": auto_save_custom_var,
+                        },
+                    )
+
+                    return (
+                        formatted_map.get("Prompt", prompt),
+                        formatted_map.get("Schedule", schedule),
+                        formatted_map.get("Image Context", image_context),
+                        formatted_map.get("Negative Prompt", neg_prompt),
+                        model,
+                        str(run_config.seed),
+                    ) + tuple(passthrough_images)
                 else:
                     image_context_for_all = self._describe_images(images_with_weights, run_config)
                     image_context_out = image_context_for_all[0] if image_context_for_all else ""
@@ -287,7 +404,42 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     
                     final_prompt_formatted = self._format_prompt_for_target(final_prompt, target_model_format)
 
-                    return (final_prompt_formatted, "", image_context_out, ai_negative_prompt, model, str(run_config.seed)) + tuple(passthrough_images)
+                    outputs_map = {
+                        "Prompt": final_prompt_formatted,
+                        "Schedule": "",
+                        "Image Context": image_context_out,
+                        "Negative Prompt": ai_negative_prompt,
+                    }
+                    formatted_map = self._apply_output_formatting_map(
+                        outputs_map,
+                        output_target,
+                        output_format,
+                        text_io.VISUAL_OUTPUT_TARGET_OPTIONS,
+                    )
+                    if auto_save:
+                        self._auto_save_outputs(
+                            formatted_map,
+                            auto_save_target,
+                            output_format,
+                            auto_save_folder_path,
+                            auto_save_filename_template,
+                            auto_save_file_type,
+                            {
+                                "model_name": model,
+                                "seed": run_config.seed,
+                                "user_text": final_user_text,
+                            "custom_var": auto_save_custom_var,
+                        },
+                    )
+
+                    return (
+                        formatted_map.get("Prompt", final_prompt_formatted),
+                        formatted_map.get("Schedule", ""),
+                        formatted_map.get("Image Context", image_context_out),
+                        formatted_map.get("Negative Prompt", ai_negative_prompt),
+                        model,
+                        str(run_config.seed),
+                    ) + tuple(passthrough_images)
         except Exception as e:
             return self._handle_creator_exception(e)
 
@@ -324,6 +476,8 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
     def INPUT_TYPES(cls):
         combined_models = get_combined_models()
         types = copy.deepcopy(PromptCrafter_VisualCreator.INPUT_TYPES())
+        if "response_mode" not in types["required"]:
+            types["required"]["response_mode"] = (["Predictable", "Creative"], {"default": "Predictable", "tooltip": "Predictable = deterministic, instruction-only. Creative = current behavior."})
         types["required"]["model"] = (combined_models, {"tooltip": "The language model to use. Can be a local GGUF file or an API-based model."} )
         types["required"]["temperature"] = ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01})
         types["required"]["max_length_words"] = ("INT", {"default": 2000, "min": 0, "max": 10000, "step": 100})
@@ -377,6 +531,17 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
 
         if "whisper_model_size" in types["optional"]:
             del types["optional"]["whisper_model_size"]
+
+        if "output_target" in types["optional"]:
+            options, meta = types["optional"]["output_target"]
+            new_meta = dict(meta)
+            new_meta["default"] = "Schedule"
+            types["optional"]["output_target"] = (text_io.LYRICS_OUTPUT_TARGET_OPTIONS, new_meta)
+        if "auto_save_target" in types["optional"]:
+            options, meta = types["optional"]["auto_save_target"]
+            new_meta = dict(meta)
+            new_meta["default"] = "Schedule"
+            types["optional"]["auto_save_target"] = (text_io.LYRICS_OUTPUT_TARGET_OPTIONS, new_meta)
         return types
     
     STATIC_RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "DICT", "IMAGE", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING")
@@ -412,14 +577,47 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
     def execute(self, instruction, subject, model, **kwargs):
         """Execute with talent direction integration."""
         try:
-            thinking_model = kwargs.get("thinking_model")
-            instruct_model = kwargs.get("instruct_model")
+            response_mode = kwargs.get("response_mode", "Predictable")
+            mode_kwargs = dict(kwargs)
+            if response_mode == "Predictable":
+                mode_kwargs.update({
+                    "temperature": 0.0,
+                    "seed": 0,
+                    "use_chat_api": False,
+                    "use_deep_think": False,
+                    "deep_think_refinements": 0,
+                    "max_retries": 0,
+                })
+                thinking_model = None
+                instruct_model = None
+            else:
+                thinking_model = mode_kwargs.get("thinking_model")
+                instruct_model = mode_kwargs.get("instruct_model")
+            kwargs = mode_kwargs
             user_text = instruction
             if subject and subject.strip():
                 user_text = f"SUBJECT:\n{subject}\n\nINSTRUCTION:\n{instruction}"
 
             images_with_weights = self._collect_images_with_weights(**kwargs)
             run_config = self._setup_config("Lyrics", user_text, model, images_with_weights=images_with_weights, **kwargs)
+            format_profile = kwargs.get("format_profile", "Custom")
+            output_target = kwargs.get("output_target", "Schedule")
+            output_format = kwargs.get("output_format", "Plain Text")
+            auto_save = kwargs.get("auto_save", False)
+            auto_save_target = kwargs.get("auto_save_target", "Schedule")
+            auto_save_folder_path = kwargs.get("auto_save_folder_path", "ComfyUI/output/PromptCrafter")
+            auto_save_filename_template = kwargs.get("auto_save_filename_template", "{seed}_{model_name}_{target}.txt")
+            auto_save_file_type = kwargs.get("auto_save_file_type", "Match Output Format")
+            auto_save_custom_var = kwargs.get("auto_save_custom_var", "")
+
+            if format_profile and format_profile != "Custom":
+                profile = text_io.CREATOR_FORMAT_PROFILES.get(format_profile)
+                if profile:
+                    output_target = profile.get("output_target", output_target)
+                    output_format = profile.get("output_format", output_format)
+                    auto_save = profile.get("auto_save", auto_save)
+                    auto_save_target = profile.get("auto_save_target", auto_save_target)
+                    auto_save_file_type = profile.get("auto_save_file_type", auto_save_file_type)
 
             # --- DUAL-MODEL CHAIN PATH ---
             if thinking_model and instruct_model and "None" not in thinking_model and "None" not in instruct_model:
@@ -471,7 +669,8 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                             lyrics_srt = srt_res[0]
                             clean_lyrics_txt = srt_res[1]
                             if srt_res[3]:
-                                timed_segments = json.loads(srt_res[3])
+                                parsed_segments = json_utils.extract_and_parse_json(srt_res[3])
+                                timed_segments = parsed_segments if isinstance(parsed_segments, list) else []
                                 
                             audio_meta = {
                                 "audio_total_duration": float(waveform.shape[-1]) / sample_rate,
@@ -585,8 +784,43 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 elif isinstance(spec_preview, Image.Image):
                     spec_preview = utils.pil2tensor(spec_preview)
 
+                outputs_map = {
+                    "Prompt": "",
+                    "Schedule": schedule_json,
+                    "Image Context": "",
+                    "Negative Prompt": "",
+                    "Clean Lyrics": clean_lyrics,
+                    "Lyrics SRT": audio_meta_result.get("lyrics_srt", ""),
+                }
+                formatted_map = self._apply_output_formatting_map(
+                    outputs_map,
+                    output_target,
+                    output_format,
+                    text_io.LYRICS_OUTPUT_TARGET_OPTIONS,
+                )
+                if auto_save:
+                    self._auto_save_outputs(
+                        formatted_map,
+                        auto_save_target,
+                        output_format,
+                        auto_save_folder_path,
+                        auto_save_filename_template,
+                        auto_save_file_type,
+                        {
+                            "model_name": model,
+                            "seed": run_config.seed,
+                            "user_text": user_text,
+                            "custom_var": auto_save_custom_var,
+                        },
+                    )
+
                 return (
-                    "", schedule_json, "", "", clean_lyrics, audio_meta_result.get("lyrics_srt", ""),
+                    formatted_map.get("Prompt", ""),
+                    formatted_map.get("Schedule", schedule_json),
+                    formatted_map.get("Image Context", ""),
+                    formatted_map.get("Negative Prompt", ""),
+                    formatted_map.get("Clean Lyrics", clean_lyrics),
+                    formatted_map.get("Lyrics SRT", audio_meta_result.get("lyrics_srt", "")),
                     model, str(run_config.seed), audio_meta_dict,
                     spec_preview, kwargs.get("signal"),
                     kwargs.get("character_description"), kwargs.get("song_theme_style"), kwargs.get("environment"),
@@ -602,14 +836,86 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 describe_result = self._describe_images(images_with_weights, run_config)
                 image_context_out, _, primary_subjects_from_images = describe_result if describe_result else ("", [], [])
 
+                # Map UI kwargs to ThoughtProcess expected lyrics_* keys
+                lyrics_kwargs = kwargs.copy()
+                _lyrics_key_map = {
+                    "audio_file": "lyrics_audio_file",
+                    "lyrics_file": "lyrics_lyrics_file",
+                    "audio_folder_path": "lyrics_audio_folder_path",
+                    "lyrics_folder_path": "lyrics_lyrics_folder_path",
+                    "use_audio_alignment": "lyrics_use_audio_alignment",
+                    "song_length_seconds": "lyrics_song_length_seconds",
+                    "fps": "lyrics_fps",
+                    "scene_splitting_mode": "lyrics_scene_splitting_mode",
+                    "max_scene_duration_seconds": "lyrics_max_scene_duration_seconds",
+                    "max_scene_frames": "lyrics_max_scene_frames",
+                    "whisper_model": "lyrics_whisper_model_size",
+                    "whisper_language": "lyrics_whisper_language",
+                    "whisper_engine": "lyrics_whisper_engine",
+                    "use_vrg_prompt_builder": "lyrics_use_vrg_prompt_builder",
+                    "automate_vrg_variables": "lyrics_automate_vrg_variables",
+                    "character_description": "lyrics_character_description",
+                    "song_theme_style": "lyrics_song_theme_style",
+                    "word_count_min": "lyrics_word_count_min",
+                    "word_count_max": "lyrics_word_count_max",
+                    "list_handling_mode": "lyrics_list_handling_mode",
+                    "environment": "lyrics_environment",
+                    "lighting": "lyrics_lighting",
+                    "camera_motion": "lyrics_camera_motion",
+                    "physical_interaction": "lyrics_physical_interaction",
+                    "facial_expression": "lyrics_facial_expression",
+                    "shots": "lyrics_shots",
+                    "outfit_rules": "lyrics_outfit_rules",
+                    "character_visibility": "lyrics_character_visibility",
+                    "generate_schedule": "lyrics_generate_schedule",
+                    "interpolate_keyframes": "lyrics_interpolate_keyframes",
+                    "interpolation_frame_interval": "lyrics_interpolation_frame_interval",
+                    "target_model_format": "lyrics_target_model_format",
+                }
+                for src_key, dst_key in _lyrics_key_map.items():
+                    if src_key in kwargs and dst_key not in lyrics_kwargs:
+                        lyrics_kwargs[dst_key] = kwargs.get(src_key)
+
                 thought_process_instance = thinking_process.ThoughtProcess(
                     run_config=run_config, user_text=user_text,
                     negative_prompt=kwargs.get("negative_prompt", ""), image_context=image_context_out,
                     primary_subjects_from_images=primary_subjects_from_images,
-                    mode="Lyrics", **kwargs
+                    mode="Lyrics", **lyrics_kwargs
                 )
 
-                prompt, image_context_out, negative_prompt_out, clean_lyrics_txt, lyrics_srt, audio_meta, spectrogram_preview, schedule = thought_process_instance.run_lyrics()
+                result = thought_process_instance.run()
+                if isinstance(result, dict):
+                    prompt = result.get("prompt", "")
+                    schedule = result.get("schedule", "")
+                    image_context_out = result.get("image_context", image_context_out)
+                    negative_prompt_out = result.get("negative_prompt", "")
+                    clean_lyrics_txt = result.get("clean_lyrics_txt", "")
+                    lyrics_srt = result.get("lyrics_srt", "")
+                    audio_meta = result.get("audio_meta", {}) if isinstance(result.get("audio_meta", {}), dict) else {}
+                    spectrogram_preview = result.get("spectrogram_preview", None)
+                    auto_character = result.get("auto_character", "") or kwargs.get("character_description")
+                    auto_theme = result.get("auto_theme", "") or kwargs.get("song_theme_style")
+                    auto_environment = result.get("auto_environment", "") or kwargs.get("environment")
+                    auto_lighting = result.get("auto_lighting", "") or kwargs.get("lighting")
+                    auto_interaction = result.get("auto_interaction", "") or kwargs.get("physical_interaction")
+                    auto_expression = result.get("auto_expression", "") or kwargs.get("facial_expression")
+                    auto_shots = result.get("auto_shots", "") or kwargs.get("shots")
+                    auto_outfit = result.get("auto_outfit", "") or kwargs.get("outfit_rules")
+                    auto_visibility = result.get("auto_visibility", "") or kwargs.get("character_visibility")
+                elif isinstance(result, tuple) and len(result) >= 8:
+                    # Backward compatibility if a tuple is returned
+                    prompt, image_context_out, negative_prompt_out, clean_lyrics_txt, lyrics_srt, audio_meta, spectrogram_preview, schedule = result[:8]
+                    auto_character = kwargs.get("character_description")
+                    auto_theme = kwargs.get("song_theme_style")
+                    auto_environment = kwargs.get("environment")
+                    auto_lighting = kwargs.get("lighting")
+                    auto_interaction = kwargs.get("physical_interaction")
+                    auto_expression = kwargs.get("facial_expression")
+                    auto_shots = kwargs.get("shots")
+                    auto_outfit = kwargs.get("outfit_rules")
+                    auto_visibility = kwargs.get("character_visibility")
+                else:
+                    return self._handle_creator_exception(Exception(f"Lyrics engine returned invalid output: {result}"))
 
                 if schedule and isinstance(schedule, str) and schedule.strip() and schedule.strip() != "{}":
                     timed_segments = audio_meta.get("timed_segments") if isinstance(audio_meta, dict) else []
@@ -637,13 +943,48 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 
                 auto_vars = kwargs.get("automate_vrg_variables", False)
                 
+                outputs_map = {
+                    "Prompt": prompt,
+                    "Schedule": schedule,
+                    "Image Context": image_context_out,
+                    "Negative Prompt": negative_prompt_out,
+                    "Clean Lyrics": clean_lyrics_txt,
+                    "Lyrics SRT": lyrics_srt,
+                }
+                formatted_map = self._apply_output_formatting_map(
+                    outputs_map,
+                    output_target,
+                    output_format,
+                    text_io.LYRICS_OUTPUT_TARGET_OPTIONS,
+                )
+                if auto_save:
+                    self._auto_save_outputs(
+                        formatted_map,
+                        auto_save_target,
+                        output_format,
+                        auto_save_folder_path,
+                        auto_save_filename_template,
+                        auto_save_file_type,
+                        {
+                            "model_name": model,
+                            "seed": run_config.seed,
+                            "user_text": user_text,
+                            "custom_var": auto_save_custom_var,
+                        },
+                    )
+
                 return (
-                    prompt, schedule, image_context_out, negative_prompt_out, clean_lyrics_txt, lyrics_srt,
+                    formatted_map.get("Prompt", prompt),
+                    formatted_map.get("Schedule", schedule),
+                    formatted_map.get("Image Context", image_context_out),
+                    formatted_map.get("Negative Prompt", negative_prompt_out),
+                    formatted_map.get("Clean Lyrics", clean_lyrics_txt),
+                    formatted_map.get("Lyrics SRT", lyrics_srt),
                     model, str(run_config.seed), audio_meta if isinstance(audio_meta, dict) else {}, spectrogram_preview,
-                    kwargs.get("signal"), kwargs.get("character_description"), kwargs.get("song_theme_style"),
-                    kwargs.get("environment"), kwargs.get("lighting"), kwargs.get("physical_interaction"),
-                    kwargs.get("facial_expression"), kwargs.get("shots"), kwargs.get("outfit_rules"),
-                    kwargs.get("character_visibility")
+                    kwargs.get("signal"), auto_character, auto_theme,
+                    auto_environment, auto_lighting, auto_interaction,
+                    auto_expression, auto_shots, auto_outfit,
+                    auto_visibility
                 ) + tuple(passthrough_images)
         except Exception as e:
             return self._handle_creator_exception(e)

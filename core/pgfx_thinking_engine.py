@@ -144,8 +144,10 @@ class ThoughtProcess:
         images_with_weights = []
         weights = {}
         try:
-            weights = json.loads(image_weights_json)
-        except (json.JSONDecodeError, TypeError):
+            parsed_weights = json_utils.extract_and_parse_json(image_weights_json)
+            if isinstance(parsed_weights, dict):
+                weights = parsed_weights
+        except Exception:
             print(f"\033[93m[PromptCrafter] Warning: Could not parse image_weights_json. Using default weights. Value: {image_weights_json}\033[0m")
 
         for i in range(1, image_count + 1):
@@ -1499,9 +1501,25 @@ Return ONLY the final, refined prompt.
         try:
             # Dynamically import the correct transcription library based on the engine setting
             if self.lyrics_whisper_engine == "faster-whisper":
-                from . import faster_whisper_transcriber as transcriber
+                from faster_whisper import WhisperModel
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                compute_type = "float16" if torch.cuda.is_available() else "int8"
+                language = None if self.lyrics_whisper_language in (None, "auto-detect") else self.lyrics_whisper_language
+
+                model = WhisperModel(self.lyrics_whisper_model_size, device=device, compute_type=compute_type)
+                segments, info = model.transcribe(audio_path, language=language)
+                timed_segments = []
+                text_parts = []
+                for seg in segments:
+                    text = (seg.text or "").strip()
+                    timed_segments.append((float(seg.start), float(seg.end), text))
+                    if text:
+                        text_parts.append(text)
+                full_text = " ".join(text_parts).strip()
+                config.CACHE.set(cache_key, (full_text, timed_segments, info))
+                return full_text, timed_segments, info
             elif self.lyrics_whisper_engine == "insanely-fast-whisper":
-                from . import insanely_fast_whisper_transcriber as transcriber
+                from . import pgfx_fast_transcriber as transcriber
             else:
                 raise ImportError(f"Unknown whisper_engine: {self.lyrics_whisper_engine}")
 
@@ -1515,7 +1533,7 @@ Return ONLY the final, refined prompt.
 
         except Exception as e:
             print(f"\033[91m[MusicVideo-AudioDept] Error during transcription: {e}\033[0m")
-            return f"[Error during transcription: {e}]", None, None, None # Return None for info as well
+            return f"[Error during transcription: {e}]", None, None # Return None for info as well
 
     def _align_and_correct_lyrics(self, whisper_transcript, initial_timed_segments, user_lyrics, audio_path):
         """Agent A3: Aligns, corrects, and finalizes the lyrics and their timings."""
