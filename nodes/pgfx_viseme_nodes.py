@@ -40,7 +40,7 @@ class PGFX_ScriptGuidedVisemes:
             }
         }
 
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
     RETURN_TYPES = ("IMAGE", "STRING", "BOOLEAN", "STRING",)
     RETURN_NAMES = ("control_images", "phoneme_debug_text", "is_silent", "instrumental_cue",)
     FUNCTION = "execute"
@@ -213,4 +213,4 @@ class PGFX_ScriptGuidedVisemes:
             return (default_image_output, f"CRITICAL ERROR: {e}", True, None)
 
 NODE_CLASS_MAPPINGS = {"PGFX_ScriptGuidedVisemes": PGFX_ScriptGuidedVisemes}
-NODE_DISPLAY_NAME_MAPPINGS = {"PGFX_ScriptGuidedVisemes": "☠️PGFX Script-Guided Visemes"}
+NODE_DISPLAY_NAME_MAPPINGS = {"PGFX_ScriptGuidedVisemes": "👄 Script-Guided Visemes"}

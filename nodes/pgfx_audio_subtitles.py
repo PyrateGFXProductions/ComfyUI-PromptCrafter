@@ -61,7 +61,7 @@ class PromptCrafter_SubtitleStyler:
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "burn_subtitles"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Video"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Video"
 
     def burn_subtitles(self, images, fps, font_name, font_size, font_color, position_y, align, stroke_width, stroke_color, meta_dict=None, srt_content=None):
         
@@ -159,5 +159,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_SubtitleStyler": "☠️PGFX Subtitle Styler"
+    "PromptCrafter_SubtitleStyler": "📝 Subtitle Styler"
 }

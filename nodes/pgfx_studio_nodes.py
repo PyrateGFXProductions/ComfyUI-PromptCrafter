@@ -120,7 +120,7 @@ class PGFX_Studio_Producer:
     RETURN_TYPES = ("DICT",)
     RETURN_NAMES = ("PROJECT_CONFIG",)
     FUNCTION = "configure"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def configure(self, project_name, resolution, fps, root_output_path):
         width, height = map(int, resolution.split("x"))
@@ -314,7 +314,7 @@ class PGFX_Studio_SoundEngineer:
     RETURN_TYPES = ("AUDIO", "DICT", "INT")
     RETURN_NAMES = ("AUDIO", "TIMING_MAP", "SCENE_COUNT")
     FUNCTION = "process_audio"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def process_audio(self, audio, PROJECT_CONFIG, profile, segment_duration=4.0, enable_vad=True, vad_threshold=0.5, enable_emotion_detection=True):
         # Extract fps from PROJECT_CONFIG
@@ -470,7 +470,7 @@ class PGFX_Studio_Screenwriter:
     RETURN_TYPES = ("DICT", "DICT")
     RETURN_NAMES = ("SCREENPLAY", "AUDIO_META")
     FUNCTION = "write_script"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def write_script(self, TIMING_MAP, audio, profile, thinking_model, instruct_model, whisper_model="large-v3", raw_lyrics_override="", debug_mode=False):
         # --- Profile Integration ---
@@ -612,7 +612,7 @@ class PGFX_Studio_CreativeDirector:
     RETURN_TYPES = ("DICT", "STRING")
     RETURN_NAMES = ("VISUAL_BRIEF", "creative_concept_log")
     FUNCTION = "develop_concept"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     # In nodes_studio.py, in the PGFX_Studio_CreativeDirector class, modify the develop_concept method:
 
@@ -810,7 +810,7 @@ class PGFX_Studio_Director:
     RETURN_TYPES = ("DICT", "STRING")
     RETURN_NAMES = ("SHOT_LIST", "reasoning_log")
     FUNCTION = "direct_scenes"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def _detect_climax_scenes(self, screenplay_data):
         """Identify scenes that likely represent emotional climaxes"""
@@ -1277,7 +1277,7 @@ class PGFX_Studio_Cinematographer:
     RETURN_TYPES = ("STRING", "STRING", "INT", "AUDIO", "INT", "INT", "INT")
     RETURN_NAMES = ("positive", "negative", "seed", "audio_chunk", "num_frames", "scene_index", "remaining_scenes")
     FUNCTION = "get_shot"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def _interrupt_execution(self):
         """Stops the execution of the ComfyUI queue."""
@@ -1380,7 +1380,7 @@ class PGFX_Studio_Editor:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("clip_path",)
     FUNCTION = "save_scene_clip"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
     OUTPUT_NODE = True
 
     def save_scene_clip(self, PROJECT_CONFIG, video_frames, scene_index, audio_chunk=None):
@@ -1473,7 +1473,7 @@ class PGFX_Studio_Stylist:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("visual_identity_brief", "lora_conditioning_text")
     FUNCTION = "apply_style"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def apply_style(self, base_style, character_consistency_tags, global_lighting_mood, additional_lora_triggers="", style_strength=1.0):
         from . import style_profiles
@@ -1545,7 +1545,7 @@ class PGFX_Studio_ScriptSupervisor:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("continuity_report",)
     FUNCTION = "review"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def review(self, SHOT_LIST, SCREENPLAY, thinking_model, instruct_model, debug_mode=False):
         shot_list_data = SHOT_LIST.get("data", [])
@@ -1662,7 +1662,7 @@ class PGFX_Studio_Animator:
     RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE")
     RETURN_NAMES = ("animation_frames", "depth_maps", "canny_maps")
     FUNCTION = "animate"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def animate(self, AUDIO_META, PROJECT_CONFIG, current_index, face_template,
                 debug, max_frames, dot_size, line_thickness, **kwargs):
@@ -1769,7 +1769,7 @@ class PGFX_Studio_VideoCombiner:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("blended_video_frames",)
     FUNCTION = "blend_videos"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1856,7 +1856,7 @@ class PGFX_Studio_PostMaster:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("final_file_path",)
     FUNCTION = "render_master"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
     OUTPUT_NODE = True
 
     def render_master(self, PROJECT_CONFIG, master_audio, auto_stitch_at_end, force_render_now, remaining_scenes=999, output_filename="FINAL_MUSIC_VIDEO"):
@@ -1941,7 +1941,7 @@ class PGFX_Studio_ProjectContext:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("PROJECT_CONTEXT",)
     FUNCTION = "build"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def build(self, song_metadata, artist, genre, era, desired_aesthetic):
         parts = [
@@ -1973,7 +1973,7 @@ class PGFX_Studio_StoreText:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("stored_path",)
     FUNCTION = "store"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/IO"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/IO"
 
     def store(self, PROJECT_CONFIG, text_to_store, filename):
         if text_to_store is None or not str(text_to_store).strip():
@@ -2013,7 +2013,7 @@ class PGFX_Studio_LoadText:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("loaded_text",)
     FUNCTION = "load"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/IO"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/IO"
 
     def load(self, PROJECT_CONFIG, filename):
         if filename is None or not str(filename).strip():
@@ -2058,7 +2058,7 @@ class PGFX_Studio_ShotPlannerPromptBuilder:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("prompt",)
     FUNCTION = "build"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Director"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Director"
 
     def build(self, PROJECT_CONTEXT, lyrics_json, visual_style_json, timing_json, shot_index):
         if PROJECT_CONTEXT is None or not str(PROJECT_CONTEXT).strip():
@@ -2145,7 +2145,7 @@ class PGFX_Studio_ShotPlanToShotList:
     RETURN_TYPES = ("DICT",)
     RETURN_NAMES = ("SHOT_LIST",)
     FUNCTION = "assemble"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Director"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Director"
 
     def assemble(self, shot_plan_json, lyrics_json, visual_style_json):
         import json as _json
@@ -2276,7 +2276,7 @@ class PGFX_Studio_AudioPinAdapter:
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("audio",)
     FUNCTION = "adapt"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Adapters"
 
     def adapt(self, AUDIO):
         if not isinstance(AUDIO, dict) or "waveform" not in AUDIO or "sample_rate" not in AUDIO:
@@ -2303,7 +2303,7 @@ class PGFX_Studio_ProjectConfigValidator:
     RETURN_TYPES = ("DICT", "DICT", "STRING")
     RETURN_NAMES = ("PROJECT_CONFIG", "PROJECT_CONFIG_CORE", "validation_report")
     FUNCTION = "validate"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Adapters"
 
     def _to_int(self, value, name, report, strict):
         try:
@@ -2411,7 +2411,7 @@ class PGFX_Studio_TimingMapAdapter:
     RETURN_TYPES = ("DICT", "DICT", "STRING")
     RETURN_NAMES = ("TIMING_MAP", "TIMING_MAP_CORE", "validation_report")
     FUNCTION = "adapt"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Adapters"
 
     def _int_list(self, values, report, strict):
         out = []
@@ -2547,7 +2547,7 @@ class PGFX_Studio_SceneCountAdapter:
     RETURN_TYPES = ("INT", "INT", "STRING")
     RETURN_NAMES = ("SCENE_COUNT", "remaining_scenes", "validation_report")
     FUNCTION = "adapt"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Adapters"
 
     def _to_int(self, value, name, report, strict):
         try:
@@ -2632,7 +2632,7 @@ class PGFX_Studio_ShotListAdapter:
     RETURN_TYPES = ("DICT", "DICT", "STRING")
     RETURN_NAMES = ("SHOT_LIST", "SHOT_LIST_CORE", "validation_report")
     FUNCTION = "adapt"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Adapters"
 
     def _to_int(self, value, name, report, strict):
         try:
@@ -2762,7 +2762,7 @@ class PGFX_Studio_CharacterTrackAdapter:
     RETURN_TYPES = ("DICT", "DICT", "STRING")
     RETURN_NAMES = ("CHARACTER_TRACK", "CHARACTER_TRACK_CORE", "validation_report")
     FUNCTION = "adapt"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Adapters"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Adapters"
 
     def _to_int(self, value, name, report, strict):
         try:
@@ -2968,7 +2968,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_Studio_AudioPinAdapter": "🔌 Studio Adapter (AUDIO→audio)",
     "PGFX_Studio_ProjectConfigValidator": "🔌 Studio Adapter (PROJECT_CONFIG core)",
     "PGFX_Studio_TimingMapAdapter": "🔌 Studio Adapter (TIMING_MAP core)",
-    "PGFX_Studio_SceneCountAdapter": "Studio Adapter (Scene Count)",
+    "PGFX_Studio_SceneCountAdapter": "🔌 Studio Adapter (Scene Count)",
     "PGFX_Studio_ShotListAdapter": "🔌 Studio Adapter (SHOT_LIST core)",
     "PGFX_Studio_CharacterTrackAdapter": "🔌 Studio Adapter (CHARACTER_TRACK core)",
 }

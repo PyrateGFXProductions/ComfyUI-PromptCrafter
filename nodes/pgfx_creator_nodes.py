@@ -116,7 +116,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
     RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt", "model_out", "seed_out") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /Creator"
 
     def execute(self, instruction, subject, model, negative_prompt="", **kwargs):
         """Execute with talent direction integration."""
@@ -572,7 +572,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
     RETURN_TYPES = STATIC_RETURN_TYPES + ("IMAGE",) * MAX_DYNAMIC_IMAGES
     RETURN_NAMES = STATIC_RETURN_NAMES + tuple(f"reference_image_{i}" for i in range(1, MAX_DYNAMIC_IMAGES + 1))
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Creator"
 
     def execute(self, instruction, subject, model, **kwargs):
         """Execute with talent direction integration."""
@@ -999,6 +999,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_VisualCreator": "✨ PromptCrafter Visual Creator",
-    "PromptCrafter_LyricsCreator": "🎤 PromptCrafter Lyrics Creator",
+    "PromptCrafter_VisualCreator": "✨ Visual Creator",
+    "PromptCrafter_LyricsCreator": "🎤 Lyrics Creator",
 }

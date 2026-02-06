@@ -12,7 +12,7 @@ class PromptCrafter_AudioSplitter_v2_Legacy:
     RETURN_TYPES = ("DICT", "FLOAT", "INT", "INT") + tuple(["AUDIO"] * 16)
     RETURN_NAMES = ("meta", "total_duration", "total_sets", "set_index") + tuple([f"audio_{i}" for i in range(1, 17)])
     FUNCTION = "split_audio"
-    CATEGORY = "PromptCrafter/Audio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Audio/Legacy"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -102,5 +102,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_AudioSplitter_v2_Legacy": "Audio Splitter v2 Legacy"
+    "PromptCrafter_AudioSplitter_v2_Legacy": "🎤 Audio Splitter v2 (Legacy)"
 }

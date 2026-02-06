@@ -19,7 +19,7 @@ class PGFX_ComfyGuard_Shield:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("status_report", "cuda_summary")
     FUNCTION = "get_status"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Security"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils/Security"
     OUTPUT_NODE = True
 
     def get_status(self, signal=None):
@@ -49,5 +49,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_ComfyGuard_Shield": "🛡️ PGFX ComfyGuard Shield",
+    "PGFX_ComfyGuard_Shield": "🛡️ ComfyGuard Shield",
 }

@@ -266,7 +266,7 @@ class PromptCrafter_QnA:
     RETURN_TYPES = ("STRING", "STRING", "STRING")
     RETURN_NAMES = ("response", "history_out", "thinking_process")
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
     
     def execute(self, instruction, subject, model, **kwargs):
         try:
@@ -658,7 +658,7 @@ class PromptCrafter_QnA_Simple:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("response",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
 
     def execute(self, prompt, model, image=None, **kwargs):
         try:
@@ -729,7 +729,7 @@ class PromptCrafter_LyricsThink:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("lyrics_think_output",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Think"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
     def execute(self, input_text, model):
         raw_text = "" if input_text is None else str(input_text)
@@ -818,7 +818,7 @@ class PromptCrafter_LyricsInstruct:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("lyrics_json",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Instruct"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
     def execute(self, lyrics_think_output, model):
         if not lyrics_think_output or not str(lyrics_think_output).strip():
@@ -869,7 +869,7 @@ class PromptCrafter_VisualThink:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("visual_think_output",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Think"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
     def execute(self, input_text, model):
         if not input_text or not str(input_text).strip():
@@ -920,7 +920,7 @@ class PromptCrafter_VisualInstruct:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("visual_json",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Instruct"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
     def execute(self, visual_think_output, model):
         if not visual_think_output or not str(visual_think_output).strip():
@@ -969,7 +969,7 @@ class PromptCrafter_QnAThink:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("qna_think_output",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Think"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
     def execute(self, prompt, model):
         if not prompt or not str(prompt).strip():
@@ -1013,7 +1013,7 @@ class PromptCrafter_QnAInstruct:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("formatted_output",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Instruct"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
     def execute(self, qna_think_output, format_instruction, model):
         if not qna_think_output or not str(qna_think_output).strip():
@@ -1085,7 +1085,7 @@ class PromptCrafter_Captioner:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("caption",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
 
     def _sanitize_filename(self, text, max_length=150):
         """Sanitizes a string to be a valid filename."""
@@ -1277,7 +1277,7 @@ class PromptCrafter_AudioSplitter(creator_nodes.PromptCrafter_BaseCreator):
     RETURN_TYPES = tuple(["AUDIO"] * 16)
     RETURN_NAMES = tuple([f"audio_{i}" for i in range(1, 17)])
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Creator"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /Creator"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1456,7 +1456,7 @@ class PromptCrafter_Formatter:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("formatted_prompt", "formatted_schedule")
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
 
     def _format_text(self, text, prefix, suffix, find_text, replace_with):
         """Helper function to apply formatting rules to a single text string."""
@@ -1576,7 +1576,7 @@ class PromptCrafter_SaveTextFile:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("save_status",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
 
     def execute(self, text_to_save, folder_path, filename_template, model_name="", seed="", user_text="", custom_var="", file_type="txt"):
         replacements = {
@@ -1640,7 +1640,7 @@ class PromptCrafter_FileOrganizer:
     RETURN_TYPES = ("STRING", "STRING", "STRING")
     RETURN_NAMES = ("summary", "dry_run_plan", "generated_scheme_out")
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /Utils"
     OUTPUT_NODE = True
 
     def _read_metadata(self, image_path):
@@ -2145,7 +2145,7 @@ class PromptCrafter_CacheUtility:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("status",)
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = f"☠️PGFX🏴‍☠️ /Utils"
 
     def execute(self, action):
         if action == "Clear Cache":
@@ -2182,7 +2182,7 @@ class PromptCrafter_ImageSwitcher:
     RETURN_TYPES = ("IMAGE", "INT")
     RETURN_NAMES = ("selected_image", "selected_index")
     FUNCTION = "switch_image"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
 
     def switch_image(self, switching_mode, image_count, current_index=0, signal=None, **kwargs):
         images = []
@@ -2232,7 +2232,7 @@ class PromptCrafter_PromptChunker:
         }
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
 
     RETURN_TYPES = tuple(["STRING"] * MAX_OUTPUTS)
     RETURN_NAMES = tuple(f"prompt_scene_{i+1}" for i in range(MAX_OUTPUTS))
@@ -2284,26 +2284,26 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_QnA": "PromptCrafter QnA",
-    "PromptCrafter_QnA_Advanced": "PromptCrafter QnA (Advanced)",
-    "PromptCrafter_QnA_Simple": "PromptCrafter QnA (Simple)",
-    "PromptCrafter_LyricsThink": "LyricsThink",
-    "PromptCrafter_LyricsInstruct": "LyricsInstruct",
-    "PromptCrafter_VisualThink": "VisualThink",
-    "PromptCrafter_VisualInstruct": "VisualInstruct",
-    "PromptCrafter_QnAThink": "QnAThink",
-    "PromptCrafter_QnAInstruct": "QnAInstruct",
-    "PromptCrafter_Captioner": "PromptCrafter Image Captioner",
-    "PromptCrafter_VisualCreator": "PromptCrafter Creator (Visual)",
-    "PromptCrafter_SRTCreator": "☠️PGFX SRT Creator",
-    "PromptCrafter_LyricsCreator": "PromptCrafter Creator (Lyrics)",
-    "PromptCrafter_AudioSplitter_v2": "☠️PGFX Audio Splitter v2",
-    "PromptCrafter_AudioSplitter": "PromptCrafter Audio Splitter",
-    "PromptCrafter_CacheUtility": "PromptCrafter Cache Utility",
-    "PromptCrafter_FileOrganizer": "PromptCrafter File Organizer",
-    "PromptCrafter_Formatter": "PromptCrafter Text Formatter",
-    "PromptCrafter_SaveTextFile": "PromptCrafter Save Text File",
-    "PromptCrafter_ImageSwitcher": "PromptCrafter Image Switcher",
-    "PromptCrafter_PromptChunker": "PromptCrafter Prompt Chunker",
+    "PromptCrafter_QnA": "💬 QnA",
+    "PromptCrafter_QnA_Advanced": "💬 QnA (Advanced)",
+    "PromptCrafter_QnA_Simple": "💬 QnA (Simple)",
+    "PromptCrafter_LyricsThink": "🧠 Lyrics Think",
+    "PromptCrafter_LyricsInstruct": "✍️ Lyrics Instruct",
+    "PromptCrafter_VisualThink": "🧠 Visual Think",
+    "PromptCrafter_VisualInstruct": "✍️ Visual Instruct",
+    "PromptCrafter_QnAThink": "🧠 QnA Think",
+    "PromptCrafter_QnAInstruct": "✍️ QnA Instruct",
+    "PromptCrafter_Captioner": "🖼️ Image Captioner",
+    "PromptCrafter_VisualCreator": "✨ Visual Creator",
+    "PromptCrafter_SRTCreator": "📝 SRT Creator",
+    "PromptCrafter_LyricsCreator": "🎤 Lyrics Creator",
+    "PromptCrafter_AudioSplitter_v2": "🎤 Audio Splitter v2",
+    "PromptCrafter_AudioSplitter": "🎤 Audio Splitter",
+    "PromptCrafter_CacheUtility": "🧹 Cache Utility",
+    "PromptCrafter_FileOrganizer": "🗂️ File Organizer",
+    "PromptCrafter_Formatter": "📝 Text Formatter",
+    "PromptCrafter_SaveTextFile": "💾 Save Text File",
+    "PromptCrafter_ImageSwitcher": "🔀 Image Switcher",
+    "PromptCrafter_PromptChunker": "🧩 Prompt Chunker",
 }
 

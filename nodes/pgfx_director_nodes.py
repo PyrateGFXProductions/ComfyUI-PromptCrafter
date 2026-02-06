@@ -69,7 +69,7 @@ class PromptCrafter_DirectorAgent:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("decision_json", "reasoning_log")
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Agents"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Agents"
 
     def execute(self, thinking_model, instruct_model, whisper_data, style_list, debug_mode, image_a=None, image_b=None):
         
@@ -171,5 +171,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_DirectorAgent": "PromptCrafter Director Agent"
+    "PromptCrafter_DirectorAgent": "🎬 Director Agent"
 }

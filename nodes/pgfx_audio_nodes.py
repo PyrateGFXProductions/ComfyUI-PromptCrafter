@@ -192,7 +192,7 @@ class PromptCrafter_AudioSplitter_v2:
     ) + tuple([f"audio_{i}" for i in range(1, 17)]) + ("signal_out",)
 
     FUNCTION = "run"
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Audio"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Audio"
 
     def __init__(self):
         self.transcription_model = None
@@ -947,5 +947,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_AudioSplitter_v2": "🎤 PromptCrafter Audio Splitter v2",
+    "PromptCrafter_AudioSplitter_v2": "🎤 Audio Splitter v2",
 }
