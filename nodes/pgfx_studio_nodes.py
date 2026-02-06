@@ -1921,6 +1921,345 @@ class PGFX_Studio_PostMaster:
 
 
 
+# --- STUDIO DIRECTOR UTILITIES ---
+class PGFX_Studio_ProjectContext:
+    """
+    Builds a canonical project context string for THINK nodes.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "song_metadata": ("STRING", {"multiline": True, "default": ""}),
+                "artist": ("STRING", {"multiline": False, "default": ""}),
+                "genre": ("STRING", {"multiline": False, "default": ""}),
+                "era": ("STRING", {"multiline": False, "default": ""}),
+                "desired_aesthetic": ("STRING", {"multiline": True, "default": ""}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("PROJECT_CONTEXT",)
+    FUNCTION = "build"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio"
+
+    def build(self, song_metadata, artist, genre, era, desired_aesthetic):
+        parts = [
+            f"SONG_METADATA: {'' if song_metadata is None else str(song_metadata).strip()}",
+            f"ARTIST: {'' if artist is None else str(artist).strip()}",
+            f"GENRE: {'' if genre is None else str(genre).strip()}",
+            f"ERA: {'' if era is None else str(era).strip()}",
+            f"DESIRED_AESTHETIC: {'' if desired_aesthetic is None else str(desired_aesthetic).strip()}",
+        ]
+        if not any(p.split(":", 1)[1].strip() for p in parts):
+            raise ValueError("PGFX_Studio_ProjectContext requires at least one non-empty field.")
+        return ("\n".join(parts),)
+
+
+class PGFX_Studio_StoreText:
+    """
+    Stores text artifacts (lyrics.json, visual_style.json, shot_plan.json) under the project output folder.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "PROJECT_CONFIG": ("DICT",),
+                "text_to_store": ("STRING", {"multiline": True}),
+                "filename": ("STRING", {"multiline": False, "default": "artifact.json"}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("stored_path",)
+    FUNCTION = "store"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/IO"
+
+    def store(self, PROJECT_CONFIG, text_to_store, filename):
+        if text_to_store is None or not str(text_to_store).strip():
+            raise ValueError("PGFX_Studio_StoreText requires non-empty text_to_store.")
+        if filename is None or not str(filename).strip():
+            raise ValueError("PGFX_Studio_StoreText requires a valid filename.")
+
+        root = PROJECT_CONFIG.get("root_path", "PromptCrafter_Studio")
+        proj = PROJECT_CONFIG.get("project_name", "MyProject")
+        out_dir = os.path.join(folder_paths.get_output_directory(), root, proj)
+        os.makedirs(out_dir, exist_ok=True)
+
+        clean_name = utils.TextCleaner.sanitize_filename(os.path.basename(str(filename)))
+        if not clean_name:
+            raise ValueError("PGFX_Studio_StoreText filename is invalid after sanitization.")
+        full_path = os.path.join(out_dir, clean_name)
+
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(str(text_to_store))
+
+        return (full_path,)
+
+
+class PGFX_Studio_LoadText:
+    """
+    Loads text artifacts from the project output folder.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "PROJECT_CONFIG": ("DICT",),
+                "filename": ("STRING", {"multiline": False, "default": "artifact.json"}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("loaded_text",)
+    FUNCTION = "load"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/IO"
+
+    def load(self, PROJECT_CONFIG, filename):
+        if filename is None or not str(filename).strip():
+            raise ValueError("PGFX_Studio_LoadText requires a valid filename.")
+
+        root = PROJECT_CONFIG.get("root_path", "PromptCrafter_Studio")
+        proj = PROJECT_CONFIG.get("project_name", "MyProject")
+        in_dir = os.path.join(folder_paths.get_output_directory(), root, proj)
+
+        clean_name = utils.TextCleaner.sanitize_filename(os.path.basename(str(filename)))
+        if not clean_name:
+            raise ValueError("PGFX_Studio_LoadText filename is invalid after sanitization.")
+        full_path = os.path.join(in_dir, clean_name)
+
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"PGFX_Studio_LoadText could not find file: {full_path}")
+
+        with open(full_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        if not content.strip():
+            raise ValueError(f"PGFX_Studio_LoadText loaded empty content from: {full_path}")
+        return (content,)
+
+
+class PGFX_Studio_ShotPlannerPromptBuilder:
+    """
+    Builds a deterministic prompt for QnAThink (shot planner) without any LLM calls.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "PROJECT_CONTEXT": ("STRING", {"multiline": True}),
+                "lyrics_json": ("STRING", {"multiline": True}),
+                "visual_style_json": ("STRING", {"multiline": True}),
+                "timing_json": ("STRING", {"multiline": True}),
+                "shot_index": ("INT", {"default": 1, "min": 1}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("prompt",)
+    FUNCTION = "build"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Director"
+
+    def build(self, PROJECT_CONTEXT, lyrics_json, visual_style_json, timing_json, shot_index):
+        if PROJECT_CONTEXT is None or not str(PROJECT_CONTEXT).strip():
+            raise ValueError("PGFX_Studio_ShotPlannerPromptBuilder requires PROJECT_CONTEXT.")
+        if lyrics_json is None or not str(lyrics_json).strip():
+            raise ValueError("PGFX_Studio_ShotPlannerPromptBuilder requires lyrics_json.")
+        if visual_style_json is None or not str(visual_style_json).strip():
+            raise ValueError("PGFX_Studio_ShotPlannerPromptBuilder requires visual_style_json.")
+        if timing_json is None or not str(timing_json).strip():
+            raise ValueError("PGFX_Studio_ShotPlannerPromptBuilder requires timing_json.")
+        if shot_index < 1:
+            raise ValueError("PGFX_Studio_ShotPlannerPromptBuilder shot_index must be >= 1.")
+
+        import json as _json
+
+        try:
+            lyrics_data = _json.loads(lyrics_json)
+        except Exception as e:
+            raise ValueError(f"lyrics_json is not valid JSON: {e}")
+
+        if not isinstance(lyrics_data, dict):
+            raise ValueError("lyrics_json must be a JSON object.")
+
+        lyric_key = f"lyricSegment{shot_index}"
+        if lyric_key not in lyrics_data:
+            raise ValueError(f"lyrics_json missing expected key: {lyric_key}")
+
+        # Validate visual_style_json is JSON (content remains unchanged in prompt)
+        try:
+            _json.loads(visual_style_json)
+        except Exception as e:
+            raise ValueError(f"visual_style_json is not valid JSON: {e}")
+
+        lyric_text = lyrics_data.get(lyric_key)
+        if lyric_text is None or str(lyric_text).strip() == "":
+            raise ValueError(f"lyrics_json value for {lyric_key} is empty.")
+
+        prompt = textwrap.dedent(f"""
+            You are a shot planner. Produce reasoning only. Do NOT output JSON.
+
+            You are planning a single shot for:
+            - Shot index (1-based): {shot_index}
+            - Lyric key: {lyric_key}
+
+            Provide reasoning for these fields:
+            purpose, shot_type, motion, camera, continuity, pacing, notes.
+
+            PROJECT CONTEXT:
+            {PROJECT_CONTEXT}
+
+            LYRIC (verbatim):
+            {lyric_text}
+
+            GLOBAL VISUAL STYLE (JSON):
+            {visual_style_json}
+
+            TIMING (JSON):
+            {timing_json}
+        """).strip()
+
+        return (prompt,)
+
+
+class PGFX_Studio_ShotPlanToShotList:
+    """
+    Converts shot_plan.json + lyrics.json + visual_style.json into a canonical SHOT_LIST.
+    """
+    NEGATIVE_PROMPT = (
+        "text, subtitles, captions, watermark, logo, typography, extra people, crowd, "
+        "duplicate faces, distorted anatomy, deformed hands, oversharpening, cartoon, "
+        "illustration, CGI, low quality"
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "shot_plan_json": ("STRING", {"multiline": True}),
+                "lyrics_json": ("STRING", {"multiline": True}),
+                "visual_style_json": ("STRING", {"multiline": True}),
+            }
+        }
+
+    RETURN_TYPES = ("DICT",)
+    RETURN_NAMES = ("SHOT_LIST",)
+    FUNCTION = "assemble"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Studio/Director"
+
+    def assemble(self, shot_plan_json, lyrics_json, visual_style_json):
+        import json as _json
+
+        if shot_plan_json is None or not str(shot_plan_json).strip():
+            raise ValueError("shot_plan_json is empty.")
+        if lyrics_json is None or not str(lyrics_json).strip():
+            raise ValueError("lyrics_json is empty.")
+        if visual_style_json is None or not str(visual_style_json).strip():
+            raise ValueError("visual_style_json is empty.")
+
+        try:
+            shot_plan = _json.loads(shot_plan_json)
+        except Exception as e:
+            raise ValueError(f"shot_plan_json is not valid JSON: {e}")
+        if not isinstance(shot_plan, dict) or "shots" not in shot_plan:
+            raise ValueError("shot_plan_json must be an object with a 'shots' array.")
+        shots = shot_plan.get("shots", [])
+        if not isinstance(shots, list) or not shots:
+            raise ValueError("shot_plan_json 'shots' must be a non-empty list.")
+
+        try:
+            lyrics_data = _json.loads(lyrics_json)
+        except Exception as e:
+            raise ValueError(f"lyrics_json is not valid JSON: {e}")
+        if not isinstance(lyrics_data, dict):
+            raise ValueError("lyrics_json must be a JSON object.")
+
+        try:
+            visual_style = _json.loads(visual_style_json)
+        except Exception as e:
+            raise ValueError(f"visual_style_json is not valid JSON: {e}")
+        if not isinstance(visual_style, dict):
+            raise ValueError("visual_style_json must be a JSON object.")
+
+        required_visual_keys = ["style", "camera_language", "lighting", "mood", "palette", "era"]
+        for key in required_visual_keys:
+            if key not in visual_style:
+                raise ValueError(f"visual_style_json missing required key: {key}")
+
+        style_val = str(visual_style.get("style", ""))
+        camera_language = str(visual_style.get("camera_language", ""))
+        lighting = str(visual_style.get("lighting", ""))
+        mood = str(visual_style.get("mood", ""))
+        palette = str(visual_style.get("palette", ""))
+        era = str(visual_style.get("era", ""))
+
+        required_shot_keys = [
+            "index", "lyric_segment", "purpose", "shot_type", "motion",
+            "camera", "continuity", "pacing", "notes"
+        ]
+
+        shot_list = []
+        for shot in shots:
+            if not isinstance(shot, dict):
+                raise ValueError("Each entry in shots must be an object.")
+            for key in required_shot_keys:
+                if key not in shot:
+                    raise ValueError(f"Shot entry missing required key: {key}")
+
+            try:
+                index_1b = int(shot.get("index"))
+            except Exception:
+                raise ValueError(f"Shot index is not an integer: {shot.get('index')}")
+            if index_1b < 1:
+                raise ValueError(f"Shot index must be >= 1, got {index_1b}")
+
+            lyric_segment = str(shot.get("lyric_segment"))
+            expected_lyric_key = f"lyricSegment{index_1b}"
+            if lyric_segment != expected_lyric_key:
+                raise ValueError(f"Shot lyric_segment '{lyric_segment}' does not match index {index_1b}.")
+            if lyric_segment not in lyrics_data:
+                raise ValueError(f"lyrics_json missing key: {lyric_segment}")
+
+            lyric_text = str(lyrics_data.get(lyric_segment))
+
+            shot_type = str(shot.get("shot_type", "")).strip()
+            motion = str(shot.get("motion", "")).strip()
+            camera = str(shot.get("camera", "")).strip()
+            pacing = str(shot.get("pacing", "")).strip()
+            purpose = str(shot.get("purpose", "")).strip()
+            continuity = str(shot.get("continuity", "")).strip()
+
+            shot_block = f"{shot_type} shot, {motion}, {camera}, pacing {pacing}.\nNarrative intent: {purpose}."
+            if continuity:
+                shot_block += f"\nVisual continuity note: {continuity}."
+
+            lyric_block = f"Inspired by lyric: {lyric_text}"
+            style_block = (
+                f"Visual style: {style_val}.\n"
+                f"Camera language: {camera_language}.\n"
+                f"Lighting: {lighting}.\n"
+                f"Mood: {mood}.\n"
+                f"Color palette: {palette}.\n"
+                f"Era: {era}."
+            )
+            constraint_block = (
+                "Cinematic still frame, realistic photography, no text, no watermark, no logos, no extra people."
+            )
+
+            positive_prompt = "\n".join([shot_block, lyric_block, style_block, constraint_block])
+
+            index_0b = index_1b - 1
+            shot_list.append({
+                "index": index_0b,
+                "positive": positive_prompt,
+                "negative": self.NEGATIVE_PROMPT,
+                "seed": index_0b * 9999 + 101,
+                "style": style_val,
+            })
+
+        return ({"data": shot_list},)
+
+
 # --- ADAPTERS ---
 class PGFX_Studio_AudioPinAdapter:
     """
@@ -2585,6 +2924,11 @@ NODE_CLASS_MAPPINGS = {
     "PGFX_Studio_Cinematographer": PGFX_Studio_Cinematographer,
     "PGFX_Studio_Editor": PGFX_Studio_Editor,
     "PGFX_Studio_PostMaster": PGFX_Studio_PostMaster, # Added
+    "PGFX_Studio_ProjectContext": PGFX_Studio_ProjectContext,
+    "PGFX_Studio_StoreText": PGFX_Studio_StoreText,
+    "PGFX_Studio_LoadText": PGFX_Studio_LoadText,
+    "PGFX_Studio_ShotPlannerPromptBuilder": PGFX_Studio_ShotPlannerPromptBuilder,
+    "PGFX_Studio_ShotPlanToShotList": PGFX_Studio_ShotPlanToShotList,
     "PGFX_Studio_Stylist": PGFX_Studio_Stylist,
     "PGFX_Studio_Animator": PGFX_Studio_Animator,
     "PGFX_Studio_ScriptSupervisor": PGFX_Studio_ScriptSupervisor,
@@ -2611,6 +2955,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_Studio_Cinematographer": "📹 Studio Cinematographer (Shot)",
     "PGFX_Studio_Editor": "🎞️ Studio Editor (Scene Saver)",
     "PGFX_Studio_PostMaster": "🏗️ Studio PostMaster (Final Render)", # Added
+    "PGFX_Studio_ProjectContext": "🧭 Studio Project Context",
+    "PGFX_Studio_StoreText": "💾 Studio Store Text",
+    "PGFX_Studio_LoadText": "📂 Studio Load Text",
+    "PGFX_Studio_ShotPlannerPromptBuilder": "🧠 Studio Shot Planner Prompt Builder",
+    "PGFX_Studio_ShotPlanToShotList": "🧱 Studio Shot Plan To Shot List",
     "PGFX_Studio_Stylist": "🎨 Studio Stylist (Looks)",
     "PGFX_Studio_Animator": "👄 Studio Animator (Visemes)",
     "PGFX_Studio_ScriptSupervisor": "📋 Studio Script Supervisor (Review)",

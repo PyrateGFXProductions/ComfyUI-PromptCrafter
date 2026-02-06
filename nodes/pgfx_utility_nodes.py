@@ -91,6 +91,130 @@ def _json_only_requested(text: str) -> bool:
     )
     return any(t in lower for t in triggers)
 
+def _extract_expected_json_keys(text: str):
+    if not text:
+        return []
+    # 1) Explicit count line wins (real task, not example)
+    lyrics_count = re.search(r"lyrics to fix:\s*\((\d+)\s*segments?\)", text, re.IGNORECASE)
+    if lyrics_count:
+        try:
+            count = int(lyrics_count.group(1))
+            if count > 0:
+                return [f"lyricSegment{i}" for i in range(1, count + 1)]
+        except Exception:
+            pass
+    # 2) Explicit assignments win next (lyricSegmentN=...)
+    assign_lyric = [f"lyricSegment{m.group(1)}" for m in re.finditer(r"\blyricsegment(\d+)\s*=", text, re.IGNORECASE)]
+    if assign_lyric:
+        return _sort_segment_keys(assign_lyric)
+    return []
+
+def _diff_expected_keys(parsed_keys, expected_keys):
+    expected_set = set(expected_keys)
+    parsed_set = set(parsed_keys)
+    missing = [k for k in expected_keys if k not in parsed_set]
+    extra = sorted([k for k in parsed_set if k not in expected_set])
+    return missing, extra
+
+def _sort_segment_keys(keys):
+    seen = set()
+    ordered = []
+    for key in keys:
+        if key not in seen:
+            seen.add(key)
+            ordered.append(key)
+    def _key_num(k):
+        m = re.search(r"(\d+)$", k)
+        return int(m.group(1)) if m else 0
+    return sorted(ordered, key=_key_num)
+
+def _build_json_schema_for_keys(keys):
+    if not keys:
+        return None
+    return {
+        "type": "object",
+        "properties": {k: {"type": "string"} for k in keys},
+        "required": keys,
+        "additionalProperties": False,
+    }
+
+def _strip_code_fences(text: str) -> str:
+    if text is None:
+        return ""
+    raw = str(text)
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return raw.strip()
+
+def _ensure_escaped_quote_value(value: str) -> str:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return value
+    label_match = re.match(r"^\s*(\([^)]+\))\s*(.*)$", text, re.DOTALL)
+    if label_match:
+        label = label_match.group(1).strip()
+        rest = label_match.group(2).strip()
+        if rest.startswith('\\"') and rest.endswith('\\"'):
+            return f"{label} {rest}"
+        if rest.startswith('"') and rest.endswith('"'):
+            rest = rest[1:-1].strip()
+        return f"{label} \\\"{rest}\\\""
+    if text.startswith('\\"') and text.endswith('\\"'):
+        return text
+    if text.startswith('"') and text.endswith('"'):
+        text = text[1:-1].strip()
+    return f"\\\"{text}\\\""
+
+def _enforce_value_quotes(parsed, expected_keys=None):
+    if not isinstance(parsed, dict):
+        return parsed
+    ordered_keys = expected_keys if expected_keys else list(parsed.keys())
+    rebuilt = {}
+    for key in ordered_keys:
+        if key in parsed:
+            rebuilt[key] = _ensure_escaped_quote_value(parsed[key])
+    for key, val in parsed.items():
+        if key not in rebuilt:
+            rebuilt[key] = _ensure_escaped_quote_value(val)
+    return rebuilt
+
+def _force_lyricsegment_keys(parsed):
+    if not isinstance(parsed, dict):
+        return parsed
+    remapped = {}
+    for key, val in parsed.items():
+        k = str(key)
+        m = re.match(r"^lyricsegment(\d+)$", k, re.IGNORECASE)
+        if m:
+            new_key = f"lyricSegment{m.group(1)}"
+        else:
+            m = re.match(r"^segment(\d+)$", k, re.IGNORECASE)
+            if m:
+                new_key = f"lyricSegment{m.group(1)}"
+            else:
+                new_key = key
+        if new_key in remapped:
+            continue
+        remapped[new_key] = val
+    return remapped
+
+def _rekey_by_order(parsed, expected_keys=None):
+    if not isinstance(parsed, dict) or not expected_keys:
+        return parsed
+    if len(parsed) != len(expected_keys):
+        return parsed
+    items = list(parsed.items())
+    def _key_num(k):
+        m = re.search(r"(\d+)$", str(k))
+        return int(m.group(1)) if m else None
+    nums = [ _key_num(k) for k, _ in items ]
+    if all(n is not None for n in nums):
+        items = sorted(items, key=lambda kv: _key_num(kv[0]))
+    return {expected_keys[i]: items[i][1] for i in range(len(expected_keys))}
+
 
 # ------------------------------------------------------------------------------------
 # PromptCrafter_QnA Node
@@ -165,6 +289,8 @@ class PromptCrafter_QnA:
             auto_save_custom_var = kwargs.get('auto_save_custom_var', "")
             max_tokens = kwargs.get('max_tokens', 4096)
             force_json = _json_only_requested(user_text)
+            expected_keys = _extract_expected_json_keys(user_text)
+            expected_schema = _build_json_schema_for_keys(expected_keys)
             if force_json:
                 ok, response = api_clients.query_model_auto(
                     model,
@@ -184,12 +310,19 @@ class PromptCrafter_QnA:
                 if not ok:
                     raise Exception(response)
                 response_text = "" if response is None else str(response).strip()
+                response_text = _strip_code_fences(response_text)
                 if not response_text:
                     return ("", "", "")
                 try:
-                    json.loads(response_text)
+                    parsed = json.loads(response_text)
                 except Exception as e:
                     raise Exception(f"JSON-only response requested but model returned invalid JSON: {e}")
+                if expected_keys:
+                    if not isinstance(parsed, dict):
+                        raise Exception("JSON-only response requested but model returned non-object JSON.")
+                parsed = _force_lyricsegment_keys(parsed)
+                parsed = _enforce_value_quotes(parsed, expected_keys)
+                response_text = json.dumps(parsed, indent=2, ensure_ascii=False)
                 return (response_text, "", "")
 
 
@@ -531,6 +664,8 @@ class PromptCrafter_QnA_Simple:
         try:
             user_text = "" if prompt is None else str(prompt)
             force_json = _json_only_requested(user_text)
+            expected_keys = _extract_expected_json_keys(user_text)
+            expected_schema = _build_json_schema_for_keys(expected_keys)
             if not user_text.strip():
                 return ("",)
 
@@ -545,7 +680,7 @@ class PromptCrafter_QnA_Simple:
                 max_tokens=8192,
                 no_chat_fallback=True,
                 template="{{ .Prompt }}",
-                format="json" if force_json else None,
+                format=("json" if force_json else None),
                 debug_mode=False,
                 debug_title="Simple QnA"
             )
@@ -555,10 +690,17 @@ class PromptCrafter_QnA_Simple:
 
             response_text = "" if response is None else str(response).strip()
             if force_json:
+                response_text = _strip_code_fences(response_text)
                 try:
-                    json.loads(response_text)
+                    parsed = json.loads(response_text)
                 except Exception as e:
                     raise Exception(f"JSON-only response requested but model returned invalid JSON: {e}")
+                if expected_keys:
+                    if not isinstance(parsed, dict):
+                        raise Exception("JSON-only response requested but model returned non-object JSON.")
+                parsed = _force_lyricsegment_keys(parsed)
+                parsed = _enforce_value_quotes(parsed, expected_keys)
+                response_text = json.dumps(parsed, indent=2, ensure_ascii=False)
             if not response_text:
                 return ("",)
 
@@ -568,6 +710,341 @@ class PromptCrafter_QnA_Simple:
             import traceback
             traceback.print_exc()
             return (f"An error occurred: {e}",)
+
+# ------------------------------------------------------------------------------------
+# PromptCrafter THINK/INSTRUCT Nodes (Deterministic, Paired)
+# ------------------------------------------------------------------------------------
+class PromptCrafter_LyricsThink:
+    DESCRIPTION = "THINK node for lyric correction and section labeling. Outputs plain text lines."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "input_text": ("STRING", {"multiline": True, "default": ""}),
+                "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("lyrics_think_output",)
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Think"
+
+    def execute(self, input_text, model):
+        raw_text = "" if input_text is None else str(input_text)
+        if not raw_text.strip():
+            return ("[ERROR] Input text is empty.",)
+
+        non_empty_lines = [line for line in raw_text.splitlines() if line.strip()]
+        segment_count = len(non_empty_lines)
+
+        prompt = textwrap.dedent(f"""
+            You are a lyric correction and alignment engine.
+
+            Your task is to correct and expand segmented lyric transcriptions without changing their order or timing.
+
+            INPUT RULES:
+            - There are exactly {segment_count} lyric segments.
+            - Each segment corresponds to a fixed 4-second time window.
+            - Segment numbering and order are locked.
+
+            WHAT YOU MUST DO:
+            - Fix typos, misheard words, capitalization, and minor grammar.
+            - Preserve the original meaning, tone, and mood.
+            - Preserve each segment's place in the song.
+
+            DO NOT:
+            - Move words between segments.
+            - Merge or split segments.
+            - Pull lyrics from other sections of the song.
+
+            SHORT SEGMENT EXPANSION (MANDATORY):
+            - If a segment has fewer than 3 words, you must expand it.
+            - If it is part of an existing lyric line, add nearby words from the same line in the reference lyrics.
+            - If it is a vocal or instrumental moment, invent a short lyrical phrase (3–7 words).
+            - It must sound natural and stylistically consistent.
+            - No filler syllables unless present in the song.
+
+            SECTION LABELS:
+            - Assign a label such as Intro, Verse, Pre-Chorus, Chorus, Bridge, Outro.
+
+            OUTPUT FORMAT (STRICT):
+            - Plain text only.
+            - No JSON.
+            - No code blocks.
+            - One segment per line, exactly:
+              lyricSegment<N> | <SectionLabel> | <Corrected lyric text>
+
+            EXAMPLE OUTPUT:
+            lyricSegment1 | Intro | I don’t believe it anymore
+            lyricSegment2 | Intro | don’t touch me, stay away from me now
+            lyricSegment3 | Verse | falling through the tunnel in the city
+
+            FINAL RULE:
+            - Output exactly {segment_count} lines, one per segment.
+
+            INPUT:
+            {raw_text}
+        """).strip()
+
+        ok, response = api_clients.query_model_auto(
+            model,
+            prompt=prompt,
+            temperature=0.2,
+            seed=0,
+        )
+        if not ok:
+            return (f"[ERROR] Model call failed: {response}",)
+
+        response_text = "" if response is None else str(response)
+        if not response_text.strip():
+            return ("[ERROR] Model returned empty output.",)
+        return (response_text,)
+
+
+class PromptCrafter_LyricsInstruct:
+    DESCRIPTION = "INSTRUCT node that converts LyricsThink output into strict JSON."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "lyrics_think_output": ("STRING", {"multiline": True, "default": ""}),
+                "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("lyrics_json",)
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Instruct"
+
+    def execute(self, lyrics_think_output, model):
+        if not lyrics_think_output or not str(lyrics_think_output).strip():
+            return ("[ERROR] LyricsThink output is empty.",)
+
+        prompt = textwrap.dedent(f"""
+            You are a formatting engine. Convert the input into JSON.
+
+            RULES:
+            - Do not rewrite or infer.
+            - Do not add or remove segments.
+            - Each input line is: lyricSegmentN | SectionLabel | Corrected lyric text
+            - Output JSON with keys lyricSegmentN and values: (SectionLabel) "Corrected lyric text"
+
+            Return ONLY the JSON object.
+
+            INPUT:
+            {lyrics_think_output}
+        """).strip()
+
+        ok, response = api_clients.query_model_auto(
+            model,
+            prompt=prompt,
+            temperature=0.0,
+            seed=0,
+        )
+        if not ok:
+            return (f"[ERROR] Model call failed: {response}",)
+
+        response_text = "" if response is None else str(response)
+        if not response_text.strip():
+            return ("[ERROR] Model returned empty output.",)
+        return (response_text,)
+
+
+class PromptCrafter_VisualThink:
+    DESCRIPTION = "THINK node for visual concept generation. Outputs labeled plain text."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "input_text": ("STRING", {"multiline": True, "default": ""}),
+                "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("visual_think_output",)
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Think"
+
+    def execute(self, input_text, model):
+        if not input_text or not str(input_text).strip():
+            return ("[ERROR] Input text is empty.",)
+
+        prompt = textwrap.dedent(f"""
+            You are a visual concept generator for a music video.
+
+            OUTPUT FORMAT (EXACT labels, plain text):
+            STYLE:
+            CAMERA LANGUAGE:
+            LIGHTING:
+            MOOD:
+            COLOR PALETTE:
+            ERA:
+
+            INPUT:
+            {input_text}
+        """).strip()
+
+        ok, response = api_clients.query_model_auto(
+            model,
+            prompt=prompt,
+            temperature=0.2,
+            seed=0,
+        )
+        if not ok:
+            return (f"[ERROR] Model call failed: {response}",)
+
+        response_text = "" if response is None else str(response)
+        if not response_text.strip():
+            return ("[ERROR] Model returned empty output.",)
+        return (response_text,)
+
+
+class PromptCrafter_VisualInstruct:
+    DESCRIPTION = "INSTRUCT node that converts VisualThink output into JSON."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "visual_think_output": ("STRING", {"multiline": True, "default": ""}),
+                "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("visual_json",)
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Instruct"
+
+    def execute(self, visual_think_output, model):
+        if not visual_think_output or not str(visual_think_output).strip():
+            return ("[ERROR] VisualThink output is empty.",)
+
+        prompt = textwrap.dedent(f"""
+            You are a formatting engine. Convert the VisualThink output into JSON.
+
+            RULES:
+            - Use the content exactly as provided.
+            - Do not add or remove information.
+            - JSON keys must be: style, camera_language, lighting, mood, palette, era
+            - Return ONLY the JSON object.
+
+            INPUT:
+            {visual_think_output}
+        """).strip()
+
+        ok, response = api_clients.query_model_auto(
+            model,
+            prompt=prompt,
+            temperature=0.0,
+            seed=0,
+        )
+        if not ok:
+            return (f"[ERROR] Model call failed: {response}",)
+
+        response_text = "" if response is None else str(response)
+        if not response_text.strip():
+            return ("[ERROR] Model returned empty output.",)
+        return (response_text,)
+
+
+class PromptCrafter_QnAThink:
+    DESCRIPTION = "THINK node for open-ended reasoning. Plain text output only."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {"multiline": True, "default": ""}),
+                "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("qna_think_output",)
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Think"
+
+    def execute(self, prompt, model):
+        if not prompt or not str(prompt).strip():
+            return ("[ERROR] Prompt is empty.",)
+
+        full_prompt = textwrap.dedent(f"""
+            Provide a clear, plain-text response. No JSON. No code blocks.
+
+            INPUT:
+            {prompt}
+        """).strip()
+
+        ok, response = api_clients.query_model_auto(
+            model,
+            prompt=full_prompt,
+            temperature=0.2,
+            seed=0,
+        )
+        if not ok:
+            return (f"[ERROR] Model call failed: {response}",)
+
+        response_text = "" if response is None else str(response)
+        if not response_text.strip():
+            return ("[ERROR] Model returned empty output.",)
+        return (response_text,)
+
+
+class PromptCrafter_QnAInstruct:
+    DESCRIPTION = "INSTRUCT node that formats QnAThink output based on an explicit instruction."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "qna_think_output": ("STRING", {"multiline": True, "default": ""}),
+                "format_instruction": ("STRING", {"multiline": True, "default": ""}),
+                "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("formatted_output",)
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Instruct"
+
+    def execute(self, qna_think_output, format_instruction, model):
+        if not qna_think_output or not str(qna_think_output).strip():
+            return ("[ERROR] QnAThink output is empty.",)
+        if not format_instruction or not str(format_instruction).strip():
+            return ("[ERROR] Format instruction is empty.",)
+
+        prompt = textwrap.dedent(f"""
+            Format the content according to the instruction. No new content. No reasoning.
+            Return ONLY the formatted output.
+
+            FORMAT INSTRUCTION:
+            {format_instruction}
+
+            CONTENT:
+            {qna_think_output}
+        """).strip()
+
+        ok, response = api_clients.query_model_auto(
+            model,
+            prompt=prompt,
+            temperature=0.0,
+            seed=0,
+        )
+        if not ok:
+            return (f"[ERROR] Model call failed: {response}",)
+
+        response_text = "" if response is None else str(response)
+        if not response_text.strip():
+            return ("[ERROR] Model returned empty output.",)
+        return (response_text,)
 
 # ------------------------------------------------------------------------------------
 # PromptCrafter_Captioner Node
@@ -1790,6 +2267,12 @@ NODE_CLASS_MAPPINGS = {
     "PromptCrafter_QnA": PromptCrafter_QnA_Simple,
     "PromptCrafter_QnA_Advanced": PromptCrafter_QnA,
     "PromptCrafter_QnA_Simple": PromptCrafter_QnA_Simple,
+    "PromptCrafter_LyricsThink": PromptCrafter_LyricsThink,
+    "PromptCrafter_LyricsInstruct": PromptCrafter_LyricsInstruct,
+    "PromptCrafter_VisualThink": PromptCrafter_VisualThink,
+    "PromptCrafter_VisualInstruct": PromptCrafter_VisualInstruct,
+    "PromptCrafter_QnAThink": PromptCrafter_QnAThink,
+    "PromptCrafter_QnAInstruct": PromptCrafter_QnAInstruct,
     "PromptCrafter_Captioner": PromptCrafter_Captioner,
     "PromptCrafter_AudioSplitter": PromptCrafter_AudioSplitter,
     "PromptCrafter_CacheUtility": PromptCrafter_CacheUtility,
@@ -1804,6 +2287,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_QnA": "PromptCrafter QnA",
     "PromptCrafter_QnA_Advanced": "PromptCrafter QnA (Advanced)",
     "PromptCrafter_QnA_Simple": "PromptCrafter QnA (Simple)",
+    "PromptCrafter_LyricsThink": "LyricsThink",
+    "PromptCrafter_LyricsInstruct": "LyricsInstruct",
+    "PromptCrafter_VisualThink": "VisualThink",
+    "PromptCrafter_VisualInstruct": "VisualInstruct",
+    "PromptCrafter_QnAThink": "QnAThink",
+    "PromptCrafter_QnAInstruct": "QnAInstruct",
     "PromptCrafter_Captioner": "PromptCrafter Image Captioner",
     "PromptCrafter_VisualCreator": "PromptCrafter Creator (Visual)",
     "PromptCrafter_SRTCreator": "☠️PGFX SRT Creator",
