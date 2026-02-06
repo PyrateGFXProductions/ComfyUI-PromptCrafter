@@ -542,8 +542,12 @@ class OllamaClient:
 
     def is_configured(self): return True
 
-    def query(self, model_id, prompt, images_b64=None, timeout=None, temperature=None, seed=None, prefer_chat=False, max_tokens=None, **kwargs):
-        endpoints_to_try = ["chat", "generate"] if prefer_chat else ["generate", "chat"]
+    def query(self, model_id, prompt, images_b64=None, timeout=None, temperature=None, seed=None, prefer_chat=False, max_tokens=None, raw=None, no_chat_fallback=False, template=None, system=None, format=None, **kwargs):
+        allow_chat_fallback = not no_chat_fallback
+        if prefer_chat:
+            endpoints_to_try = ["chat"] if not allow_chat_fallback else ["chat", "generate"]
+        else:
+            endpoints_to_try = ["generate"] if not allow_chat_fallback else ["generate", "chat"]
         # Use the timeout from the config if not provided explicitly
         if timeout is None:
             provider_config = config.LOCAL_SERVER_CONFIG.get(self.provider, {})
@@ -559,7 +563,7 @@ class OllamaClient:
             if endpoint == "chat" and model_id in self._chat_api_unsupported:
                 continue
 
-            payload = self._build_payload(endpoint, model_id, prompt, images_b64, temperature, seed, max_tokens=max_tokens)
+            payload = self._build_payload(endpoint, model_id, prompt, images_b64, temperature, seed, max_tokens=max_tokens, raw=raw, template=template, system=system, format=format)
             ok, data_or_err, status_code = self._make_request(url=f"{self.base_url}/api/{endpoint}", headers={}, payload=payload, timeout=timeout)
 
             if ok:
@@ -631,7 +635,7 @@ class OllamaClient:
                     return False, self._format_http_error(e), status_code
                 return False, f"{self.provider.capitalize()} API connection error: {e}", 500
 
-    def _build_payload(self, endpoint, model, prompt, images_b64, temperature=None, seed=None, max_tokens=None, **kwargs):
+    def _build_payload(self, endpoint, model, prompt, images_b64, temperature=None, seed=None, max_tokens=None, raw=None, template=None, system=None, format=None, **kwargs):
         payload = {"model": model, "stream": False, "options": {}}
         if endpoint == "chat":
             msg = {"role": "user", "content": prompt}
@@ -640,6 +644,10 @@ class OllamaClient:
         else:
             payload["prompt"] = prompt
             if images_b64: payload["images"] = images_b64
+            if raw is not None: payload["raw"] = bool(raw)
+            if template is not None: payload["template"] = template
+            if system is not None: payload["system"] = system
+            if format is not None: payload["format"] = format
         
         if temperature is not None: payload["options"]["temperature"] = float(temperature)
         if seed is not None and int(seed) >= 0: payload["options"]["seed"] = int(seed)

@@ -69,6 +69,29 @@ def get_node_description(node_name):
     except Exception as e:
         return f"Error reading help file: {e}"
 
+def _json_only_requested(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    if "json" not in lower:
+        return False
+    if "```json" in lower:
+        return True
+    triggers = (
+        "return only valid json",
+        "return only json",
+        "return only a json",
+        "return only a raw json",
+        "return only a raw json object",
+        "return only the json",
+        "output only json",
+        "json only",
+        "return a single json object",
+        "return only the full json object",
+    )
+    return any(t in lower for t in triggers)
+
+
 # ------------------------------------------------------------------------------------
 # PromptCrafter_QnA Node
 # ------------------------------------------------------------------------------------
@@ -141,6 +164,34 @@ class PromptCrafter_QnA:
             auto_save_file_type = kwargs.get('auto_save_file_type', "Match Output Format")
             auto_save_custom_var = kwargs.get('auto_save_custom_var', "")
             max_tokens = kwargs.get('max_tokens', 4096)
+            force_json = _json_only_requested(user_text)
+            if force_json:
+                ok, response = api_clients.query_model_auto(
+                    model,
+                    prompt=user_text,
+                    images=[image] if image is not None else [],
+                    prefer_chat=False,
+                    temperature=0.0,
+                    seed=0,
+                    timeout=timeout,
+                    max_tokens=max_tokens,
+                    no_chat_fallback=True,
+                    template="{{ .Prompt }}",
+                    format="json",
+                    debug_mode=debug_mode,
+                    debug_title="QnA (JSON Strict)"
+                )
+                if not ok:
+                    raise Exception(response)
+                response_text = "" if response is None else str(response).strip()
+                if not response_text:
+                    return ("", "", "")
+                try:
+                    json.loads(response_text)
+                except Exception as e:
+                    raise Exception(f"JSON-only response requested but model returned invalid JSON: {e}")
+                return (response_text, "", "")
+
 
             if format_profile and format_profile != "Custom":
                 profile = text_io.QNA_FORMAT_PROFILES.get(format_profile)
@@ -479,6 +530,7 @@ class PromptCrafter_QnA_Simple:
     def execute(self, prompt, model, image=None, **kwargs):
         try:
             user_text = "" if prompt is None else str(prompt)
+            force_json = _json_only_requested(user_text)
             if not user_text.strip():
                 return ("",)
 
@@ -491,6 +543,9 @@ class PromptCrafter_QnA_Simple:
                 seed=0,
                 timeout=120,
                 max_tokens=8192,
+                no_chat_fallback=True,
+                template="{{ .Prompt }}",
+                format="json" if force_json else None,
                 debug_mode=False,
                 debug_title="Simple QnA"
             )
@@ -499,6 +554,11 @@ class PromptCrafter_QnA_Simple:
                 return (f"An error occurred: {response}",)
 
             response_text = "" if response is None else str(response).strip()
+            if force_json:
+                try:
+                    json.loads(response_text)
+                except Exception as e:
+                    raise Exception(f"JSON-only response requested but model returned invalid JSON: {e}")
             if not response_text:
                 return ("",)
 
@@ -1727,7 +1787,8 @@ class PromptCrafter_PromptChunker:
         return tuple(output_prompts)
 
 NODE_CLASS_MAPPINGS = {
-    "PromptCrafter_QnA": PromptCrafter_QnA,
+    "PromptCrafter_QnA": PromptCrafter_QnA_Simple,
+    "PromptCrafter_QnA_Advanced": PromptCrafter_QnA,
     "PromptCrafter_QnA_Simple": PromptCrafter_QnA_Simple,
     "PromptCrafter_Captioner": PromptCrafter_Captioner,
     "PromptCrafter_AudioSplitter": PromptCrafter_AudioSplitter,
@@ -1741,6 +1802,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_QnA": "PromptCrafter QnA",
+    "PromptCrafter_QnA_Advanced": "PromptCrafter QnA (Advanced)",
     "PromptCrafter_QnA_Simple": "PromptCrafter QnA (Simple)",
     "PromptCrafter_Captioner": "PromptCrafter Image Captioner",
     "PromptCrafter_VisualCreator": "PromptCrafter Creator (Visual)",
@@ -1755,3 +1817,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_ImageSwitcher": "PromptCrafter Image Switcher",
     "PromptCrafter_PromptChunker": "PromptCrafter Prompt Chunker",
 }
+
