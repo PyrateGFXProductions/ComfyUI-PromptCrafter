@@ -18,6 +18,18 @@ Compatibility note: many internal node IDs still use the `PromptCrafter_` prefix
 
 ---
 
+## 🧪 Example Workflows
+
+Functional, end-to-end workflow examples are included in `workflows/`. See `workflows/README.md` for details and dependencies.
+
+- `PGFX_VisualCreator_SD15_Image.json`
+- `PGFX_LyricsCreator_Schedule_Export.json`
+- `PGFX_QnA_To_Text.json`
+- `PGFX_Captioner_Single_Image.json`
+- `PGFX_SRT_Subtitle_Burn.json`
+
+---
+
 ## 🧭 Menu Categories
 
 The nodes are organized under the PGFX menu in ComfyUI:
