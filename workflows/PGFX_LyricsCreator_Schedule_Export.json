@@ -1,0 +1,256 @@
+{
+  "id": "55e2e927-c6eb-4fce-965d-1a56231acf3b",
+  "revision": 0,
+  "last_node_id": 3,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "PromptCrafter_LyricsCreator",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        460,
+        520
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "schedule",
+          "type": "STRING",
+          "links": [
+            1
+          ]
+        },
+        {
+          "name": "image_context",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "negative_prompt",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "clean_lyrics_txt",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "lyrics_srt",
+          "type": "STRING",
+          "links": [
+            2
+          ]
+        },
+        {
+          "name": "model_out",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "seed_out",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "audio_meta",
+          "type": "DICT",
+          "links": null
+        },
+        {
+          "name": "spectrogram_preview",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "signal",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "auto_character",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "auto_theme",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "auto_environment",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "auto_lighting",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "auto_interaction",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "auto_expression",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "auto_shots",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "auto_outfit",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "auto_visibility",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "reference_image_1",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "reference_image_2",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "reference_image_3",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "reference_image_4",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "reference_image_5",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PromptCrafter_LyricsCreator",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 2,
+      "type": "PromptCrafter_SaveTextFile",
+      "pos": [
+        520,
+        40
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "text_to_save",
+          "type": "STRING",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "save_status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PromptCrafter_SaveTextFile",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "ComfyUI/output/PromptCrafter",
+        "lyrics_schedule_{seed}"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "PromptCrafter_SaveTextFile",
+      "pos": [
+        520,
+        200
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "text_to_save",
+          "type": "STRING",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "save_status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PromptCrafter_SaveTextFile",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "ComfyUI/output/PromptCrafter",
+        "lyrics_srt_{seed}"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      1,
+      2,
+      0,
+      "STRING"
+    ],
+    [
+      2,
+      1,
+      5,
+      3,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

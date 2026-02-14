@@ -1452,7 +1452,7 @@ class PGFX_Studio_Stylist:
     @classmethod
     def INPUT_TYPES(cls):
         try:
-            from . import style_profiles
+            from ..core.profiles import pgfx_style_profiles as style_profiles
             style_profiles._load_style_profiles()
             style_options = style_profiles.get_style_override_options("Video")
         except Exception:
@@ -1476,7 +1476,7 @@ class PGFX_Studio_Stylist:
     CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
     def apply_style(self, base_style, character_consistency_tags, global_lighting_mood, additional_lora_triggers="", style_strength=1.0):
-        from . import style_profiles
+        from ..core.profiles import pgfx_style_profiles as style_profiles
         
         clean_name = re.sub(r'^\(.*\)\s*', '', base_style)
         profile = style_profiles.NAMED_STYLE_PROFILES.get(clean_name, {})

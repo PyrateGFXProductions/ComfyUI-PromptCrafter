@@ -1,0 +1,143 @@
+{
+  "id": "9e439043-77d4-45c9-bc29-d8a6d66a2a44",
+  "revision": 0,
+  "last_node_id": 3,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        240,
+        320
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "input/your_image.png",
+        "image"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "PromptCrafter_Captioner",
+      "pos": [
+        320,
+        0
+      ],
+      "size": [
+        420,
+        260
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "caption",
+          "type": "STRING",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PromptCrafter_Captioner",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "qwen2.5vl:7b"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "PromptCrafter_SaveTextFile",
+      "pos": [
+        780,
+        40
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "text_to_save",
+          "type": "STRING",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "save_status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PromptCrafter_SaveTextFile",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "ComfyUI/output/PromptCrafter",
+        "caption_{seed}"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      1,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

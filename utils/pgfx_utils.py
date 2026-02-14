@@ -779,7 +779,7 @@ def _fetch_url_content(url, debug_mode=False):
 
 def _should_perform_web_search(user_query, model, seed, debug_mode, timeout=40):
     """Uses an LLM to determine if a user's query requires a web search."""
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
     if not config.DUCKDUCKGO_SEARCH_AVAILABLE or not user_query or user_query.strip() == config.DEFAULT_PROMPT_TEXT:
         return False, None
     
@@ -901,7 +901,7 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
     max_workers = min(32, (cpu_count if cpu_count else 1) + 4)
 
     def map_chunk_to_summary(chunk, i):
-        from . import api_clients
+        from ..core import pgfx_api_clients as api_clients
         map_prompt_template = "Extract the most important sentences from the following text chunk. Return ONLY the extracted sentences.\n\nTEXT CHUNK:\n{chunk}" if final_strategy == "extractive" else "Concisely summarize the key points of the following text chunk. Focus on factual information, names, and key events. Return ONLY the summary.\n\nTEXT CHUNK:\n{chunk}"
         ok, summary_or_err = api_clients.query_model_auto(model, map_prompt_template.format(chunk=chunk), prefer_chat=True, temperature=temperature, seed=seed, debug_mode=debug_mode, timeout=timeout, debug_title=f"Summarize Chunk {i+1}")
         if ok: return TextCleaner.single_paragraph(summary_or_err)
@@ -909,7 +909,7 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
         return None
 
     def reduce_group(group, i, level, total_groups):
-        from . import api_clients
+        from ..core import pgfx_api_clients as api_clients
         reduce_prompt = f"The following text consists of several summaries of a larger document. Synthesize these summaries into one final, coherent summary of the entire document.\n\nSUMMARIES:\n{group}"
         ok, summary_or_err = api_clients.query_model_auto(model, reduce_prompt, prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title=f"Reduce Level {level} - Group {i+1}/{total_groups}")
         if ok: return TextCleaner.single_paragraph(summary_or_err)
@@ -925,7 +925,7 @@ def _summarize_large_text(text, chunk_size_words, model, temperature, seed, debu
         
         # Convert to list once, after the map phase is complete
         summaries_list = list(current_summaries)
-        if not current_summaries:
+        if not summaries_list:
             return "[Error: All text chunks failed to summarize.]"
 
         # --- Reduce Phase ---
@@ -964,7 +964,7 @@ COMPREHENSIVE SUMMARY ---
 --- END QUERY ---
             Return ONLY the final, targeted answer.
         """).strip()
-        from . import api_clients
+        from ..core import pgfx_api_clients as api_clients
         ok, final_answer = api_clients.query_model_auto(model, final_pass_prompt, prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title="Final Summary Pass")
         if ok: return TextCleaner.single_paragraph(final_answer)
         else: print(f"\033[93m[PromptCrafter] Warning: Final summary pass failed. Returning the general summary. Error: {final_answer}\033[0m")
@@ -976,7 +976,7 @@ COMPREHENSIVE SUMMARY ---
 # ------------------------------------------------------------------------------------
 def _extract_mandatory_tokens_with_model(image_context: str, user_text: str, run_config: 'config.PromptCrafterRunConfig', primary_subjects_from_images: list | None = None):
     cache_key = _get_cache_key(run_config.model, image_context, run_config.use_chat_api, run_config.temperature, run_config.seed, user_text, primary_subjects_from_images, "extract_tokens_v2", run_config.debug_mode)
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
     if config.CACHE.has(cache_key):
         print("\033[94m[PromptCrafter] Using cached token extraction.\033[0m")
         return True, config.CACHE.get(cache_key)
@@ -1009,7 +1009,7 @@ def _extract_mandatory_tokens_with_model(image_context: str, user_text: str, run
     return True, tagged
 
 def _extract_subjects(source_text, source_label, instruction_text, run_config, debug_title, post_process_func=None):
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
     if not source_text or not source_text.strip() or source_text.strip() == config.DEFAULT_PROMPT_TEXT: return True, []
     ask_prompt = textwrap.dedent(f"""
         {instruction_text}
@@ -1057,7 +1057,7 @@ def _unique_keep_order(seq):
     return result
 
 def _deep_think_and_refine(model, generation_prompt_text, max_iterations=3, confidence_threshold=0.8, **kwargs):
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
     core_objectives = _summarize_deep_think_objectives(model, generation_prompt_text, **kwargs)
     _debug_print(kwargs.get("debug_mode", False), "Deep Think - Core Objectives", core_objectives or "Could not be summarized.")
 
@@ -1129,7 +1129,7 @@ def _deep_think_and_refine(model, generation_prompt_text, max_iterations=3, conf
     return True, current_prompt
 
 def _summarize_deep_think_objectives(model, initial_prompt_text, **kwargs):
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
 
     # Extract only the user instructions to make summarization more efficient
     user_instructions_match = re.search(r"USER INSTRUCTIONS \(Primary Goal\)\n---\n(.*?)\n---", initial_prompt_text, re.DOTALL)
@@ -1154,7 +1154,7 @@ def _summarize_deep_think_objectives(model, initial_prompt_text, **kwargs):
     return core_objectives
 
 def _run_deep_think_iteration(current_prompt, history, core_objectives, model, **kwargs):
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
     history_log = ""
     if history:
         history_log_parts = ["--- REFINEMENT HISTORY (for context) ---"]
@@ -1186,7 +1186,7 @@ def _run_deep_think_iteration(current_prompt, history, core_objectives, model, *
 
 def _generate_negative_prompt(scene_prompt, run_config, user_negative_prompt=""): # noqa
     """Generates a comprehensive negative prompt using a hybrid approach of base keywords and AI-driven contextual analysis."""
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
     if not scene_prompt or "Ollama error" in scene_prompt:
         return ""
     
@@ -1233,7 +1233,7 @@ def _generate_negative_prompt(scene_prompt, run_config, user_negative_prompt="")
 
 def _simplify_for_diffusion(prompt_text, user_text, run_config):
     """Restructures a narrative prompt into a weighted, direct prompt for diffusion models."""
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
     if not prompt_text or not run_config.simplify_for_diffusion: return prompt_text, ""
     cache_key = _get_cache_key(prompt_text, user_text, run_config.model, "simplify_v3_aggressive")
     if config.CACHE.has(cache_key):
@@ -1283,7 +1283,7 @@ def _split_text_into_scenes_with_ai(text, run_config):
     else:
         text_to_process = text
 
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
     prompt_template = textwrap.dedent('''
         You are an expert film script analyst. Read the following story. Your task is to break it down into distinct, logical scenes or camera shots.
         ---
@@ -1306,7 +1306,7 @@ def _split_text_into_scenes_with_ai(text, run_config):
 
 def _generate_storyboard_from_instruction_with_ai(user_request, image_context, primary_subjects, run_config):
     '''Uses an LLM to generate a storyboard from a high-level user instruction.'''
-    from . import api_clients
+    from ..core import pgfx_api_clients as api_clients
     print("\033[94m[PromptCrafter] Using AI to generate storyboard from user instruction...")
     prompt_template = textwrap.dedent('''
         You are an expert film director. Your task is to break down a user's high-level request into a sequence of distinct, cinematic video scenes.
@@ -1404,6 +1404,49 @@ def chain_of_thought_process(thinking_prompt, thinking_model, instruct_prompt, i
     # Ensure max_tokens is set to prevent truncation
     if 'max_tokens' not in instructor_kwargs:
         instructor_kwargs['max_tokens'] = 2048
+    stage2_max_tokens = int(instructor_kwargs.get('max_tokens', 2048))
+
+    def _run_stage2_fallback(expect_json_output):
+        fallback_prompt = textwrap.dedent(f"""
+            You are the final response generator.
+            Use the reasoning below to produce the final answer now.
+            {'Return ONLY valid JSON with no markdown fences.' if expect_json_output else 'Return ONLY the final answer text.'}
+
+            USER TASK:
+            {instruct_prompt}
+
+            REASONING:
+            {reasoning_text}
+        """).strip()
+
+        fallback_kwargs = kwargs.copy()
+        fallback_kwargs['images'] = None
+        fallback_kwargs['timeout'] = timeout
+        fallback_kwargs['max_tokens'] = stage2_max_tokens
+        fallback_kwargs['prefer_chat'] = True
+        fallback_kwargs['temperature'] = max(float(fallback_kwargs.get('temperature', 0.2) or 0.2), 0.2)
+        fallback_kwargs['debug_title'] = "Dual-Model Stage 2: Instructor (Fallback)"
+
+        ok_fb, fb_output = api_clients.query_model_auto(
+            instruct_model,
+            prompt=fallback_prompt,
+            **fallback_kwargs
+        )
+        if not ok_fb:
+            return False, fb_output
+        if not isinstance(fb_output, str) or not fb_output.strip():
+            return False, "Fallback instructor returned an empty response."
+
+        fb_output = fb_output.strip()
+        if expect_json_output:
+            try:
+                parsed_fb = json_utils.extract_and_parse_json(fb_output)
+            except Exception as e:
+                return False, f"Fallback JSON parse error: {e}"
+            if parsed_fb is None:
+                return False, "Fallback instructor returned non-JSON output."
+            return True, parsed_fb
+        return True, fb_output
 
     if expect_json:
         # Use a slightly higher temperature to prevent the model from stopping immediately
@@ -1424,15 +1467,27 @@ def chain_of_thought_process(thinking_prompt, thinking_model, instruct_prompt, i
         )
 
     if not ok:
-        error_message = f"Dual-Model Stage 2 (Instruct) failed: {final_output}"
-        print(f"\033[91m[PromptCrafter] {error_message}\033[0m")
-        return False, error_message, reasoning_text
+        print(f"\033[93m[PromptCrafter] Stage 2 primary call failed. Attempting fallback...\033[0m")
+        ok_fb, fb_output = _run_stage2_fallback(expect_json)
+        if ok_fb:
+            final_output = fb_output
+            ok = True
+        else:
+            error_message = f"Dual-Model Stage 2 (Instruct) failed: {final_output}. Fallback failed: {fb_output}"
+            print(f"\033[91m[PromptCrafter] {error_message}\033[0m")
+            return False, error_message, reasoning_text
 
-    # Check if Stage 2 returned an empty response (even if ok=True)
-    if not final_output or (isinstance(final_output, str) and not final_output.strip()):
-        error_message = "Dual-Model Stage 2 (Instruct) returned an empty response. The model may not support JSON output or the prompt is too complex."
-        print(f"\033[91m[PromptCrafter] {error_message}\033[0m")
-        return False, error_message, reasoning_text
+    # Check if Stage 2 returned an empty response (even if ok=True), then fallback once.
+    if final_output is None or (isinstance(final_output, str) and not final_output.strip()):
+        print(f"\033[93m[PromptCrafter] Stage 2 returned empty output. Attempting fallback...\033[0m")
+        ok_fb, fb_output = _run_stage2_fallback(expect_json)
+        if ok_fb:
+            final_output = fb_output
+        else:
+            error_message = "Dual-Model Stage 2 (Instruct) returned an empty response. The model may not support JSON output or the prompt is too complex."
+            error_message = f"{error_message} Fallback failed: {fb_output}"
+            print(f"\033[91m[PromptCrafter] {error_message}\033[0m")
+            return False, error_message, reasoning_text
 
     _debug_print(debug_mode, "Dual-Model Stage 2: Final Output", final_output)
 

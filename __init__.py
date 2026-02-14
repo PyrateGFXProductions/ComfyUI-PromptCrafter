@@ -2,8 +2,17 @@ import os
 import sys
 import importlib
 import importlib.util
+import warnings
 
 from .core import pgfx_config as config
+
+# SpeechBrain 1.x emits a deprecation redirect warning via stdlib inspect
+# when older paths are probed by downstream dependencies (e.g. whisperx).
+warnings.filterwarnings(
+    "ignore",
+    message=r"Module 'speechbrain\.pretrained' was deprecated, redirecting to 'speechbrain\.inference'\.",
+    category=UserWarning,
+)
 
 # 1. Initialize ComfyGuard (Security & Stability Tier)
 # This MUST happen early to activate the interceptor and API routes

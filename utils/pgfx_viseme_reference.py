@@ -33,7 +33,7 @@ except Exception as e:
     EncoderClassifier = None
     foreign_class = None
 
-from . import utils
+from . import pgfx_utils as utils
 import re
 
 class AnyType(str):

@@ -7,6 +7,10 @@ import textwrap
 # Import 'cache' here to resolve the circular dependency and allow direct initialization.
 from . import pgfx_cache as cache
 
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
 # --- Constants ---
 DEFAULT_PROMPT_TEXT = "Describe your idea here. You can use multiple paragraphs to define scenes for a schedule."
 FALLBACK_TEXT_MODEL = "llama3:latest" # A sensible default for text-only tasks
@@ -41,6 +45,40 @@ SHARED_SESSION = None
 # --- Model Caching ---
 PRELOAD_MODELS = [] # List of model_ids (e.g., "gguf/llama-3-8b-instruct.Q4_K_M.gguf") to load at startup
 MAX_CACHED_MODELS = 2 # Maximum number of GGUF models to keep in VRAM/RAM cache
+
+# --- GGUF Runtime Defaults ---
+# Large values (e.g. 16384) can allocate multi-GB KV caches and easily OOM on consumer GPUs.
+DEFAULT_GGUF_N_CTX = int(os.getenv("PGFX_GGUF_N_CTX", "4096"))
+MIN_GGUF_N_CTX = int(os.getenv("PGFX_GGUF_MIN_N_CTX", "1024"))
+GGUF_DEFAULT_TIMEOUT_SECONDS = int(os.getenv("PGFX_GGUF_TIMEOUT_SECONDS", "180"))
+GGUF_AUTO_TUNE = _env_flag("PGFX_GGUF_AUTO_TUNE", "1")
+GGUF_PROFILE = os.getenv("PGFX_GGUF_PROFILE", "balanced").strip().lower()
+if GGUF_PROFILE not in {"safe", "balanced", "speed"}:
+    GGUF_PROFILE = "balanced"
+# GPU offload defaults: keep text models fast by default, keep vision models stable by default.
+DEFAULT_GGUF_N_GPU_LAYERS_WAS_SET = os.getenv("PGFX_GGUF_N_GPU_LAYERS") is not None
+VISION_GGUF_N_GPU_LAYERS_WAS_SET = os.getenv("PGFX_VISION_GGUF_N_GPU_LAYERS") is not None
+DEFAULT_GGUF_N_GPU_LAYERS = int(os.getenv("PGFX_GGUF_N_GPU_LAYERS", "-1"))
+VISION_GGUF_N_GPU_LAYERS = int(os.getenv("PGFX_VISION_GGUF_N_GPU_LAYERS", "0"))
+# Conservative batch defaults to avoid CUDA VMM spikes during decode on 8-12GB cards.
+DEFAULT_GGUF_N_BATCH_WAS_SET = os.getenv("PGFX_GGUF_N_BATCH") is not None
+DEFAULT_GGUF_N_UBATCH_WAS_SET = os.getenv("PGFX_GGUF_N_UBATCH") is not None
+VISION_GGUF_N_BATCH_WAS_SET = os.getenv("PGFX_VISION_GGUF_N_BATCH") is not None
+VISION_GGUF_N_UBATCH_WAS_SET = os.getenv("PGFX_VISION_GGUF_N_UBATCH") is not None
+DEFAULT_GGUF_N_BATCH = int(os.getenv("PGFX_GGUF_N_BATCH", "512"))
+DEFAULT_GGUF_N_UBATCH = int(os.getenv("PGFX_GGUF_N_UBATCH", "256"))
+VISION_GGUF_N_BATCH = int(os.getenv("PGFX_VISION_GGUF_N_BATCH", "128"))
+VISION_GGUF_N_UBATCH = int(os.getenv("PGFX_VISION_GGUF_N_UBATCH", "64"))
+# Retrying GPU OOM loads in CPU mode can crash some llama.cpp builds; keep off by default.
+GGUF_ENABLE_CPU_RETRY = _env_flag("PGFX_GGUF_ENABLE_CPU_RETRY", "0")
+# Large vision GGUFs frequently collide with downstream diffusion/ACE loads on 8-12GB GPUs.
+# Unload after query by default; set PGFX_GGUF_UNLOAD_VISION_AFTER_QUERY=0 to keep cached.
+GGUF_UNLOAD_VISION_AFTER_QUERY_WAS_SET = os.getenv("PGFX_GGUF_UNLOAD_VISION_AFTER_QUERY") is not None
+GGUF_UNLOAD_VISION_AFTER_QUERY = _env_flag("PGFX_GGUF_UNLOAD_VISION_AFTER_QUERY", "1")
+# Vision projector (mmproj/mtmd) is large and can hard-abort llama.cpp on CUDA OOM.
+# Keep projector on CPU by default; enable with PGFX_GGUF_VISION_PROJECTOR_USE_GPU=1 if you have ample VRAM.
+GGUF_VISION_PROJECTOR_USE_GPU_WAS_SET = os.getenv("PGFX_GGUF_VISION_PROJECTOR_USE_GPU") is not None
+GGUF_VISION_PROJECTOR_USE_GPU = _env_flag("PGFX_GGUF_VISION_PROJECTOR_USE_GPU", "0")
 
 # --- Dependency Flags (set at runtime in __init__.py) ---
 LLAMA_CPP_AVAILABLE = False

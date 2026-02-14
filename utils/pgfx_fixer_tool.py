@@ -75,9 +75,9 @@ def replace_function(content: str, name: str, new_body: str, marker: str) -> str
     return new_content
 
 # ----------------------------------------------------------------------
-# 1️⃣ utils.py – normalise_model_name()
+# 1️⃣ utils/pgfx_utils.py – normalise_model_name()
 # ----------------------------------------------------------------------
-UTILS_PATH = Path("utils.py")
+UTILS_PATH = Path("utils/pgfx_utils.py")
 UTILS_MARKER = "UTILS_NORMALISE_MODEL"
 
 UTILS_NEW = textwrap.dedent(
@@ -107,9 +107,9 @@ if UTILS_PATH.is_file():
         backup(UTILS_PATH)
         txt = insert_after_imports(txt, UTILS_MARKER, UTILS_NEW)
         UTILS_PATH.write_text(txt, encoding="utf-8")
-        print("[patch] utils.py – added normalise_model_name()")
+        print("[patch] utils/pgfx_utils.py – added normalise_model_name()")
 else:
-    print("[skip] utils.py – cannot find this file (wrong folder?)")
+    print("[skip] utils/pgfx_utils.py – cannot find this file (wrong folder?)")
 
 # ----------------------------------------------------------------------
 # 2️⃣ cinematic_prompt_node.py – safe get_combined_models()
@@ -152,9 +152,9 @@ else:
     print("[skip] cinematic_prompt_node.py – cannot find this file")
 
 # ----------------------------------------------------------------------
-# 3️⃣ creator_nodes.py – unified get_combined_models()
+# 3️⃣ nodes/pgfx_creator_nodes.py – unified get_combined_models()
 # ----------------------------------------------------------------------
-CREATOR_PATH = Path("creator_nodes.py")
+CREATOR_PATH = Path("nodes/pgfx_creator_nodes.py")
 CREATOR_MARKER = "CREATOR_GET_COMBINED_MODELS"
 
 CREATOR_NEW = textwrap.dedent(
@@ -181,12 +181,12 @@ if CREATOR_PATH.is_file():
     txt = CREATOR_PATH.read_text(encoding="utf-8")
     txt = replace_function(txt, "get_combined_models", CREATOR_NEW, CREATOR_MARKER)
     CREATOR_PATH.write_text(txt, encoding="utf-8")
-    print("[patch] creator_nodes.py – refreshed get_combined_models()")
+    print("[patch] nodes/pgfx_creator_nodes.py – refreshed get_combined_models()")
 else:
-    print("[skip] creator_nodes.py – cannot find this file")
+    print("[skip] nodes/pgfx_creator_nodes.py – cannot find this file")
 
 # ----------------------------------------------------------------------
-# 4️⃣ creator_nodes.py – robust _setup_config (model fallback)
+# 4️⃣ nodes/pgfx_creator_nodes.py – robust _setup_config (model fallback)
 # ----------------------------------------------------------------------
 SETUP_MARKER = "CREATOR_SETUP_CONFIG_MODEL_FALLBACK"
 
@@ -223,14 +223,14 @@ if CREATOR_PATH.is_file():
         if SETUP_MARKER not in txt:
             txt = insert_after_imports(txt, SETUP_MARKER, SETUP_PATCH)
     CREATOR_PATH.write_text(txt, encoding="utf-8")
-    print("[patch] creator_nodes.py – added model‑fallback logic to _setup_config")
+    print("[patch] nodes/pgfx_creator_nodes.py – added model‑fallback logic to _setup_config")
 else:
-    print("[skip] creator_nodes.py – cannot find this file (second pass)")
+    print("[skip] nodes/pgfx_creator_nodes.py – cannot find this file (second pass)")
 
 # ----------------------------------------------------------------------
-# 5️⃣ api_clients.py – global Ollama throttling (max 1 concurrent call)
+# 5️⃣ core/pgfx_api_clients.py – global Ollama throttling (max 1 concurrent call)
 # ----------------------------------------------------------------------
-API_CLIENTS_PATH = Path("api_clients.py")
+API_CLIENTS_PATH = Path("core/pgfx_api_clients.py")
 API_CLIENTS_MARKER = "API_OLLAMA_THROTTLE"
 
 API_THROTTLE = textwrap.dedent(
@@ -264,14 +264,14 @@ if API_CLIENTS_PATH.is_file():
         backup(API_CLIENTS_PATH)
         txt = insert_after_imports(txt, API_CLIENTS_MARKER, API_THROTTLE)
         API_CLIENTS_PATH.write_text(txt, encoding="utf-8")
-        print("[patch] api_clients.py – added Ollama throttling wrapper")
+        print("[patch] core/pgfx_api_clients.py – added Ollama throttling wrapper")
 else:
-    print("[skip] api_clients.py – cannot find this file")
+    print("[skip] core/pgfx_api_clients.py – cannot find this file")
 
 # ----------------------------------------------------------------------
-# 6️⃣ json_utils.py – tolerant JSON extraction
+# 6️⃣ utils/pgfx_json_utils.py – tolerant JSON extraction
 # ----------------------------------------------------------------------
-JSON_UTILS_PATH = Path("json_utils.py")
+JSON_UTILS_PATH = Path("utils/pgfx_json_utils.py")
 JSON_MARKER = "JSON_EXTRACT_TOLERANT"
 
 JSON_NEW = textwrap.dedent(
@@ -321,9 +321,9 @@ if JSON_UTILS_PATH.is_file():
         backup(JSON_UTILS_PATH)
         txt = insert_after_imports(txt, JSON_MARKER, JSON_NEW)
         JSON_UTILS_PATH.write_text(txt, encoding="utf-8")
-        print("[patch] json_utils.py – replaced JSON extractor with tolerant version")
+        print("[patch] utils/pgfx_json_utils.py – replaced JSON extractor with tolerant version")
 else:
-    print("[skip] json_utils.py – cannot find this file")
+    print("[skip] utils/pgfx_json_utils.py – cannot find this file")
 
 # ----------------------------------------------------------------------
 # All done

@@ -5,7 +5,10 @@ import json
 import time
 import inspect
 import threading
+import errno
 import uuid
+import queue
+import subprocess
 from typing import Callable, Dict, Any
 
 # Third-party imports
@@ -15,6 +18,10 @@ import requests
 import base64
 from . import pgfx_config as config
 from ..utils import pgfx_json_utils as json_utils
+try:
+    import folder_paths
+except Exception:
+    folder_paths = None
 
 # >>> API_OLLAMA_THROTTLE >>>
 
@@ -109,6 +116,10 @@ class GGUFClient:
     _model_cache = {}
     _cache_lock = threading.RLock()
     _last_used = {}  # Track last usage time for LRU eviction
+    _model_runtime = {}  # Runtime tuning metadata per loaded model
+    _vram_probe_lock = threading.Lock()
+    _last_vram_probe_ts = 0.0
+    _last_vram_free_mib = None
 
     def __init__(self):
         self.provider = "gguf"
@@ -149,6 +160,7 @@ class GGUFClient:
                 print(f"\033[94m[PromptCrafter] Evicting LRU GGUF model: {model_to_evict}\033[0m")
                 self._model_cache.pop(model_to_evict, None)
                 self._last_used.pop(model_to_evict, None)
+                self._model_runtime.pop(model_to_evict, None)
                 import gc
                 try:
                     if 'torch' in globals() and torch.cuda.is_available():
@@ -160,16 +172,162 @@ class GGUFClient:
     def is_configured(self):
         return config.LLAMA_CPP_AVAILABLE
 
+    @classmethod
+    def _get_free_vram_mib(cls):
+        now = time.time()
+        with cls._vram_probe_lock:
+            if cls._last_vram_free_mib is not None and (now - cls._last_vram_probe_ts) < 3.0:
+                return cls._last_vram_free_mib
+
+        free_mib = None
+
+        # Prefer torch runtime signal when available.
+        try:
+            if 'torch' in globals() and torch.cuda.is_available():
+                free_bytes, _ = torch.cuda.mem_get_info()
+                free_mib = int(free_bytes // (1024 * 1024))
+        except Exception:
+            free_mib = None
+
+        # Fallback to nvidia-smi for environments where torch is unavailable at this stage.
+        if free_mib is None:
+            try:
+                res = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1.5,
+                    check=False,
+                )
+                if res.returncode == 0:
+                    first_line = (res.stdout or "").strip().splitlines()
+                    if first_line:
+                        token = first_line[0].strip().split()[0]
+                        free_mib = int(token)
+            except Exception:
+                free_mib = None
+
+        with cls._vram_probe_lock:
+            cls._last_vram_probe_ts = now
+            cls._last_vram_free_mib = free_mib
+
+        return free_mib
+
+    def _resolve_vision_runtime_defaults(self):
+        auto_tune = bool(getattr(config, "GGUF_AUTO_TUNE", True))
+        profile = str(getattr(config, "GGUF_PROFILE", "balanced")).strip().lower()
+        if profile not in {"safe", "balanced", "speed"}:
+            profile = "balanced"
+
+        free_mib = self._get_free_vram_mib()
+        has_cuda = False
+        try:
+            has_cuda = bool('torch' in globals() and torch.cuda.is_available())
+        except Exception:
+            has_cuda = False
+        if free_mib is not None and free_mib > 0:
+            has_cuda = True
+
+        n_gpu_layers = int(getattr(config, "VISION_GGUF_N_GPU_LAYERS", 0))
+        n_batch = int(getattr(config, "VISION_GGUF_N_BATCH", 128))
+        n_ubatch = int(getattr(config, "VISION_GGUF_N_UBATCH", 64))
+        unload_after_query = bool(getattr(config, "GGUF_UNLOAD_VISION_AFTER_QUERY", True))
+
+        if auto_tune and not getattr(config, "VISION_GGUF_N_GPU_LAYERS_WAS_SET", False):
+            if not has_cuda:
+                n_gpu_layers = 0
+            elif free_mib is None:
+                if profile == "safe":
+                    n_gpu_layers = 2
+                elif profile == "speed":
+                    n_gpu_layers = 10
+                else:
+                    n_gpu_layers = 6
+            else:
+                if profile == "safe":
+                    if free_mib >= 10000:
+                        n_gpu_layers = 10
+                    elif free_mib >= 8500:
+                        n_gpu_layers = 6
+                    elif free_mib >= 7000:
+                        n_gpu_layers = 2
+                    else:
+                        n_gpu_layers = 0
+                elif profile == "speed":
+                    if free_mib >= 10500:
+                        n_gpu_layers = -1
+                    elif free_mib >= 9000:
+                        n_gpu_layers = 16
+                    elif free_mib >= 7500:
+                        n_gpu_layers = 10
+                    elif free_mib >= 6200:
+                        n_gpu_layers = 6
+                    elif free_mib >= 5000:
+                        n_gpu_layers = 2
+                    else:
+                        n_gpu_layers = 0
+                else:
+                    if free_mib >= 10000:
+                        n_gpu_layers = 16
+                    elif free_mib >= 8500:
+                        n_gpu_layers = 10
+                    elif free_mib >= 7000:
+                        n_gpu_layers = 6
+                    elif free_mib >= 6000:
+                        n_gpu_layers = 4
+                    elif free_mib >= 5000:
+                        n_gpu_layers = 2
+                    else:
+                        n_gpu_layers = 0
+
+        if auto_tune and not getattr(config, "VISION_GGUF_N_BATCH_WAS_SET", False):
+            if n_gpu_layers == -1 or n_gpu_layers >= 12:
+                n_batch = 128
+            elif n_gpu_layers >= 6:
+                n_batch = 96
+            else:
+                n_batch = 64
+        if auto_tune and not getattr(config, "VISION_GGUF_N_UBATCH_WAS_SET", False):
+            n_ubatch = 64 if n_batch >= 128 else 32
+        if auto_tune and not getattr(config, "GGUF_UNLOAD_VISION_AFTER_QUERY_WAS_SET", False):
+            if n_gpu_layers == 0:
+                unload_after_query = True
+            elif profile == "speed":
+                unload_after_query = False
+            else:
+                # Balanced/Safe defaults prioritize avoiding downstream OOM when
+                # large diffusion/ACE models load after PromptCrafter stages.
+                unload_after_query = True
+
+        n_batch = max(32, int(n_batch))
+        n_ubatch = max(32, min(int(n_ubatch), n_batch))
+
+        return {
+            "auto_tune": auto_tune,
+            "profile": profile,
+            "free_vram_mib": free_mib,
+            "n_gpu_layers": int(n_gpu_layers),
+            "n_batch": int(n_batch),
+            "n_ubatch": int(n_ubatch),
+            "unload_after_query": bool(unload_after_query),
+        }
+
     def _load_model(self, model_id: str, **kwargs):
         # Loads a GGUF model, handling vision capabilities and potential errors.
         # This function is separated to cleanly manage model loading and caching.
         
         # 1. Normalize path and check for existence
-        model_id_without_prefix = model_id.replace('gguf/', '', 1)
-        normalized_model_path = os.path.join(config.LLM_MODEL_DIR, model_id_without_prefix.replace('/', os.path.sep))
-        
-        if not os.path.exists(normalized_model_path):
-            raise FileNotFoundError(f"GGUF model not found at path: {normalized_model_path}")
+        model_id_without_prefix = _normalize_gguf_model_relpath(model_id)
+        normalized_model_path, attempted_paths = _resolve_gguf_model_path(model_id_without_prefix)
+
+        if normalized_model_path is None:
+            preferred_path = os.path.join(config.LLM_MODEL_DIR, model_id_without_prefix.replace('/', os.path.sep))
+            attempted_lines = "\n - ".join(attempted_paths[:12]) if attempted_paths else "(no candidate paths generated)"
+            raise FileNotFoundError(
+                errno.ENOENT,
+                f"GGUF model not found. Tried:\n - {attempted_lines}",
+                preferred_path,
+            )
 
 
         with self._cache_lock:
@@ -184,21 +342,117 @@ class GGUFClient:
                 self._evict_lru_models()
         
         # 2. Base Llama constructor arguments
-        n_gpu_layers = kwargs.get("n_gpu_layers", -1)
+        is_vision_model = any(
+            kw in model_id.lower()
+            for kw in {"llava", "moondream", "bakllava", "fuyu", "idefics", "qwen", "vision", "clip", "mmproj"}
+        )
+        vision_runtime = self._resolve_vision_runtime_defaults() if is_vision_model else None
+        default_n_gpu_layers = (
+            vision_runtime["n_gpu_layers"]
+            if is_vision_model and vision_runtime is not None
+            else getattr(config, "VISION_GGUF_N_GPU_LAYERS", 0)
+            if is_vision_model
+            else getattr(config, "DEFAULT_GGUF_N_GPU_LAYERS", -1)
+        )
+        if "n_gpu_layers" in kwargs:
+            n_gpu_layers = int(kwargs.get("n_gpu_layers", default_n_gpu_layers))
+            if is_vision_model and n_gpu_layers == -1 and default_n_gpu_layers != -1:
+                # Keep legacy workflows stable: for VLMs, explicit -1 can hard-crash on 8-12GB cards.
+                print(
+                    f"\033[93m[PromptCrafter] Vision model requested n_gpu_layers=-1. "
+                    f"Using safe default n_gpu_layers={default_n_gpu_layers} instead. "
+                    f"Set PGFX_VISION_GGUF_N_GPU_LAYERS=-1 to force full GPU offload.\033[0m"
+                )
+                n_gpu_layers = default_n_gpu_layers
+        else:
+            n_gpu_layers = default_n_gpu_layers
+        n_ctx = int(kwargs.get("n_ctx", getattr(config, "DEFAULT_GGUF_N_CTX", 4096)))
+        min_n_ctx = int(kwargs.get("min_n_ctx", getattr(config, "MIN_GGUF_N_CTX", 1024)))
+        n_ctx = max(256, n_ctx)
+        min_n_ctx = max(256, min(min_n_ctx, n_ctx))
+        default_n_batch = (
+            vision_runtime["n_batch"]
+            if is_vision_model and vision_runtime is not None
+            else getattr(config, "VISION_GGUF_N_BATCH", 128)
+            if is_vision_model
+            else getattr(config, "DEFAULT_GGUF_N_BATCH", 512)
+        )
+        default_n_ubatch = (
+            vision_runtime["n_ubatch"]
+            if is_vision_model and vision_runtime is not None
+            else getattr(config, "VISION_GGUF_N_UBATCH", 64)
+            if is_vision_model
+            else getattr(config, "DEFAULT_GGUF_N_UBATCH", 256)
+        )
+        n_batch = int(kwargs.get("n_batch", default_n_batch))
+        n_ubatch = int(kwargs.get("n_ubatch", default_n_ubatch))
+        n_batch = max(32, min(n_batch, n_ctx))
+        n_ubatch = max(32, min(n_ubatch, n_batch))
+        offload_kqv = bool(kwargs.get("offload_kqv", n_gpu_layers != 0))
+        allow_cpu_retry = bool(kwargs.get("enable_cpu_retry", getattr(config, "GGUF_ENABLE_CPU_RETRY", False)))
         llama_kwargs = {
             "model_path": normalized_model_path,
-            "n_ctx": 16384,
+            "n_ctx": n_ctx,
             "n_gpu_layers": n_gpu_layers,
+            "n_batch": n_batch,
+            "n_ubatch": n_ubatch,
+            "offload_kqv": offload_kqv,
             "verbose": True,
         }
+        print(
+            f"\033[94m[PromptCrafter] GGUF runtime settings for '{model_id}': "
+            f"n_ctx={n_ctx}, n_gpu_layers={n_gpu_layers}, n_batch={n_batch}, n_ubatch={n_ubatch}, offload_kqv={offload_kqv}\033[0m"
+        )
+        if is_vision_model and vision_runtime is not None:
+            free_vram_display = vision_runtime["free_vram_mib"] if vision_runtime["free_vram_mib"] is not None else "unknown"
+            print(
+                f"\033[94m[PromptCrafter] Vision runtime policy for '{model_id}': "
+                f"profile={vision_runtime['profile']}, auto_tune={vision_runtime['auto_tune']}, "
+                f"free_vram={free_vram_display} MiB, unload_after_query={vision_runtime['unload_after_query']}\033[0m"
+            )
+        if is_vision_model and n_gpu_layers == 0:
+            print(
+                "\033[93m[PromptCrafter] Vision GGUF is configured with n_gpu_layers=0. "
+                "Inference will be CPU-dominant and significantly slower.\033[0m"
+            )
 
+        def _remember_runtime(effective_llama_kwargs):
+            with self._cache_lock:
+                self._model_runtime[model_id] = {
+                    "is_vision_model": is_vision_model,
+                    "n_gpu_layers": int(effective_llama_kwargs.get("n_gpu_layers", n_gpu_layers)),
+                    "n_batch": int(effective_llama_kwargs.get("n_batch", n_batch)),
+                    "n_ubatch": int(effective_llama_kwargs.get("n_ubatch", n_ubatch)),
+                    "unload_after_query": (
+                        vision_runtime["unload_after_query"]
+                        if is_vision_model and vision_runtime is not None
+                        else bool(getattr(config, "GGUF_UNLOAD_VISION_AFTER_QUERY", True))
+                    ),
+                    "profile": vision_runtime["profile"] if is_vision_model and vision_runtime is not None else "n/a",
+                    "free_vram_mib": vision_runtime["free_vram_mib"] if is_vision_model and vision_runtime is not None else None,
+                }
 
-
+        def _looks_like_context_oom(err):
+            msg = str(err).lower()
+            markers = (
+                "out of memory",
+                "cudamalloc failed",
+                "failed to allocate buffer for kv cache",
+                "failed to create context",
+                "alloc_tensor_range",
+                "cuda_host",
+            )
+            return any(m in msg for m in markers)
         # 3. Handle Vision Models
-        is_vision_model = any(kw in model_id.lower() for kw in {"llava", "moondream", "bakllava", "fuyu", "idefics", "qwen", "vision", "clip", "mmproj"})
         
         if is_vision_model:
             print(f"\033[94m[PromptCrafter] Vision model detected. Auto-configuring chat handler...\033[0m")
+            vision_projector_use_gpu = bool(
+                kwargs.get(
+                    "vision_projector_use_gpu",
+                    getattr(config, "GGUF_VISION_PROJECTOR_USE_GPU", False),
+                )
+            )
             
             # For modern llama-cpp-python, we don't need to find the projector manually.
             # We just need to select the correct chat handler if it's a known architecture.
@@ -219,8 +473,16 @@ class GGUFClient:
                         raise FileNotFoundError(f"Qwen3-VL model requires a projector file (e.g., *mmproj*.gguf) in the same directory, but none was found in '{model_dir}'.")
                         
                     force_reasoning = "thinking" in model_id.lower()
-                    chat_handler = Qwen3VLChatHandler(clip_model_path=os.path.join(model_dir, projector_file), force_reasoning=force_reasoning)
-                    print(f"\033[92m[PromptCrafter] Configured Qwen3VLChatHandler with projector '{projector_file}'.\033[0m")
+                    chat_handler = Qwen3VLChatHandler(
+                        clip_model_path=os.path.join(model_dir, projector_file),
+                        force_reasoning=force_reasoning,
+                        use_gpu=vision_projector_use_gpu,
+                    )
+                    projector_backend = "GPU" if vision_projector_use_gpu else "CPU"
+                    print(
+                        f"\033[92m[PromptCrafter] Configured Qwen3VLChatHandler with projector '{projector_file}' "
+                        f"(backend={projector_backend}).\033[0m"
+                    )
 
                 except ImportError:
                     raise ImportError("Failed to import Qwen3VLChatHandler. Your llama-cpp-python version might be too old. Please upgrade.")
@@ -238,7 +500,7 @@ class GGUFClient:
         # 4. Attempt to load the model
         try:
             llm = Llama(**llama_kwargs)
-        except Exception as e:            
+        except Exception as e:
             # Deeper analysis for the 'qwen3vl' architecture error
             if "unknown model architecture" in str(e) and "qwen3vl" in str(e).lower():
                 error_msg = (
@@ -249,14 +511,51 @@ class GGUFClient:
                 )
                 raise RuntimeError(error_msg) from e
 
-            # Fallback for GPU loading failure (e.g., out of VRAM)
+            # For context/VRAM allocation failures, first try a smaller n_ctx before any CPU fallback.
+            if _looks_like_context_oom(e) and llama_kwargs.get("n_ctx", n_ctx) > min_n_ctx:
+                reduced_ctx = max(min_n_ctx, llama_kwargs["n_ctx"] // 2)
+                retry_kwargs = dict(llama_kwargs)
+                retry_kwargs["n_ctx"] = reduced_ctx
+                print(
+                    f"\033[93m[PromptCrafter] GGUF context allocation failed. "
+                    f"Retrying with reduced n_ctx={reduced_ctx} (was {llama_kwargs['n_ctx']}). Error: {e}\033[0m"
+                )
+                try:
+                    llm = Llama(**retry_kwargs)
+                    llama_kwargs = retry_kwargs
+                    _remember_runtime(llama_kwargs)
+                    return llm, is_vision_model
+                except Exception as reduced_e:
+                    e = reduced_e
+
+            # GPU allocation/context failures can crash some llama.cpp builds if CPU fallback is immediate.
+            if n_gpu_layers != 0 and _looks_like_context_oom(e) and not allow_cpu_retry:
+                raise RuntimeError(
+                    f"GGUF load failed due GPU memory/KV cache limits "
+                    f"(n_ctx={llama_kwargs.get('n_ctx')}, n_gpu_layers={n_gpu_layers}). "
+                    f"Try a smaller model, lower context via PGFX_GGUF_N_CTX "
+                    f"(e.g. 2048), or enable explicit CPU retry with PGFX_GGUF_ENABLE_CPU_RETRY=1. "
+                    f"Original error: {e}"
+                ) from e
+
+            # Legacy fallback for non-oom failures, or explicit opt-in CPU retry.
             if n_gpu_layers != 0:
-                print(f"\033[93m[PromptCrafter] Initial GGUF load failed. Retrying with CPU only (n_gpu_layers=0). Error: {e}\033[0m")
-                llama_kwargs['n_gpu_layers'] = 0
-                llm = Llama(**llama_kwargs)  # Second attempt on CPU
+                cpu_retry_ctx = max(min_n_ctx, min(llama_kwargs.get("n_ctx", n_ctx), getattr(config, "DEFAULT_GGUF_N_CTX", 4096)))
+                print(
+                    f"\033[93m[PromptCrafter] Initial GGUF load failed. "
+                    f"Retrying with CPU only (n_gpu_layers=0, n_ctx={cpu_retry_ctx}). "
+                    f"This fallback is much slower than GPU offload. Error: {e}\033[0m"
+                )
+                cpu_kwargs = dict(llama_kwargs)
+                cpu_kwargs["n_gpu_layers"] = 0
+                cpu_kwargs["n_ctx"] = cpu_retry_ctx
+                cpu_kwargs["offload_kqv"] = False
+                llm = Llama(**cpu_kwargs)  # CPU retry
+                llama_kwargs = cpu_kwargs
             else:
                 raise e  # Re-raise if it already failed on CPU
 
+        _remember_runtime(llama_kwargs)
         return llm, is_vision_model
 
     def query(self, model_id, prompt, images_b64=None, timeout=None, temperature=None, seed=None, max_tokens=None, **kwargs):
@@ -265,6 +564,26 @@ class GGUFClient:
 
         if max_tokens is None:
             max_tokens = config.DEFAULT_MAX_TOKENS
+        if timeout is None:
+            timeout = getattr(config, "GGUF_DEFAULT_TIMEOUT_SECONDS", 180)
+        try:
+            timeout_seconds = float(timeout) if timeout is not None else None
+        except Exception:
+            timeout_seconds = float(getattr(config, "GGUF_DEFAULT_TIMEOUT_SECONDS", 180))
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            timeout_seconds = None
+        allow_partial_on_timeout = bool(kwargs.get("allow_partial_on_timeout", False))
+
+        llm = None
+        is_vision_model = False
+        unload_after_query = bool(kwargs.get("unload_after_query", False))
+        unload_vision_after_query_from_kwargs = "unload_vision_after_query" in kwargs
+        unload_vision_after_query = bool(
+            kwargs.get(
+                "unload_vision_after_query",
+                getattr(config, "GGUF_UNLOAD_VISION_AFTER_QUERY", True),
+            )
+        )
 
         try:
             with self._cache_lock:
@@ -278,37 +597,251 @@ class GGUFClient:
                     self._last_used[model_id] = time.time() # Initial usage
                     print(f"\033[92m[PromptCrafter] GGUF model '{model_id}' loaded successfully.\033[0m")
 
-            # --- Inference ---
-            if images_b64 and is_vision_model:
-                user_content = [{"type": "text", "text": prompt}]
-                for img_b64 in images_b64:
-                    user_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}})
-                
-                messages = [{"role": "user", "content": user_content}]
-                
-                chat_kwargs = {"messages": messages, "max_tokens": int(max_tokens)}
-                if temperature is not None: chat_kwargs["temperature"] = temperature
-                if seed is not None and int(seed) >= 0: chat_kwargs["seed"] = int(seed)
-                
-                # Add stop tokens to prevent infinite generation or "hanging"
-                chat_kwargs["stop"] = ["<|end_of_text|>", "<|im_end|>", "<|endoftext|>", "User:", "###"]
+            if is_vision_model and not unload_vision_after_query_from_kwargs:
+                runtime_info = self._model_runtime.get(model_id, {})
+                if not getattr(config, "GGUF_UNLOAD_VISION_AFTER_QUERY_WAS_SET", False):
+                    runtime_unload = runtime_info.get("unload_after_query", None)
+                    if runtime_unload is not None:
+                        unload_vision_after_query = bool(runtime_unload)
 
-                output = llm.create_chat_completion(**chat_kwargs)
-                content = output['choices'][0]['message']['content'].strip()
+            # --- Inference ---
+            prefer_chat = bool(kwargs.get("prefer_chat", False))
+
+            def _timeout_error(partial_content=""):
+                if timeout_seconds is None:
+                    return f"GGUF model '{model_id}' timed out."
+                timeout_display = int(timeout_seconds) if float(timeout_seconds).is_integer() else timeout_seconds
+                msg = f"GGUF model '{model_id}' timed out after {timeout_display} seconds."
+                if partial_content:
+                    msg += f" Partial output length: {len(partial_content)} chars."
+                return msg
+
+            def _extract_chat_content(output):
+                try:
+                    choices = output.get("choices") if isinstance(output, dict) else None
+                    choice = choices[0] if choices else {}
+                    message = choice.get("message", {}) if isinstance(choice, dict) else {}
+                    content_val = message.get("content", "")
+
+                    # Some chat handlers return segmented content.
+                    if isinstance(content_val, list):
+                        parts = []
+                        for item in content_val:
+                            if isinstance(item, dict):
+                                text_val = item.get("text") or item.get("content")
+                                if isinstance(text_val, str):
+                                    parts.append(text_val)
+                            elif isinstance(item, str):
+                                parts.append(item)
+                        content_val = "\n".join(parts)
+
+                    if isinstance(content_val, str) and content_val.strip():
+                        return content_val.strip()
+
+                    # Qwen/Reasoning models may put text into reasoning_content.
+                    reasoning_val = message.get("reasoning_content", "")
+                    if isinstance(reasoning_val, str) and reasoning_val.strip():
+                        return reasoning_val.strip()
+
+                    text_val = choice.get("text", "") if isinstance(choice, dict) else ""
+                    if isinstance(text_val, str) and text_val.strip():
+                        return text_val.strip()
+                except Exception:
+                    pass
+                return ""
+
+            def _extract_completion_content(output):
+                try:
+                    choices = output.get("choices") if isinstance(output, dict) else None
+                    choice = choices[0] if choices else {}
+                    text_val = choice.get("text", "") if isinstance(choice, dict) else ""
+                    return text_val.strip() if isinstance(text_val, str) else ""
+                except Exception:
+                    return ""
+
+            def _extract_chat_delta_text(chunk):
+                try:
+                    choices = chunk.get("choices") if isinstance(chunk, dict) else None
+                    choice = choices[0] if choices else {}
+                    delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
+
+                    if isinstance(delta, dict):
+                        content_val = delta.get("content")
+                        if isinstance(content_val, str):
+                            return content_val
+                        if isinstance(content_val, list):
+                            parts = []
+                            for item in content_val:
+                                if isinstance(item, dict):
+                                    text_val = item.get("text") or item.get("content")
+                                    if isinstance(text_val, str):
+                                        parts.append(text_val)
+                                elif isinstance(item, str):
+                                    parts.append(item)
+                            if parts:
+                                return "".join(parts)
+                        reasoning_val = delta.get("reasoning_content")
+                        if isinstance(reasoning_val, str):
+                            return reasoning_val
+                    elif isinstance(delta, str):
+                        return delta
+
+                    # Some handlers may stream plain text field directly.
+                    text_val = choice.get("text", "") if isinstance(choice, dict) else ""
+                    if isinstance(text_val, str):
+                        return text_val
+                except Exception:
+                    pass
+                return ""
+
+            def _extract_completion_delta_text(chunk):
+                try:
+                    choices = chunk.get("choices") if isinstance(chunk, dict) else None
+                    choice = choices[0] if choices else {}
+                    text_val = choice.get("text", "") if isinstance(choice, dict) else ""
+                    return text_val if isinstance(text_val, str) else ""
+                except Exception:
+                    return ""
+
+            def _run_stream_with_idle_timeout(stream_factory, extract_fn):
+                """
+                Consume a blocking llama-cpp stream with idle-timeout protection.
+                Timeout applies to "no chunk received for N seconds", not total runtime.
+                """
+                if timeout_seconds is None:
+                    chunks = []
+                    for chunk in stream_factory():
+                        chunks.append(extract_fn(chunk))
+                    return "".join(chunks).strip(), False
+
+                out_queue: "queue.Queue[Any]" = queue.Queue()
+                done_sentinel = object()
+
+                def _producer():
+                    try:
+                        for chunk in stream_factory():
+                            out_queue.put(chunk)
+                    except Exception as stream_err:
+                        out_queue.put(stream_err)
+                    finally:
+                        out_queue.put(done_sentinel)
+
+                producer = threading.Thread(target=_producer, daemon=True)
+                producer.start()
+
+                chunks = []
+                while True:
+                    try:
+                        item = out_queue.get(timeout=timeout_seconds)
+                    except queue.Empty:
+                        return "".join(chunks).strip(), True
+
+                    if item is done_sentinel:
+                        return "".join(chunks).strip(), False
+                    if isinstance(item, Exception):
+                        raise item
+                    chunks.append(extract_fn(item))
+
+            def _run_chat_completion(chat_kwargs):
+                if timeout_seconds is None:
+                    output = llm.create_chat_completion(**chat_kwargs)
+                    return _extract_chat_content(output), False
+
+                stream_kwargs = dict(chat_kwargs)
+                stream_kwargs["stream"] = True
+                return _run_stream_with_idle_timeout(
+                    lambda: llm.create_chat_completion(**stream_kwargs),
+                    _extract_chat_delta_text,
+                )
+
+            def _run_completion(inference_kwargs):
+                if timeout_seconds is None:
+                    output = llm(**inference_kwargs)
+                    return _extract_completion_content(output), False
+
+                stream_kwargs = dict(inference_kwargs)
+                stream_kwargs["stream"] = True
+                return _run_stream_with_idle_timeout(
+                    lambda: llm(**stream_kwargs),
+                    _extract_completion_delta_text,
+                )
+
+            use_chat_api = bool(is_vision_model or prefer_chat)
+            content = ""
+
+            if images_b64 and not is_vision_model:
+                print("\033[93m[PromptCrafter] Warning: Images provided, but the loaded GGUF model is not a vision model. Ignoring images.\033[0m")
+
+            if use_chat_api:
+                if images_b64 and is_vision_model:
+                    user_content = [{"type": "text", "text": prompt}]
+                    for img_b64 in images_b64:
+                        user_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}})
+                    messages = [{"role": "user", "content": user_content}]
+                else:
+                    messages = [{"role": "user", "content": prompt}]
+
+                chat_kwargs = {"messages": messages, "max_tokens": int(max_tokens)}
+                if temperature is not None:
+                    chat_kwargs["temperature"] = temperature
+                if seed is not None and int(seed) >= 0:
+                    chat_kwargs["seed"] = int(seed)
+                chat_kwargs["stop"] = ["<|end_of_text|>", "<|endoftext|>", "User:", "###"]
+
+                content, timed_out = _run_chat_completion(chat_kwargs)
+                if timed_out:
+                    if content and allow_partial_on_timeout:
+                        print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
+                        return True, content
+                    return False, _timeout_error(content)
+                if not content:
+                    # Retry once without explicit stop tokens to avoid premature truncation.
+                    retry_kwargs = dict(chat_kwargs)
+                    retry_kwargs.pop("stop", None)
+                    content, timed_out = _run_chat_completion(retry_kwargs)
+                    if timed_out:
+                        if content and allow_partial_on_timeout:
+                            print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
+                            return True, content
+                        return False, _timeout_error(content)
+
+                # Some VLMs still behave better with plain completion in text-only mode.
+                if not content and is_vision_model and not images_b64:
+                    completion_kwargs = {
+                        "prompt": f"User:\n{prompt}\n\nAssistant:\n",
+                        "max_tokens": int(max_tokens),
+                        "stop": ["<|end_of_text|>", "<|endoftext|>", "User:", "###"],
+                    }
+                    if temperature is not None:
+                        completion_kwargs["temperature"] = temperature
+                    if seed is not None and int(seed) >= 0:
+                        completion_kwargs["seed"] = int(seed)
+                    content, timed_out = _run_completion(completion_kwargs)
+                    if timed_out:
+                        if content and allow_partial_on_timeout:
+                            print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
+                            return True, content
+                        return False, _timeout_error(content)
             else:
-                if images_b64 and not is_vision_model:
-                    print("\033[93m[PromptCrafter] Warning: Images provided, but the loaded GGUF model is not a vision model. Ignoring images.\033[0m")
-                
                 inference_kwargs = {
                     "prompt": prompt,
                     "max_tokens": int(max_tokens),
                     "stop": ["<|end_of_text|>", "User:", "###"],
                 }
-                if temperature is not None: inference_kwargs["temperature"] = temperature
-                if seed is not None and int(seed) >= 0: inference_kwargs["seed"] = int(seed)
+                if temperature is not None:
+                    inference_kwargs["temperature"] = temperature
+                if seed is not None and int(seed) >= 0:
+                    inference_kwargs["seed"] = int(seed)
 
-                output = llm(**inference_kwargs)
-                content = output["choices"][0]["text"].strip()
+                content, timed_out = _run_completion(inference_kwargs)
+                if timed_out:
+                    if content and allow_partial_on_timeout:
+                        print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
+                        return True, content
+                    return False, _timeout_error(content)
+
+            if not content:
+                return False, f"GGUF model '{model_id}' returned an empty response."
             
             return True, content
 
@@ -318,11 +851,27 @@ class GGUFClient:
             with self._cache_lock:
                 self._model_cache.pop(model_id, None)
                 self._last_used.pop(model_id, None) # Also remove from last_used
+                self._model_runtime.pop(model_id, None)
             
             error_message = f"Error with GGUF model '{model_id}': {e}"
             # Provide more specific advice based on the error type
             if isinstance(e, FileNotFoundError):
-                error_message = f"GGUF model file not found for '{model_id}'. Searched at: {e.filename}. Please check the file exists and the name is correct in `ComfyUI/models/LLM`."
+                searched_path = getattr(e, "filename", None) or "unknown"
+                details = getattr(e, "strerror", None) or str(e)
+                hint = ""
+                try:
+                    available = get_local_llm_gguf_files()
+                    if available:
+                        sample = ", ".join(available[:5])
+                        suffix = " ..." if len(available) > 5 else ""
+                        hint = f" Available local GGUF models include: {sample}{suffix}"
+                except Exception:
+                    pass
+                error_message = (
+                    f"GGUF model file not found for '{model_id}'. "
+                    f"Searched at: {searched_path}. {details} "
+                    f"Please check the file exists and the name is correct in `ComfyUI/models/LLM`.{hint}"
+                )
             elif "llama_chat_format" in str(e) or "clip_model_path" in str(e):
                 error_message = f"GGUF vision model error for '{model_id}': {e}. This often means your version of `llama-cpp-python` is outdated or incompatible with this model's architecture. Please try upgrading it: `pip install --upgrade --force-reinstall llama-cpp-python`"
             elif "cublas" in str(e).lower() or "cuda" in str(e).lower():
@@ -333,6 +882,24 @@ class GGUFClient:
             import traceback
             traceback.print_exc()
             return False, error_message
+        finally:
+            should_unload = bool(unload_after_query or (unload_vision_after_query and is_vision_model))
+            if should_unload:
+                with self._cache_lock:
+                    self._model_cache.pop(model_id, None)
+                    self._last_used.pop(model_id, None)
+                    self._model_runtime.pop(model_id, None)
+                try:
+                    del llm
+                except Exception:
+                    pass
+                try:
+                    import gc
+                    gc.collect()
+                    if 'torch' in globals() and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
 
 
@@ -346,12 +913,161 @@ def _find_hf_model_path_local(base_model_name):
     Searches for a HuggingFace model's directory in configured model directories.
     Returns the full path if found, otherwise None.
     """
-    # Check in order of priority
-    for model_dir in config.HF_MODEL_DIRS:
+    for model_dir in _get_hf_scan_dirs():
+        # Direct match (historical behavior)
         hf_path = os.path.join(model_dir, base_model_name)
         if os.path.isdir(hf_path) and os.path.exists(os.path.join(hf_path, 'config.json')):
             return hf_path
+
+        # Nested/relative match support for extra model roots.
+        rel_path = base_model_name.replace("/", os.path.sep)
+        hf_rel = os.path.join(model_dir, rel_path)
+        if os.path.isdir(hf_rel) and os.path.exists(os.path.join(hf_rel, 'config.json')):
+            return hf_rel
     return None
+
+
+def _dedupe_existing_dirs(paths):
+    out = []
+    seen = set()
+    for p in paths:
+        try:
+            rp = os.path.realpath(p)
+        except Exception:
+            rp = p
+        if rp in seen:
+            continue
+        seen.add(rp)
+        if os.path.isdir(rp):
+            out.append(rp)
+    return out
+
+
+def _get_registered_model_dirs(*preferred_names):
+    """
+    Resolve ComfyUI-registered model directories from folder_paths, including
+    paths injected via extra_model_paths.yaml.
+    """
+    if folder_paths is None:
+        return []
+
+    paths = []
+    keys = []
+    try:
+        keys = list(folder_paths.folder_names_and_paths.keys())
+    except Exception:
+        keys = []
+
+    preferred_lower = {n.lower() for n in preferred_names if n}
+
+    # First pass: exact names
+    for name in preferred_names:
+        try:
+            paths.extend(folder_paths.get_folder_paths(name))
+        except Exception:
+            pass
+
+    # Second pass: case-insensitive name matches
+    for key in keys:
+        if key.lower() in preferred_lower:
+            try:
+                paths.extend(folder_paths.get_folder_paths(key))
+            except Exception:
+                pass
+
+    return _dedupe_existing_dirs(paths)
+
+
+def _normalize_gguf_model_relpath(model_id: str) -> str:
+    model_rel = (model_id or "").strip()
+    if model_rel.startswith("gguf/"):
+        model_rel = model_rel[len("gguf/"):]
+    model_rel = model_rel.replace("\\", "/").lstrip("/")
+    return model_rel
+
+
+def _resolve_gguf_model_path(model_id: str):
+    """
+    Resolve a GGUF model id to an existing filesystem path.
+    Returns (resolved_path_or_none, attempted_paths_list).
+    """
+    model_rel = _normalize_gguf_model_relpath(model_id)
+    attempted_paths = []
+    if not model_rel:
+        return None, attempted_paths
+
+    scan_dirs = _get_llm_scan_dirs() or [config.LLM_MODEL_DIR]
+
+    # Absolute path passthrough.
+    if os.path.isabs(model_rel):
+        attempted_paths.append(model_rel)
+        if os.path.exists(model_rel):
+            return model_rel, attempted_paths
+
+    # Primary resolution: exact relative path under each scan dir.
+    rel_native = model_rel.replace("/", os.path.sep)
+    for scan_dir in scan_dirs:
+        candidate = os.path.join(scan_dir, rel_native)
+        attempted_paths.append(candidate)
+        if os.path.exists(candidate):
+            return candidate, attempted_paths
+
+    # Fallback resolution: case-insensitive and basename match from discovered GGUF files.
+    discovered_rel = []
+    try:
+        discovered_rel = get_local_llm_gguf_files()
+    except Exception:
+        discovered_rel = []
+
+    if discovered_rel:
+        discovered_map = {m.lower(): m for m in discovered_rel}
+        matched_rel = discovered_map.get(model_rel.lower())
+
+        if matched_rel is None:
+            requested_basename = os.path.basename(model_rel).lower()
+            basename_matches = [m for m in discovered_rel if os.path.basename(m).lower() == requested_basename]
+            if len(basename_matches) == 1:
+                matched_rel = basename_matches[0]
+            elif len(basename_matches) > 1:
+                requested_parts = [p for p in model_rel.lower().split("/") if p]
+
+                def _suffix_score(path):
+                    parts = [p for p in path.lower().split("/") if p]
+                    score = 0
+                    while score < min(len(parts), len(requested_parts)):
+                        if parts[-1 - score] != requested_parts[-1 - score]:
+                            break
+                        score += 1
+                    return score
+
+                basename_matches.sort(key=_suffix_score, reverse=True)
+                best = basename_matches[0]
+                if _suffix_score(best) > 0:
+                    matched_rel = best
+
+        if matched_rel is not None:
+            matched_native = matched_rel.replace("/", os.path.sep)
+            for scan_dir in scan_dirs:
+                candidate = os.path.join(scan_dir, matched_native)
+                attempted_paths.append(candidate)
+                if os.path.exists(candidate):
+                    return candidate, attempted_paths
+
+    return None, attempted_paths
+
+
+def _get_llm_scan_dirs():
+    base = [config.LLM_MODEL_DIR]
+    # Capture both canonical and extra-path naming variants.
+    registered = _get_registered_model_dirs("LLM", "llm")
+    return _dedupe_existing_dirs(base + registered)
+
+
+def _get_hf_scan_dirs():
+    base = list(config.HF_MODEL_DIRS)
+    # HF models are commonly kept under Qwen or LLM roots in Comfy installs.
+    registered = _get_registered_model_dirs("Qwen", "qwen", "LLM", "llm")
+    return _dedupe_existing_dirs(base + registered)
 
 class HuggingFaceClient:
     """Client for handling local HuggingFace Transformer models (e.g., Qwen, Florence)."""
@@ -818,6 +1534,7 @@ def _reason_with_model(model, prompt, images=None, **kwargs):
 _model_cache = {}
 _cache_lock = threading.Lock()
 CACHE_EXPIRATION_SECONDS = 300
+EMPTY_CACHE_EXPIRATION_SECONDS = 10
 
 class ModelInspector:
     """A helper class to determine model capabilities from its metadata."""
@@ -837,34 +1554,22 @@ class ModelInspector:
 
 def get_local_llm_gguf_files():
     """Scans subdirectories of ComfyUI/models/LLM for .gguf files."""
-    if not config.LLAMA_CPP_AVAILABLE:
-        return ["llama-cpp-python not installed"]
     local_models = []
     try:
-        llm_dir = config.LLM_MODEL_DIR
-        if not os.path.isdir(llm_dir):
-            return ["LLM_directory_not_found"]
-
-        # Recursively scan for .gguf files
-        for root, _, files in os.walk(llm_dir):
-            for file in files:
-                if file.lower().endswith('.gguf') and "mmproj" not in file.lower():
-                    local_models.append(os.path.relpath(os.path.join(root, file), llm_dir).replace('\\', '/'))
-        
-        if not local_models:
-            return ["no_local_gguf_files_found"]
+        llm_dirs = _get_llm_scan_dirs()
+        for llm_dir in llm_dirs:
+            for root, _, files in os.walk(llm_dir):
+                for file in files:
+                    if file.lower().endswith('.gguf') and "mmproj" not in file.lower():
+                        local_models.append(os.path.relpath(os.path.join(root, file), llm_dir).replace('\\', '/'))
     except Exception as e:
-        print(f"\033[93m[PromptCrafter] Warning: Could not scan 'models/LLM' for GGUF files. Error: {e}\033[0m")
-        return [f"error_scanning_llm_dir:_{e}"]
-    return sorted(local_models)
+        print(f"\033[93m[PromptCrafter] Warning: Could not scan LLM directories for GGUF files. Error: {e}\033[0m")
+    return sorted(list(set(local_models)))
 
 def get_local_hf_models():
     """Scans configured directories for local HuggingFace models."""
-    if not config.HF_TRANSFORMERS_AVAILABLE:
-        return ["HF Transformers not installed"]
-    
     local_models = set()
-    for model_dir in config.HF_MODEL_DIRS:
+    for model_dir in _get_hf_scan_dirs():
         try:
             if not os.path.isdir(model_dir):
                 continue
@@ -885,8 +1590,8 @@ def get_local_qwen_models():
     This function is kept for backward compatibility.
     """
     all_hf_models = get_local_hf_models()
-    if not all_hf_models or "not installed" in all_hf_models[0]:
-        return ["HF Transformers not installed"]
+    if not all_hf_models:
+        return ["no_local_qwen_files_found"]
     
     qwen_models = [model for model in all_hf_models if "qwen" in model.lower()]
     
@@ -920,8 +1625,8 @@ def _get_models_by_type(model_type):
         now = time.time()
         cache_key = f"{model_type}_api"
         if cache_key in _model_cache:
-            cached_data, timestamp = _model_cache[cache_key]
-            if now - timestamp < CACHE_EXPIRATION_SECONDS:
+            cached_data, timestamp, ttl = _model_cache[cache_key]
+            if now - timestamp < ttl:
                 return cached_data
 
     all_api_models_details = _get_all_model_data()
@@ -933,21 +1638,19 @@ def _get_models_by_type(model_type):
 
     # Add local GGUF models
     for model in local_gguf_models:
-        if not any(err in model for err in ["not installed", "not_found", "error_scanning"]):
-            model_id = f"gguf/{model}"
-            is_vision = ModelInspector.is_vision_model({"id": model_id})
-            if model_type == "all" or (model_type == "vision" and is_vision) or (model_type == "text" and not is_vision):
-                filtered_api_models.append(model_id)
+        model_id = f"gguf/{model}"
+        is_vision = ModelInspector.is_vision_model({"id": model_id})
+        if model_type == "all" or (model_type == "vision" and is_vision) or (model_type == "text" and not is_vision):
+            filtered_api_models.append(model_id)
 
     # Add local HuggingFace models
     for model in local_hf_models:
-        if "not installed" not in model:
-            # Assume all detected HF models could be vision models, let the user decide.
-            # A more advanced check could read the config.json for vision keywords.
-            model_id = f"hf/{model}"
-            is_vision = ModelInspector.is_vision_model({"id": model_id})
-            if model_type == "all" or (model_type == "vision" and is_vision) or (model_type == "text" and not is_vision):
-                 filtered_api_models.append(model_id)
+        # Assume all detected HF models could be vision models, let the user decide.
+        # A more advanced check could read the config.json for vision keywords.
+        model_id = f"hf/{model}"
+        is_vision = ModelInspector.is_vision_model({"id": model_id})
+        if model_type == "all" or (model_type == "vision" and is_vision) or (model_type == "text" and not is_vision):
+                filtered_api_models.append(model_id)
 
     # Then process remote API models (Ollama, etc.)
     for m in all_api_models_details:
@@ -967,8 +1670,9 @@ def _get_models_by_type(model_type):
             available_models.remove(preferred_model_found)
             available_models.insert(0, preferred_model_found)
     
+    ttl = EMPTY_CACHE_EXPIRATION_SECONDS if available_models == ["NO_MODELS_FOUND"] else CACHE_EXPIRATION_SECONDS
     with _cache_lock:
-        _model_cache[cache_key] = (available_models, time.time())
+        _model_cache[cache_key] = (available_models, time.time(), ttl)
     return available_models
 
 def _get_provider_models(provider, provider_config, log_errors=True):

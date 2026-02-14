@@ -713,6 +713,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 # --- Manual Chain-of-Thought Implementation for LyricsCreator ---
 
                 # Step 1: Run the 'thinking' model to get the reasoning.
+                thinking_timeout = 0 if str(thinking_model).lower().startswith("gguf/") else run_config.timeout
                 ok_think, reasoning_text = api_clients.query_model_auto(
                     thinking_model,
                     thinking_prompt,
@@ -720,7 +721,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     prefer_chat=True,
                     temperature=run_config.temperature,
                     seed=run_config.seed,
-                    timeout=run_config.timeout,
+                    timeout=thinking_timeout,
                     debug_mode=kwargs.get('debug_mode', False),
                     debug_title="Dual-Model Stage 1: Thinker (Lyrics)"
                 )
@@ -755,6 +756,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     Return ONLY the JSON object.
                 """ ).strip()
 
+                instruct_timeout = 0 if str(instruct_model).lower().startswith("gguf/") else run_config.timeout
                 ok_instruct, result_data = api_clients._reason_with_model(
                     instruct_model,
                     instruct_prompt,
@@ -762,7 +764,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     use_chat_api=True,
                     temperature=0.0, # Zero temp for strict formatting
                     seed=run_config.seed,
-                    timeout=run_config.timeout,
+                    timeout=instruct_timeout,
                     debug_mode=kwargs.get('debug_mode', False),
                     debug_title="Dual-Model Stage 2: Instructor (Lyrics)"
                 )
