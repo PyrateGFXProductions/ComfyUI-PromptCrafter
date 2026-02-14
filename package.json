@@ -1,0 +1,7 @@
+{
+  "name": "comfyui-promptcrafter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CI metadata for VibeCheck workflow",
+  "license": "MIT"
+}
