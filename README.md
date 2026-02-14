@@ -18,7 +18,6 @@ Compatibility note: many internal node IDs still use the `PromptCrafter_` prefix
 
 ---
 
-<<<<<<< HEAD
 =======
 ## 🧪 Example Workflows
 
@@ -32,7 +31,6 @@ Functional, end-to-end workflow examples are included in `workflows/`. See `work
 
 ---
 
->>>>>>> origin/main
 ## 🧭 Menu Categories
 
 The nodes are organized under the PGFX menu in ComfyUI:
@@ -156,7 +154,6 @@ Notes:
 - If logs show `n_gpu_layers=0`, your vision GGUF is CPU-dominant and will be much slower.
 - If ComfyUI is killed while loading downstream generation models, keep `balanced`/`safe` and do not force `PGFX_GGUF_UNLOAD_VISION_AFTER_QUERY=0`.
 =======
->>>>>>> origin/main
 
 ---
 
@@ -173,3 +170,4 @@ If these tools save you time or inspire your work, consider supporting:
 ## 📜 License
 
 MIT License. See `LICENSE`.
+
