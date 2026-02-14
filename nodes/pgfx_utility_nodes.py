@@ -69,6 +69,30 @@ def get_node_description(node_name):
     except Exception as e:
         return f"Error reading help file: {e}"
 
+def _llm_runtime_optional_inputs():
+    return {
+        "llm_device": (
+            config.LLM_DEVICE_OPTIONS,
+            {
+                "default": config.DEFAULT_LLM_DEVICE,
+                "tooltip": "Where local LLM inference should run. 'Default (GPU)' uses configured acceleration; 'CPU' forces CPU for local GGUF/HF models.",
+            },
+        ),
+        "reset_context": (
+            "BOOLEAN",
+            {
+                "default": config.DEFAULT_LLM_STATELESS,
+                "tooltip": "If enabled, resets local model context before each call to avoid carrying prior conversation state.",
+            },
+        ),
+    }
+
+def _resolve_llm_runtime_kwargs(source):
+    return {
+        "llm_device": source.get("llm_device", config.DEFAULT_LLM_DEVICE),
+        "reset_context": bool(source.get("reset_context", config.DEFAULT_LLM_STATELESS)),
+    }
+
 def _json_only_requested(text: str) -> bool:
     if not text:
         return False
@@ -238,6 +262,7 @@ class PromptCrafter_QnA:
             "optional": {
                 "thinking_model": (api_clients.get_all_models(), {"tooltip": "Optional: The 'thinker' model for the dual-model chain. Overrides the main model for reasoning."} ),
                 "instruct_model": (api_clients.get_all_models(), {"tooltip": "Optional: The 'instruct' model for the dual-model chain. Used for strict JSON formatting."} ),
+                **_llm_runtime_optional_inputs(),
                 "image": ("IMAGE", {"tooltip": "Optional reference image for the query. Requires a vision model (VLM)."} ),
                 "auto_select_model": ("BOOLEAN", {"default": True, "tooltip": "Automatically select a vision model if an image is connected, or a text model if not."} ),
                 "enable_web_search": ("BOOLEAN", {"default": True, "tooltip": "Allow the node to perform a web search for questions about recent events or topics requiring current information."} ),
@@ -270,6 +295,7 @@ class PromptCrafter_QnA:
     
     def execute(self, instruction, subject, model, **kwargs):
         try:
+            llm_runtime_kwargs = _resolve_llm_runtime_kwargs(kwargs)
             thinking_model = kwargs.get("thinking_model")
             instruct_model = kwargs.get("instruct_model")
             user_text = f"INSTRUCTION:\n{instruction}\n\nSUBJECT:\n{subject}" if subject else instruction
@@ -305,7 +331,8 @@ class PromptCrafter_QnA:
                     template="{{ .Prompt }}",
                     format="json",
                     debug_mode=debug_mode,
-                    debug_title="QnA (JSON Strict)"
+                    debug_title="QnA (JSON Strict)",
+                    **llm_runtime_kwargs,
                 )
                 if not ok:
                     raise Exception(response)
@@ -493,6 +520,7 @@ class PromptCrafter_QnA:
                     timeout=timeout,
                     expect_json=expect_json,
                     max_tokens=max_tokens,
+                    **llm_runtime_kwargs,
                 )
 
                 # 3. Unpack and return results (with a fallback if JSON parsing fails)
@@ -559,7 +587,8 @@ class PromptCrafter_QnA:
                         timeout=timeout,
                         max_tokens=max_tokens,
                         debug_mode=debug_mode,
-                        debug_title="Dual-Model Stage 2: Instructor (Text Fallback)"
+                        debug_title="Dual-Model Stage 2: Instructor (Text Fallback)",
+                        **llm_runtime_kwargs,
                     )
 
                 if ok_fallback and fallback_answer and fallback_answer.strip():
@@ -586,6 +615,8 @@ class PromptCrafter_QnA:
                     'debug_mode': debug_mode,
                     'safe_mode': kwargs.get('safe_mode', True),
                     'style_profile': {}, # Not applicable for QnA
+                    'llm_device': llm_runtime_kwargs.get("llm_device"),
+                    'reset_context': llm_runtime_kwargs.get("reset_context"),
                 }
 
                 from dataclasses import fields
@@ -649,9 +680,12 @@ class PromptCrafter_QnA_Simple:
                 "prompt": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT, "tooltip": "Your question or instructions for the model."}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use."}),
             },
-            "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
+            # Keep hidden workflow prompt metadata under a unique key to avoid
+            # colliding with the user-facing "prompt" input value.
+            "hidden": {"workflow_prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
             "optional": {
                 "image": ("IMAGE", {"tooltip": "Optional reference image (requires a vision model)."}),
+                **_llm_runtime_optional_inputs(),
             },
         }
 
@@ -662,12 +696,33 @@ class PromptCrafter_QnA_Simple:
 
     def execute(self, prompt, model, image=None, **kwargs):
         try:
+            llm_runtime_kwargs = _resolve_llm_runtime_kwargs(kwargs)
             user_text = "" if prompt is None else str(prompt)
             force_json = _json_only_requested(user_text)
             expected_keys = _extract_expected_json_keys(user_text)
             expected_schema = _build_json_schema_for_keys(expected_keys)
             if not user_text.strip():
                 return ("",)
+
+            model_name = "" if model is None else str(model)
+            is_gguf_model = model_name.lower().startswith("gguf/")
+            is_vision_request = image is not None
+            llm_device_choice = str(llm_runtime_kwargs.get("llm_device", config.DEFAULT_LLM_DEVICE)).strip().lower()
+            cpu_mode = llm_device_choice in {"cpu", "host", "cpu-only", "cpu only"}
+            # Keep QnA outputs concise and avoid large KV allocations before the
+            # downstream video pipeline starts.
+            safe_max_tokens = 768 if is_vision_request else 1536
+            gguf_runtime_kwargs = {}
+            if is_gguf_model:
+                gguf_runtime_kwargs["unload_after_query"] = True
+                gguf_runtime_kwargs["unload_vision_after_query"] = is_vision_request
+                gguf_runtime_kwargs["vision_projector_use_gpu"] = False
+                if is_vision_request and cpu_mode:
+                    # Keep QnA vision inference off the GPU so downstream video
+                    # sampler/preview stages retain VRAM headroom.
+                    gguf_runtime_kwargs["n_gpu_layers"] = 0
+                    gguf_runtime_kwargs["n_batch"] = 64
+                    gguf_runtime_kwargs["n_ubatch"] = 32
 
             ok, response = api_clients.query_model_auto(
                 model,
@@ -677,12 +732,14 @@ class PromptCrafter_QnA_Simple:
                 temperature=0.0,
                 seed=0,
                 timeout=120,
-                max_tokens=8192,
+                max_tokens=safe_max_tokens,
                 no_chat_fallback=True,
                 template="{{ .Prompt }}",
                 format=("json" if force_json else None),
                 debug_mode=False,
-                debug_title="Simple QnA"
+                debug_title="Simple QnA",
+                **gguf_runtime_kwargs,
+                **llm_runtime_kwargs,
             )
 
             if not ok:
@@ -723,7 +780,10 @@ class PromptCrafter_LyricsThink:
             "required": {
                 "input_text": ("STRING", {"multiline": True, "default": ""}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
-            }
+            },
+            "optional": {
+                **_llm_runtime_optional_inputs(),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -731,7 +791,7 @@ class PromptCrafter_LyricsThink:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
-    def execute(self, input_text, model):
+    def execute(self, input_text, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         raw_text = "" if input_text is None else str(input_text)
         if not raw_text.strip():
             return ("[ERROR] Input text is empty.",)
@@ -793,6 +853,8 @@ class PromptCrafter_LyricsThink:
             prompt=prompt,
             temperature=0.2,
             seed=0,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
         if not ok:
             return (f"[ERROR] Model call failed: {response}",)
@@ -812,7 +874,10 @@ class PromptCrafter_LyricsInstruct:
             "required": {
                 "lyrics_think_output": ("STRING", {"multiline": True, "default": ""}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
-            }
+            },
+            "optional": {
+                **_llm_runtime_optional_inputs(),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -820,7 +885,7 @@ class PromptCrafter_LyricsInstruct:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
-    def execute(self, lyrics_think_output, model):
+    def execute(self, lyrics_think_output, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not lyrics_think_output or not str(lyrics_think_output).strip():
             return ("[ERROR] LyricsThink output is empty.",)
 
@@ -844,6 +909,8 @@ class PromptCrafter_LyricsInstruct:
             prompt=prompt,
             temperature=0.0,
             seed=0,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
         if not ok:
             return (f"[ERROR] Model call failed: {response}",)
@@ -863,7 +930,10 @@ class PromptCrafter_VisualThink:
             "required": {
                 "input_text": ("STRING", {"multiline": True, "default": ""}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
-            }
+            },
+            "optional": {
+                **_llm_runtime_optional_inputs(),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -871,7 +941,7 @@ class PromptCrafter_VisualThink:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
-    def execute(self, input_text, model):
+    def execute(self, input_text, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not input_text or not str(input_text).strip():
             return ("[ERROR] Input text is empty.",)
 
@@ -895,6 +965,8 @@ class PromptCrafter_VisualThink:
             prompt=prompt,
             temperature=0.2,
             seed=0,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
         if not ok:
             return (f"[ERROR] Model call failed: {response}",)
@@ -914,7 +986,10 @@ class PromptCrafter_VisualInstruct:
             "required": {
                 "visual_think_output": ("STRING", {"multiline": True, "default": ""}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
-            }
+            },
+            "optional": {
+                **_llm_runtime_optional_inputs(),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -922,7 +997,7 @@ class PromptCrafter_VisualInstruct:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
-    def execute(self, visual_think_output, model):
+    def execute(self, visual_think_output, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not visual_think_output or not str(visual_think_output).strip():
             return ("[ERROR] VisualThink output is empty.",)
 
@@ -944,6 +1019,8 @@ class PromptCrafter_VisualInstruct:
             prompt=prompt,
             temperature=0.0,
             seed=0,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
         if not ok:
             return (f"[ERROR] Model call failed: {response}",)
@@ -963,7 +1040,10 @@ class PromptCrafter_QnAThink:
             "required": {
                 "prompt": ("STRING", {"multiline": True, "default": ""}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
-            }
+            },
+            "optional": {
+                **_llm_runtime_optional_inputs(),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -971,7 +1051,7 @@ class PromptCrafter_QnAThink:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
-    def execute(self, prompt, model):
+    def execute(self, prompt, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not prompt or not str(prompt).strip():
             return ("[ERROR] Prompt is empty.",)
 
@@ -987,6 +1067,8 @@ class PromptCrafter_QnAThink:
             prompt=full_prompt,
             temperature=0.2,
             seed=0,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
         if not ok:
             return (f"[ERROR] Model call failed: {response}",)
@@ -1007,7 +1089,10 @@ class PromptCrafter_QnAInstruct:
                 "qna_think_output": ("STRING", {"multiline": True, "default": ""}),
                 "format_instruction": ("STRING", {"multiline": True, "default": ""}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
-            }
+            },
+            "optional": {
+                **_llm_runtime_optional_inputs(),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -1015,7 +1100,7 @@ class PromptCrafter_QnAInstruct:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
-    def execute(self, qna_think_output, format_instruction, model):
+    def execute(self, qna_think_output, format_instruction, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not qna_think_output or not str(qna_think_output).strip():
             return ("[ERROR] QnAThink output is empty.",)
         if not format_instruction or not str(format_instruction).strip():
@@ -1037,6 +1122,8 @@ class PromptCrafter_QnAInstruct:
             prompt=prompt,
             temperature=0.0,
             seed=0,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
         if not ok:
             return (f"[ERROR] Model call failed: {response}",)
@@ -1079,6 +1166,7 @@ class PromptCrafter_Captioner:
                 "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff, "step": 1, "tooltip": "Seed for reproducible results. -1 for random."} ),
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 600, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."} ),
                 "safe_mode": ("BOOLEAN", {"default": True, "tooltip": "Enforce SFW rules to prevent NSFW, violent, or controversial content."} ),
+                **_llm_runtime_optional_inputs(),
             }
         }
 
@@ -1096,13 +1184,25 @@ class PromptCrafter_Captioner:
         # Remove leading/trailing underscores and truncate
         return text.strip('_')[:max_length]
 
-    def _caption_one_image(self, image_tensor, vision_model, final_caption_prompt, temperature, seed, debug_mode, timeout):
+    def _caption_one_image(self, image_tensor, vision_model, final_caption_prompt, temperature, seed, debug_mode, timeout, llm_device, reset_context):
         """Helper function to run the captioning query for a single image tensor."""
         first_image = image_tensor[0] if torch.is_tensor(image_tensor) and image_tensor.ndim == 4 else image_tensor
-        ok, caption = api_clients.query_model_auto(vision_model, prompt=final_caption_prompt, images=[first_image], prefer_chat=True, temperature=temperature, seed=seed, timeout=timeout, debug_mode=debug_mode, debug_title="Image Caption Prompt")
+        ok, caption = api_clients.query_model_auto(
+            vision_model,
+            prompt=final_caption_prompt,
+            images=[first_image],
+            prefer_chat=True,
+            temperature=temperature,
+            seed=seed,
+            timeout=timeout,
+            debug_mode=debug_mode,
+            debug_title="Image Caption Prompt",
+            llm_device=llm_device,
+            reset_context=reset_context,
+        )
         return (True, utils.TextCleaner.single_paragraph(caption)) if ok else (False, f"Model error: {caption}")
     
-    def execute(self, vision_model, image=None, batch_mode=False, input_folder=None, skip_existing=True, captioner_profile="Default (Training Style)", max_workers=4, caption_prompt=config.DEFAULT_CAPTION_PROMPT, caption_prefix="", trigger_words_folder_path="input", trigger_words_file="<none>", save_caption=True, save_in_input_folder=True, add_caption_to_metadata=True, rename_file_with_caption=False, output_path="captions", filename="", temperature=0.2, debug_mode=False, safe_mode=True, seed=-1, timeout=120, **kwargs):
+    def execute(self, vision_model, image=None, batch_mode=False, input_folder=None, skip_existing=True, captioner_profile="Default (Training Style)", max_workers=4, caption_prompt=config.DEFAULT_CAPTION_PROMPT, caption_prefix="", trigger_words_folder_path="input", trigger_words_file="<none>", save_caption=True, save_in_input_folder=True, add_caption_to_metadata=True, rename_file_with_caption=False, output_path="captions", filename="", temperature=0.2, debug_mode=False, safe_mode=True, seed=-1, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, **kwargs):
         model = vision_model or config.FALLBACK_VISION_MODEL
         
         final_caption_prompt = caption_prompt # Default to manual input
@@ -1152,7 +1252,9 @@ class PromptCrafter_Captioner:
                         temperature,
                         seed,
                         debug_mode,
-                        timeout
+                        timeout,
+                        llm_device,
+                        reset_context,
                     ): img
                     for img in image_files
                 }
@@ -1235,7 +1337,7 @@ class PromptCrafter_Captioner:
             if rename_file_with_caption:
                 print("\033[93m[PromptCrafter] Warning: 'rename_file_with_caption' is only available in batch mode and will be ignored.\033[0m")
 
-            ok, caption = self._caption_one_image(image, model, final_caption_prompt, temperature, seed, debug_mode, timeout)
+            ok, caption = self._caption_one_image(image, model, final_caption_prompt, temperature, seed, debug_mode, timeout, llm_device, reset_context)
             if not ok: return (caption,)
 
             current_prefix = random.choice(trigger_words) if trigger_words else caption_prefix
@@ -1634,6 +1736,7 @@ class PromptCrafter_FileOrganizer:
                 "create_log_file": ("BOOLEAN", {"default": False, "tooltip": "Create a text log file summarizing all operations in the output folder."}),
                 "log_filename": ("STRING", {"default": "organization_log.txt", "tooltip": "The name of the log file to be created in the output folder."}),
                 "delete_source_folder_on_move": ("BOOLEAN", {"default": False, "tooltip": "After a successful 'Move' operation, delete the original input folder if it's empty. Use with caution."}),
+                **_llm_runtime_optional_inputs(),
             }
         }
     
@@ -1704,7 +1807,7 @@ class PromptCrafter_FileOrganizer:
                     return True
         return False
 
-    def _get_target_for_file(self, file_path, rules, vision_model, analysis_priority, file_info_cache):
+    def _get_target_for_file(self, file_path, rules, vision_model, analysis_priority, file_info_cache, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         """Analyzes a single file and returns the target subfolder name."""
         base_name, _ = os.path.splitext(os.path.basename(file_path))
         file_info = file_info_cache.get(file_path, {})
@@ -1766,7 +1869,17 @@ class PromptCrafter_FileOrganizer:
                 image_tensor = utils.pil2tensor(pil_image)
                 
                 prompt = "Describe this image in a few keywords. Focus on the main subject, style, and setting. Example: 'photo, car, city street, nighttime'"
-                ok, caption = api_clients.query_model_auto(vision_model, prompt=prompt, images=[image_tensor[0]], prefer_chat=True, temperature=0.1, seed=1, timeout=60)
+                ok, caption = api_clients.query_model_auto(
+                    vision_model,
+                    prompt=prompt,
+                    images=[image_tensor[0]],
+                    prefer_chat=True,
+                    temperature=0.1,
+                    seed=1,
+                    timeout=60,
+                    llm_device=llm_device,
+                    reset_context=reset_context,
+                )
                 
                 if ok:
                     for criterion, value, folder in rules:
@@ -1777,7 +1890,7 @@ class PromptCrafter_FileOrganizer:
 
         return None
 
-    def _generate_scheme_with_ai(self, file_groups, model, max_workers, debug_mode=False):
+    def _generate_scheme_with_ai(self, file_groups, model, max_workers, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, debug_mode=False):
         """Analyzes a sample of files and uses an LLM to generate an organization scheme."""
         print(f"\033[94m[FileOrganizer] Auto-generating organization scheme by analyzing a sample of files...\033[0m")
         
@@ -1833,7 +1946,18 @@ class PromptCrafter_FileOrganizer:
             filename_contains: screenshot -> By_Type/Screenshots
         """).strip()
 
-        ok, scheme = api_clients.query_model_auto(model, prompt, prefer_chat=True, temperature=0.1, seed=1, timeout=120, debug_mode=debug_mode, debug_title="Auto-Generate Scheme")
+        ok, scheme = api_clients.query_model_auto(
+            model,
+            prompt,
+            prefer_chat=True,
+            temperature=0.1,
+            seed=1,
+            timeout=120,
+            debug_mode=debug_mode,
+            debug_title="Auto-Generate Scheme",
+            llm_device=llm_device,
+            reset_context=reset_context,
+        )
         return (scheme, None) if ok else (None, f"AI scheme generation failed: {scheme}")
 
     def _group_files_by_basename(self, directory, extensions, recursive=False):
@@ -1869,7 +1993,7 @@ class PromptCrafter_FileOrganizer:
         if image_files: return image_files[0]
         return file_group[0] if file_group else None
 
-    def _process_file_group(self, file_group, rules, vision_model, analysis_priority, fallback_folder, full_input_path, full_output_path, action, file_info_cache, dry_run=False, create_log_file=False):
+    def _process_file_group(self, file_group, rules, vision_model, analysis_priority, fallback_folder, full_input_path, full_output_path, action, file_info_cache, dry_run=False, create_log_file=False, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         """
         Determines the target folder for a group of files and performs the move/copy action.
         This function is designed to be run in a thread pool.
@@ -1879,7 +2003,15 @@ class PromptCrafter_FileOrganizer:
             return "skipped_empty", 0, []
 
         representative_file = self._get_representative_file(file_group) # noqa
-        target_subfolder = self._get_target_for_file(representative_file, rules, vision_model, analysis_priority, file_info_cache)
+        target_subfolder = self._get_target_for_file(
+            representative_file,
+            rules,
+            vision_model,
+            analysis_priority,
+            file_info_cache,
+            llm_device=llm_device,
+            reset_context=reset_context,
+        )
         
         if target_subfolder is None:
             target_subfolder = fallback_folder
@@ -1972,7 +2104,7 @@ class PromptCrafter_FileOrganizer:
                 pass
         return profile
 
-    def execute(self, model, input_folder, output_folder, organization_profile, organization_scheme, action, dry_run, analysis_priority, fallback_folder, auto_generate_scheme=False, run_organization=False, max_workers=4, recursive=False, create_log_file=False, log_filename="organization_log.txt", delete_source_folder_on_move=False, **kwargs):
+    def execute(self, model, input_folder, output_folder, organization_profile, organization_scheme, action, dry_run, analysis_priority, fallback_folder, auto_generate_scheme=False, run_organization=False, max_workers=4, recursive=False, create_log_file=False, log_filename="organization_log.txt", delete_source_folder_on_move=False, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, **kwargs):
         if not run_organization:
             return ("Organization not started. Set 'run_organization' to True.", "", "")
 
@@ -2002,7 +2134,14 @@ class PromptCrafter_FileOrganizer:
         final_scheme = organization_scheme or ""  # Set empty string as default
         generated_scheme_out = ""
         if auto_generate_scheme:
-            generated_scheme, error = self._generate_scheme_with_ai(file_groups, model, max_workers, debug_mode=kwargs.get("debug_mode", False))
+            generated_scheme, error = self._generate_scheme_with_ai(
+                file_groups,
+                model,
+                max_workers,
+                llm_device=llm_device,
+                reset_context=reset_context,
+                debug_mode=kwargs.get("debug_mode", False),
+            )
             if error:
                 return (f"Error during auto-scheme generation: {error}", "", "")
             # Ensure we never assign None to final_scheme
@@ -2054,7 +2193,22 @@ class PromptCrafter_FileOrganizer:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Create a future for each file group
             future_to_group = {
-                executor.submit(self._process_file_group, group, rules, model, analysis_priority, fallback_folder, full_input_path, full_output_path, action, file_info_cache, dry_run, create_log_file): group
+                executor.submit(
+                    self._process_file_group,
+                    group,
+                    rules,
+                    model,
+                    analysis_priority,
+                    fallback_folder,
+                    full_input_path,
+                    full_output_path,
+                    action,
+                    file_info_cache,
+                    dry_run,
+                    create_log_file,
+                    llm_device,
+                    reset_context,
+                ): group
                 for group in file_groups
             }
 

@@ -46,6 +46,24 @@ class PromptCrafter_BaseCreator:
         self.talent_director = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector
         self._content_analysis_cache = {}
 
+    def _llm_runtime_kwargs(self, run_config):
+        if run_config is None:
+            return {}
+        return {
+            "llm_device": getattr(run_config, "llm_device", getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)")),
+            "reset_context": bool(getattr(run_config, "reset_context", getattr(config, "DEFAULT_LLM_STATELESS", True))),
+        }
+
+    def _query_llm(self, model, prompt, run_config=None, images=None, **kwargs):
+        llm_kwargs = self._llm_runtime_kwargs(run_config)
+        llm_kwargs.update(kwargs)
+        return api_clients.query_model_auto(model, prompt, images=images, **llm_kwargs)
+
+    def _reason_with_llm(self, model, prompt, run_config=None, images=None, **kwargs):
+        llm_kwargs = self._llm_runtime_kwargs(run_config)
+        llm_kwargs.update(kwargs)
+        return api_clients._reason_with_model(model, prompt, images=images, **llm_kwargs)
+
     def _format_output_text(self, text, output_format, label="text"):
         return text_io.format_text_payload(text, output_format, label=label)
 
@@ -267,9 +285,10 @@ class PromptCrafter_BaseCreator:
 
             # --- Retry logic ---
             for attempt in range(max_retries + 1):
-                ok, result_data = api_clients._reason_with_model(
+                ok, result_data = self._reason_with_llm(
                     describe_model, 
                     desc_prompt, 
+                    run_config=run_config,
                     images=[image], 
                     use_chat_api=run_config.use_chat_api,
                     temperature=run_config.temperature, 
@@ -311,8 +330,9 @@ class PromptCrafter_BaseCreator:
     def _describe_one_image_with_persona(self, img, weight, idx, run_config):
         persona = run_config.style_profile.get("persona", "You are an expert art historian.")
         desc_prompt = self._build_image_description_prompt(persona, idx, run_config.language, run_config.safe_mode)
-        ok, result_json = api_clients._reason_with_model(
+        ok, result_json = self._reason_with_llm(
             run_config.model, desc_prompt, images=[img], use_chat_api=run_config.use_chat_api,
+            run_config=run_config,
             temperature=run_config.temperature, seed=run_config.seed, timeout=run_config.timeout,
             debug_mode=run_config.debug_mode, debug_title=f"Image Description {idx}")
 
@@ -361,8 +381,9 @@ The final output must be in {language} only.{safety_rule}"""
                 {{"is_lyrics_request": true}}
             ''').strip()
             
-            ok, result = api_clients.query_model_auto(
+            ok, result = self._query_llm(
                 run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, 
+                run_config=run_config,
                 seed=run_config.seed, debug_mode=run_config.debug_mode, 
                 debug_title="Speech Intent Check", timeout=run_config.timeout
             )
@@ -412,8 +433,9 @@ The final output must be in {language} only.{safety_rule}"""
                     Return ONLY the final, formatted prompt string. Do not include any commentary.
                 ''').strip()
 
-                ok, final_prompt = api_clients.query_model_auto(
+                ok, final_prompt = self._query_llm(
                     run_config.model, prompt, prefer_chat=True, temperature=run_config.temperature,
+                    run_config=run_config,
                     seed=run_config.seed, debug_mode=run_config.debug_mode,
                     debug_title="Speech Prompt Generation", timeout=run_config.timeout
                 )
@@ -437,8 +459,9 @@ The final output must be in {language} only.{safety_rule}"""
                     Do not include the <AUDCAP> tags yourself.
                 ''').strip()
 
-                ok_aud, aud_desc = api_clients.query_model_auto(
+                ok_aud, aud_desc = self._query_llm(
                     run_config.model, audcap_prompt, prefer_chat=True, temperature=0.1, # Low temp for factual description
+                    run_config=run_config,
                     seed=run_config.seed, debug_mode=run_config.debug_mode,
                     debug_title="OVI <AUDCAP> Generation", timeout=run_config.timeout
                 )
@@ -475,8 +498,9 @@ The final output must be in {language} only.{safety_rule}"""
                     Respond with ONLY a JSON object: {{'is_lyrics_request': true/false}}
                 ''').strip()
                 
-                ok, result = api_clients._reason_with_model(
+                ok, result = self._reason_with_llm(
                     run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, 
+                    run_config=run_config,
                     seed=run_config.seed, debug_mode=run_config.debug_mode, 
                     debug_title="Lyrics-to-Prompt Intent Check", timeout=run_config.timeout
                 )
@@ -517,7 +541,18 @@ The final output must be in {language} only.{safety_rule}"""
             Return ONLY the JSON object.
         """ ).strip()
 
-        ok, result = api_clients._reason_with_model(run_config.model, analysis_prompt, images=images, use_chat_api=run_config.use_chat_api, temperature=0.1, seed=run_config.seed, timeout=run_config.timeout, debug_mode=run_config.debug_mode, debug_title="Dynamic Style Analysis (Scheduled)")
+        ok, result = self._reason_with_llm(
+            run_config.model,
+            analysis_prompt,
+            run_config=run_config,
+            images=images,
+            use_chat_api=run_config.use_chat_api,
+            temperature=0.1,
+            seed=run_config.seed,
+            timeout=run_config.timeout,
+            debug_mode=run_config.debug_mode,
+            debug_title="Dynamic Style Analysis (Scheduled)",
+        )
         return result if ok and isinstance(result, dict) else {}
 
     def _handle_creator_exception(self, e):
@@ -638,7 +673,16 @@ USER REQUEST ---
 {user_text}
 ---
 Respond with ONLY a JSON object: {{'requires_images': true/false}}""" .strip()
-                ok, result = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Image Intent Check")
+                ok, result = self._reason_with_llm(
+                    run_config.model,
+                    prompt,
+                    run_config=run_config,
+                    use_chat_api=run_config.use_chat_api,
+                    temperature=0.0,
+                    seed=run_config.seed,
+                    debug_mode=run_config.debug_mode,
+                    debug_title="Image Intent Check",
+                )
                 if ok and isinstance(result, dict) and result.get("requires_images"):
                     return "Your instructions appear to refer to input images, but none were connected. Please connect reference images or rephrase your instructions.", None
 
@@ -658,7 +702,16 @@ Respond with ONLY a JSON object: {{'requires_images': true/false}}""" .strip()
 {image_context}
 ---
 Return ONLY the single-paragraph creative instruction. No commentary.""" .strip()
-            ok, new_instruction = api_clients.query_model_auto(run_config.model, prompt, prefer_chat=True, temperature=0.7, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Creative Autopilot")
+            ok, new_instruction = self._query_llm(
+                run_config.model,
+                prompt,
+                run_config=run_config,
+                prefer_chat=True,
+                temperature=0.7,
+                seed=run_config.seed,
+                debug_mode=run_config.debug_mode,
+                debug_title="Creative Autopilot",
+            )
             if ok and new_instruction:
                 print(f"\033[92m[PromptCrafter] Creative Autopilot generated instruction: {new_instruction}\033[0m")
                 return None, new_instruction
@@ -748,7 +801,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             if run_config.use_deep_think and refinements == 0:
                 print("\033[94m[PromptCrafter] Deep Think disabled by setting refinements to 0.\033[0m")
             generation_kwargs["debug_title"] = f"Initial {mode} Prompt"
-            ok, scene_prompt = api_clients.query_model_auto(run_config.model, merge_prompt, **generation_kwargs)
+            ok, scene_prompt = self._query_llm(run_config.model, merge_prompt, run_config=run_config, **generation_kwargs)
         
         if ok and scene_prompt:
             original_content = f"{user_instructions} {user_context}".strip()
@@ -842,8 +895,9 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         
         if not primary_items_list:
             critique_prompt = self._build_refinement_prompt(current_prompt, mode, [], [], style_rules, run_config, ask_for_json=False)
-            ok, revised_prompt = api_clients.query_model_auto(
+            ok, revised_prompt = self._query_llm(
                 run_config.model, critique_prompt, prefer_chat=run_config.use_chat_api, 
+                run_config=run_config,
                 temperature=run_config.temperature, seed=run_config.seed, timeout=90, 
                 debug_mode=run_config.debug_mode, debug_title="Image/Video Refine (Single Pass)"
             )

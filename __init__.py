@@ -79,6 +79,55 @@ for module in NODE_MODULES:
     if hasattr(module, "NODE_DISPLAY_NAME_MAPPINGS"):
         NODE_DISPLAY_NAME_MAPPINGS.update(module.NODE_DISPLAY_NAME_MAPPINGS)
 
+
+def _promote_llm_controls_to_required(node_cls):
+    """
+    Ensure `llm_device` and `reset_context` are visible by default in ComfyUI.
+    Some UIs hide optional widgets, so we promote these two controls to required
+    whenever they were declared as optional.
+    """
+    if getattr(node_cls, "_pgfx_llm_controls_promoted", False):
+        return
+
+    original = node_cls.__dict__.get("INPUT_TYPES")
+    if original is None:
+        return
+
+    def _call_original(cls):
+        if isinstance(original, classmethod):
+            return original.__func__(cls)
+        return original()
+
+    @classmethod
+    def _patched_input_types(cls):
+        types = _call_original(cls)
+        if not isinstance(types, dict):
+            return types
+
+        required = dict(types.get("required", {}))
+        optional = dict(types.get("optional", {}))
+
+        changed = False
+        for key in ("llm_device", "reset_context"):
+            if key in optional and key not in required:
+                required[key] = optional.pop(key)
+                changed = True
+
+        if not changed:
+            return types
+
+        patched = dict(types)
+        patched["required"] = required
+        patched["optional"] = optional
+        return patched
+
+    node_cls.INPUT_TYPES = _patched_input_types
+    node_cls._pgfx_llm_controls_promoted = True
+
+
+for _node_cls in NODE_CLASS_MAPPINGS.values():
+    _promote_llm_controls_to_required(_node_cls)
+
 # Expose web directory if any module has it
 # For now, ComfyGuard is the main one with web assets
 WEB_DIRECTORY = "./js"

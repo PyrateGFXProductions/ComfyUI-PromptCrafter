@@ -1,0 +1,32 @@
+---
+description: Anti-Hallucination Guard — prevents AI from inventing code
+alwaysApply: true
+priority: 100
+---
+
+# Anti-Hallucination Guard
+
+## Core Principle
+NEVER invent, fabricate, or hallucinate code that does not exist in this codebase.
+Before generating ANY code, verify against the truthpack.
+
+## Verified API Routes (0 total)
+- No routes detected yet — run a scan
+
+
+## Verified Environment Variables (0 total)
+- No env vars detected yet
+
+## Verification Protocol
+1. **Imports**: Every import MUST resolve to a real module in node_modules or the project
+2. **APIs**: Every API call MUST match a verified route above
+3. **Types**: Every type MUST exist in the codebase — no invented interfaces
+4. **Packages**: Every npm package MUST be in package.json
+5. **Functions**: Every function call MUST reference an existing function
+
+## When Uncertain
+Say: "I couldn't verify [X] exists. Should I create it or check the codebase?"
+NEVER silently invent something.
+
+---
+<!-- vibecheck:context-engine:v1 -->

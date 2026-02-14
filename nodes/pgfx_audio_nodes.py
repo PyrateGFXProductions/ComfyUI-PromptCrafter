@@ -225,6 +225,8 @@ class PromptCrafter_AudioSplitter_v2:
              },
             "optional": {
                 "instrumental_audio": ("AUDIO", {"optional": True}),
+                "llm_device": (["Default (GPU)", "CPU"], {"default": "Default (GPU)", "tooltip": "Where local LLM inference should run. 'Default (GPU)' uses configured acceleration; 'CPU' forces CPU for local GGUF/HF models."}),
+                "reset_context": ("BOOLEAN", {"default": True, "tooltip": "If enabled, resets local model context before each call to avoid carrying prior conversation state."}),
                 **optional_inputs
             }
         }
@@ -310,7 +312,7 @@ class PromptCrafter_AudioSplitter_v2:
             self._debug_print(f"Error in _transcribe_with_ctranslate2: {str(e)}")
             raise
 
-    def _get_ai_corrected_script(self, raw_transcript, ground_truth_script, correction_model):
+    def _get_ai_corrected_script(self, raw_transcript, ground_truth_script, correction_model, llm_device="Default (GPU)", reset_context=True):
         if not ground_truth_script or not raw_transcript:
             return ground_truth_script
         
@@ -332,7 +334,9 @@ class PromptCrafter_AudioSplitter_v2:
             from ..core import pgfx_api_clients as api_clients
             ok, corrected_script = api_clients.query_model_auto(
                 correction_model, correction_prompt, prefer_chat=True, temperature=0.0,
-                seed=-1, debug_mode=self.debug_mode, timeout=120, debug_title="AudioSplitter Script Correction"
+                seed=-1, debug_mode=self.debug_mode, timeout=120, debug_title="AudioSplitter Script Correction",
+                llm_device=llm_device,
+                reset_context=reset_context,
             )
             if ok and corrected_script:
                 self._debug_print("Successfully corrected transcript with LLM.")
@@ -658,7 +662,7 @@ class PromptCrafter_AudioSplitter_v2:
             self._debug_print(f"Failed to scan folder '{folder_path}': {e}")
             return 0
 
-    def run(self, vocal_audio, srt_or_script_path, trigger, scene_duration_seconds, folder_path, enable_auto_queue, whisper_model, language, correction_model, enable_silence_detection=True, silence_threshold=0.1, instrumental_audio=None, **kwargs):
+    def run(self, vocal_audio, srt_or_script_path, trigger, scene_duration_seconds, folder_path, enable_auto_queue, whisper_model, language, correction_model, enable_silence_detection=True, silence_threshold=0.1, instrumental_audio=None, llm_device="Default (GPU)", reset_context=True, **kwargs):
         self._debug_print("Starting AudioSplitter V2 run")
         
         try:
@@ -825,7 +829,13 @@ class PromptCrafter_AudioSplitter_v2:
         try:
             full_raw_transcription = transcription_model.transcribe(waveform.squeeze(0).mean(dim=0).cpu().numpy())
             full_raw_text = "".join([seg['text'] for seg in full_raw_transcription.get("segments", [])])
-            corrected_script = self._get_ai_corrected_script(full_raw_text, ground_truth_script, correction_model)
+            corrected_script = self._get_ai_corrected_script(
+                full_raw_text,
+                ground_truth_script,
+                correction_model,
+                llm_device=llm_device,
+                reset_context=reset_context,
+            )
             
             alignment_result = self._get_aligned_text(
                 corrected_script, temp_audio_path, transcription_model, language, output_folder

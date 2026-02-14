@@ -139,6 +139,22 @@ class ThoughtProcess:
             "lyrics_auto_visibility": "",
         }
 
+    def _llm_runtime_kwargs(self):
+        return {
+            "llm_device": getattr(self.run_config, "llm_device", getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)")),
+            "reset_context": bool(getattr(self.run_config, "reset_context", getattr(config, "DEFAULT_LLM_STATELESS", True))),
+        }
+
+    def _query_model(self, model, prompt, images=None, **kwargs):
+        llm_kwargs = self._llm_runtime_kwargs()
+        llm_kwargs.update(kwargs)
+        return api_clients.query_model_auto(model, prompt, images=images, **llm_kwargs)
+
+    def _reason_with_model(self, model, prompt, images=None, **kwargs):
+        llm_kwargs = self._llm_runtime_kwargs()
+        llm_kwargs.update(kwargs)
+        return api_clients._reason_with_model(model, prompt, images=images, **llm_kwargs)
+
     def _collect_images_with_weights(self, image_count=1, image_weights_json="{}"):
         """Collects all connected image tensors and their weights from the dynamic inputs."""
         images_with_weights = []
@@ -486,7 +502,7 @@ class ThoughtProcess:
             Return ONLY the ten categories in their labeled code blocks.
         """)
 
-        ok, ai_output = api_clients.query_model_auto(
+        ok, ai_output = self._query_model(
             self.run_config.model,
             prompt,
             prefer_chat=True,
@@ -817,7 +833,15 @@ class ThoughtProcess:
                 }}
             """).strip()
 
-            ok, result = api_clients._reason_with_model(run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.4, seed=run_config.seed, debug_mode=run_config.debug_mode, debug_title="Generate Additional Style Rules")
+            ok, result = self._reason_with_model(
+                run_config.model,
+                prompt,
+                use_chat_api=run_config.use_chat_api,
+                temperature=0.4,
+                seed=run_config.seed,
+                debug_mode=run_config.debug_mode,
+                debug_title="Generate Additional Style Rules",
+            )
             if ok and isinstance(result, dict) and "additional_rules" in result:
                 style_rules["additional_rules"] = result["additional_rules"]
 
@@ -844,7 +868,7 @@ class ThoughtProcess:
             if self.run_config.use_deep_think and refinements == 0:
                 print("\033[94m[PromptCrafter] Deep Think disabled by setting refinements to 0.\033[0m")
             generation_kwargs["debug_title"] = f"Initial {self.mode} Prompt"
-            ok, scene_prompt = api_clients.query_model_auto(self.run_config.model, merge_prompt, **generation_kwargs)
+            ok, scene_prompt = self._query_model(self.run_config.model, merge_prompt, **generation_kwargs)
 
         return (utils.TextCleaner.single_paragraph(scene_prompt), None) if ok else (None, f"Ollama error: {scene_prompt}")
 
@@ -875,7 +899,7 @@ You are an expert cinematic prompt engineer. Your task is to refine a DRAFT prom
 
 Return ONLY the final, refined prompt.
 """
-        ok, refined_prompt = api_clients.query_model_auto(
+        ok, refined_prompt = self._query_model(
             self.run_config.model, refinement_prompt, prefer_chat=self.run_config.use_chat_api, 
             temperature=self.run_config.temperature, seed=self.run_config.seed, 
             timeout=self.run_config.timeout, debug_mode=self.run_config.debug_mode, debug_title="Refine Visual Prompt"
@@ -979,7 +1003,34 @@ Return ONLY the final, refined prompt.
         prompt = f"You are a helpful Q&A assistant. Answer the user's query based on the conversation history and any additional context provided.\n\n{history_section}{context_section}CURRENT USER QUERY:\n{summarized_query}{safety_rule}".strip()
 
         images_to_pass = [self.qna_image] if self.qna_image is not None else None
-        ok, resp = api_clients.query_model_auto(llm_model, prompt, images=images_to_pass, prefer_chat=True, temperature=self.run_config.temperature, seed=self.run_config.seed, debug_mode=self.run_config.debug_mode, debug_title="QnA Prompt", timeout=self.run_config.timeout)
+        model_name = "" if llm_model is None else str(llm_model)
+        is_gguf_model = model_name.lower().startswith("gguf/")
+        is_vision_request = self.qna_image is not None
+        safe_max_tokens = 768 if is_vision_request else 1536
+        gguf_runtime_kwargs = {}
+        llm_device_choice = str(getattr(self.run_config, "llm_device", "Default (GPU)") or "").strip().lower()
+        cpu_mode = llm_device_choice in {"cpu", "host", "cpu-only", "cpu only"}
+        if is_gguf_model:
+            gguf_runtime_kwargs["unload_after_query"] = True
+            gguf_runtime_kwargs["unload_vision_after_query"] = is_vision_request
+            gguf_runtime_kwargs["vision_projector_use_gpu"] = False
+            if is_vision_request and cpu_mode:
+                gguf_runtime_kwargs["n_gpu_layers"] = 0
+                gguf_runtime_kwargs["n_batch"] = 64
+                gguf_runtime_kwargs["n_ubatch"] = 32
+        ok, resp = self._query_model(
+            llm_model,
+            prompt,
+            images=images_to_pass,
+            prefer_chat=True,
+            temperature=self.run_config.temperature,
+            seed=self.run_config.seed,
+            debug_mode=self.run_config.debug_mode,
+            debug_title="QnA Prompt",
+            timeout=self.run_config.timeout,
+            max_tokens=safe_max_tokens,
+            **gguf_runtime_kwargs,
+        )
         
         response_text = resp if ok else f"Ollama error: {resp}"
         stripped_response = response_text.strip()
@@ -1139,7 +1190,15 @@ Return ONLY the final, refined prompt.
                 Return ONLY a JSON array of strings. Example: ["upbeat", "energetic", "happy"]
             """).strip()
 
-            ok, mood_keywords = api_clients._reason_with_model(self.run_config.model, mood_prompt, use_chat_api=True, temperature=0.2, seed=self.run_config.seed, debug_mode=self.run_config.debug_mode, debug_title="Analyze Audio Mood")
+            ok, mood_keywords = self._reason_with_model(
+                self.run_config.model,
+                mood_prompt,
+                use_chat_api=True,
+                temperature=0.2,
+                seed=self.run_config.seed,
+                debug_mode=self.run_config.debug_mode,
+                debug_title="Analyze Audio Mood",
+            )
             if ok and isinstance(mood_keywords, list):
                 config.CACHE.set(cache_key, mood_keywords)
                 return mood_keywords
@@ -1177,7 +1236,7 @@ Return ONLY the final, refined prompt.
             A lonely astronaut drifts through the silent, vibrant nebulae of a forgotten galaxy, haunted by fragmented memories of a lost love on Earth that appear as ghostly projections on the cockpit's viewport. The journey is a melancholic dance between the vast, beautiful emptiness of space and the intimate, painful beauty of memory.
         """).strip()
 
-        ok, theme_or_err = api_clients.query_model_auto(
+        ok, theme_or_err = self._query_model(
             self.run_config.model, prompt, prefer_chat=True,
             temperature=self.run_config.temperature, seed=self.run_config.seed,
             debug_mode=self.run_config.debug_mode, timeout=self.run_config.timeout,
@@ -1211,7 +1270,7 @@ Return ONLY the final, refined prompt.
 
         vrg_instructions = self._build_vrg_prompt_instructions(pipe_separated_lyrics, num_fragments)
 
-        ok, final_prompts = api_clients.query_model_auto(
+        ok, final_prompts = self._query_model(
             self.run_config.model,
             vrg_instructions,
             prefer_chat=True,
@@ -1356,7 +1415,16 @@ Return ONLY the final, refined prompt.
             6.  Return ONLY the final prompt string. No commentary.
         """).strip()
 
-        ok, scene_prompt = api_clients.query_model_auto(self.run_config.model, prompt, prefer_chat=True, temperature=self.run_config.temperature, seed=self.run_config.seed, debug_mode=self.run_config.debug_mode, timeout=self.run_config.timeout, debug_title=f"Generate Lyric Scene {scene_number}")
+        ok, scene_prompt = self._query_model(
+            self.run_config.model,
+            prompt,
+            prefer_chat=True,
+            temperature=self.run_config.temperature,
+            seed=self.run_config.seed,
+            debug_mode=self.run_config.debug_mode,
+            timeout=self.run_config.timeout,
+            debug_title=f"Generate Lyric Scene {scene_number}",
+        )
         return scene_prompt if ok else f"[Error generating prompt for scene {scene_number}: {scene_prompt}]"
 
     def _lyrics_agent_write_storyboard_prompts(self, final_lyrics_text, final_timed_segments, global_theme, image_context_out):
@@ -1425,7 +1493,7 @@ Return ONLY the final, refined prompt.
         """).strip()
 
         # 4. Make the single LLM call
-        ok, final_prompts = api_clients.query_model_auto(
+        ok, final_prompts = self._query_model(
             self.run_config.model,
             mega_prompt,
             prefer_chat=True,

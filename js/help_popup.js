@@ -65,7 +65,7 @@ const create_documentation_stylesheet = () => {
       styleTag = document.createElement('style')
       styleTag.type = 'text/css'
       styleTag.id = tag
-      styleTag.innerHTML = `
+      styleTag.textContent = `
       .promptcrafter-documentation-popup {
         background: var(--comfy-menu-bg);
         position: absolute;
@@ -151,7 +151,16 @@ const create_documentation_stylesheet = () => {
         docElement.classList.add('promptcrafter-documentation-popup')
         
         //parse the string from the python node code to html with marked, and sanitize the html with DOMPurify
-        contentWrapper.innerHTML = DOMPurify.sanitize(marked.parse(nodeData.description,))
+        const parsedHtml = marked.parse(String(nodeData.description || ""))
+        const safeHtml = DOMPurify.sanitize(parsedHtml)
+        const parser = new DOMParser()
+        const safeDocument = parser.parseFromString(safeHtml, 'text/html')
+        contentWrapper.replaceChildren()
+        const safeFragment = document.createDocumentFragment()
+        while (safeDocument.body.firstChild) {
+          safeFragment.appendChild(safeDocument.body.firstChild)
+        }
+        contentWrapper.appendChild(safeFragment)
 
         // resize handle
         const resizeHandle = document.createElement('div');

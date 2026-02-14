@@ -1,0 +1,31 @@
+---
+description: Truthpack Enforcer — all code must align with verified ground truth
+alwaysApply: true
+priority: 90
+---
+
+# Truthpack Enforcer
+
+## Ground Truth Source
+The truthpack at `.vibecheck/truthpack/` is the single source of truth for this project.
+It contains verified routes, env vars, auth rules, and API contracts extracted from actual code.
+
+## Enforcement Rules
+1. **Route Creation**: New API routes must follow the pattern of existing routes
+2. **Env Vars**: Never reference env vars that aren't in the truthpack or .env.example
+3. **Auth**: Protected routes must use the same auth middleware as existing protected routes
+4. **Schemas**: API request/response shapes must match existing contract patterns
+
+## On Conflict
+If your code conflicts with the truthpack:
+- The truthpack is RIGHT, your code is WRONG
+- Re-scan with `vibecheck scan` if you believe the truthpack is outdated
+- Never silently override truthpack-verified patterns
+
+## Auto-Update
+This rule evolves automatically as the truthpack changes.
+Current truthpack hash: `unknown`
+Last generated: unknown
+
+---
+<!-- vibecheck:context-engine:v1 -->

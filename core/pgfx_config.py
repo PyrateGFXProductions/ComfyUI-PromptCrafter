@@ -28,6 +28,13 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_FACTOR = 1.5
 DEFAULT_MAX_TOKENS = 4096
 
+# --- LLM Runtime Controls ---
+LLM_DEVICE_OPTIONS = ["Default (GPU)", "CPU"]
+_raw_llm_device = os.getenv("PGFX_LLM_DEVICE", "default").strip().lower()
+DEFAULT_LLM_DEVICE = "CPU" if _raw_llm_device in {"cpu", "host"} else "Default (GPU)"
+# Stateless by default to prevent cross-request conversational carryover.
+DEFAULT_LLM_STATELESS = _env_flag("PGFX_LLM_STATELESS", "1")
+
 
 # --- Path and Global State Configuration ---
 # --- Path and Global State Configuration ---
@@ -175,6 +182,8 @@ class PromptCrafterRunConfig:
     # Brain/Lobe controls
     artistry: float = 0.5
     creativity: float = 0.5
+    llm_device: str = "Default (GPU)"
+    reset_context: bool = True
 
     def __post_init__(self):
         # Ensure numeric types are correct
@@ -189,3 +198,6 @@ class PromptCrafterRunConfig:
         self.song_length_seconds = float(self.song_length_seconds)
         self.artistry = float(self.artistry)
         self.creativity = float(self.creativity)
+        device_choice = str(self.llm_device).strip().lower()
+        self.llm_device = "CPU" if device_choice in {"cpu", "host"} else "Default (GPU)"
+        self.reset_context = bool(self.reset_context)

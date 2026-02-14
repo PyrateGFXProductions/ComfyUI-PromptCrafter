@@ -4,6 +4,7 @@ import textwrap
 
 # Local module imports
 from ..core import pgfx_api_clients as api_clients
+from ..core import pgfx_config as config
 from . import pgfx_creator_nodes as creator_nodes
 from ..utils import pgfx_utils as utils
 from ..utils import pgfx_json_utils as json_utils
@@ -63,6 +64,8 @@ class PromptCrafter_DirectorAgent:
             "optional": {
                 "image_a": ("IMAGE", {"tooltip": "Optional reference image for the first style in the list."}),
                 "image_b": ("IMAGE", {"tooltip": "Optional reference image for the second style in the list."}),
+                "llm_device": (config.LLM_DEVICE_OPTIONS, {"default": config.DEFAULT_LLM_DEVICE, "tooltip": "Where local LLM inference should run. 'Default (GPU)' uses configured acceleration; 'CPU' forces CPU for local GGUF/HF models."}),
+                "reset_context": ("BOOLEAN", {"default": config.DEFAULT_LLM_STATELESS, "tooltip": "If enabled, resets local model context before each call to avoid carrying prior conversation state."}),
             }
         }
 
@@ -71,7 +74,7 @@ class PromptCrafter_DirectorAgent:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Agents"
 
-    def execute(self, thinking_model, instruct_model, whisper_data, style_list, debug_mode, image_a=None, image_b=None):
+    def execute(self, thinking_model, instruct_model, whisper_data, style_list, debug_mode, image_a=None, image_b=None, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         
         # 1. Parse and Validate Inputs
         try:
@@ -149,6 +152,8 @@ class PromptCrafter_DirectorAgent:
                 debug_mode=debug_mode,
                 seed=123,
                 timeout=300,
+                llm_device=llm_device,
+                reset_context=reset_context,
             )
 
             if not ok:

@@ -13,6 +13,7 @@ import torchaudio.transforms as T
 
 from ..utils import pgfx_utils as utils
 from ..core import pgfx_api_clients as api_clients
+from ..core import pgfx_config as config
 
 # Suppress the specific UserWarning from speechbrain that is triggered by whisperx
 # warnings.filterwarnings("ignore", category=UserWarning, module='speechbrain.inference')
@@ -254,9 +255,6 @@ def _get_whisperx(debug_mode=False):
 class PromptCrafter_SRTCreator:
     DESCRIPTION = "Generates a highly accurate SRT file from an audio input, with optional AI-powered correction using a ground truth script."
 
-    def __init__(self):
-        pass
-
     @classmethod
     def get_whisper_models(cls):
         """Scans the ComfyUI models directory recursively for faster-whisper models."""
@@ -306,6 +304,20 @@ class PromptCrafter_SRTCreator:
             },
             "optional": {
                 "ground_truth_script": ("STRING", {"multiline": True, "default": "", "tooltip": "Optional: Provide a perfect script to correct the AI's transcription."} ),
+                "llm_device": (
+                    config.LLM_DEVICE_OPTIONS,
+                    {
+                        "default": config.DEFAULT_LLM_DEVICE,
+                        "tooltip": "Where local LLM inference should run. 'Default (GPU)' uses configured acceleration; 'CPU' forces CPU for local GGUF/HF models.",
+                    },
+                ),
+                "reset_context": (
+                    "BOOLEAN",
+                    {
+                        "default": config.DEFAULT_LLM_STATELESS,
+                        "tooltip": "If enabled, resets local model context before each call to avoid carrying prior conversation state.",
+                    },
+                ),
             }
         }
 
@@ -537,7 +549,7 @@ class PromptCrafter_SRTCreator:
 
     def execute(self, audio, whisper_model, language, vad_method, enable_ai_correction, correction_model, 
             enable_translation, debug_mode, segment_duration_seconds, enable_ai_text_refinement, strict_speaker_detection,
-            ground_truth_script=""):
+            ground_truth_script="", llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         whisperx = _get_whisperx(debug_mode)
 
         if not isinstance(audio, dict) or "waveform" not in audio:

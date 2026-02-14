@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "ComfyUI-PromptCrafter",
+    "framework": "unknown",
+    "language": "javascript",
+    "packageManager": "npm"
+  },
+  "scan": {
+    "exclude": [
+      "node_modules",
+      "dist",
+      "build",
+      ".next",
+      ".vibecheck"
+    ]
+  },
+  "createdAt": "2026-02-14T19:00:30.256Z",
+  "github": {
+    "repo": "PyrateGFXProductions/ComfyUI-PromptCrafter",
+    "connected": true,
+    "connectedAt": "2026-02-14T19:00:30.282Z"
+  }
+}

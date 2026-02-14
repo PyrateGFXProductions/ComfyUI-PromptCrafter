@@ -37,3 +37,8 @@ agent.md
 agent.rules.md
 ARCHITECTURE.md
 >>>>>>> origin/main
+
+# VibeCheck
+.vibecheck/screenshots/
+.vibecheck/scan-results.json
+.vibecheck/context-engine-ledger.json

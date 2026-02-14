@@ -4,6 +4,9 @@ import io
 import json
 import time
 import inspect
+import re
+import contextlib
+import contextvars
 import threading
 import errno
 import uuid
@@ -33,6 +36,7 @@ import functools
 
 _MAX_OLLAMA_CONCURRENT_CALLS = 1   # set >1 only if you have a multi‑GPU server
 _ollama_semaphore = threading.Semaphore(_MAX_OLLAMA_CONCURRENT_CALLS)
+_LLM_RUNTIME_OVERRIDES = contextvars.ContextVar("pgfx_llm_runtime_overrides", default={})
 
 def _with_ollama_throttle(func):
     """Decorator that serialises access to Ollama."""
@@ -44,6 +48,37 @@ def _with_ollama_throttle(func):
 
 # Apply the decorator to the public entry points.
 # <<< API_OLLAMA_THROTTLE <<<
+
+def _normalize_llm_device_choice(choice):
+    value = str(choice or "").strip().lower()
+    if value in {"cpu", "host", "cpu-only", "cpu only"}:
+        return "cpu"
+    return "default"
+
+def push_llm_runtime_context(llm_device=None, reset_context=None):
+    current = _LLM_RUNTIME_OVERRIDES.get({})
+    updated = dict(current)
+    if llm_device is not None:
+        updated["llm_device"] = llm_device
+    if reset_context is not None:
+        updated["reset_context"] = bool(reset_context)
+    return _LLM_RUNTIME_OVERRIDES.set(updated)
+
+def pop_llm_runtime_context(token):
+    if token is None:
+        return
+    try:
+        _LLM_RUNTIME_OVERRIDES.reset(token)
+    except Exception:
+        pass
+
+@contextlib.contextmanager
+def llm_runtime_context(llm_device=None, reset_context=None):
+    token = push_llm_runtime_context(llm_device=llm_device, reset_context=reset_context)
+    try:
+        yield
+    finally:
+        pop_llm_runtime_context(token)
 
 # --- Soft dependency import for GGUF loading ---
 try:
@@ -73,6 +108,7 @@ try:
     from transformers import (
         AutoProcessor,
         AutoModelForCausalLM,
+        AutoModelForConditionalGeneration,
         AutoConfig,
         BitsAndBytesConfig,
     )
@@ -98,6 +134,7 @@ except ImportError as e:
         @classmethod
         def from_pretrained(cls, *args, **kwargs): return DummyProcessor()
     class AutoModelForCausalLM(DummyModel): pass
+    class AutoModelForConditionalGeneration(DummyModel): pass
     class AutoConfig:
         @classmethod
         def from_pretrained(cls, *args, **kwargs): return {"architectures": ["DummyModel"]}
@@ -420,6 +457,7 @@ class GGUFClient:
             with self._cache_lock:
                 self._model_runtime[model_id] = {
                     "is_vision_model": is_vision_model,
+                    "n_ctx": int(effective_llama_kwargs.get("n_ctx", n_ctx)),
                     "n_gpu_layers": int(effective_llama_kwargs.get("n_gpu_layers", n_gpu_layers)),
                     "n_batch": int(effective_llama_kwargs.get("n_batch", n_batch)),
                     "n_ubatch": int(effective_llama_kwargs.get("n_ubatch", n_ubatch)),
@@ -573,6 +611,7 @@ class GGUFClient:
         if timeout_seconds is not None and timeout_seconds <= 0:
             timeout_seconds = None
         allow_partial_on_timeout = bool(kwargs.get("allow_partial_on_timeout", False))
+        reset_context = bool(kwargs.get("reset_context", getattr(config, "DEFAULT_LLM_STATELESS", True)))
 
         llm = None
         is_vision_model = False
@@ -597,12 +636,20 @@ class GGUFClient:
                     self._last_used[model_id] = time.time() # Initial usage
                     print(f"\033[92m[PromptCrafter] GGUF model '{model_id}' loaded successfully.\033[0m")
 
+            runtime_info = self._model_runtime.get(model_id, {})
+            active_n_ctx = max(256, int(runtime_info.get("n_ctx", getattr(config, "DEFAULT_GGUF_N_CTX", 4096))))
+
             if is_vision_model and not unload_vision_after_query_from_kwargs:
-                runtime_info = self._model_runtime.get(model_id, {})
                 if not getattr(config, "GGUF_UNLOAD_VISION_AFTER_QUERY_WAS_SET", False):
                     runtime_unload = runtime_info.get("unload_after_query", None)
                     if runtime_unload is not None:
                         unload_vision_after_query = bool(runtime_unload)
+
+            if reset_context:
+                try:
+                    llm.reset()
+                except Exception:
+                    pass
 
             # --- Inference ---
             prefer_chat = bool(kwargs.get("prefer_chat", False))
@@ -615,6 +662,128 @@ class GGUFClient:
                 if partial_content:
                     msg += f" Partial output length: {len(partial_content)} chars."
                 return msg
+
+            def _looks_like_prompt_overflow(err):
+                msg = str(err).lower()
+                markers = (
+                    "prompt exceeds n_ctx",
+                    "prompt is too long",
+                    "too many tokens",
+                    "context window",
+                )
+                return any(marker in msg for marker in markers)
+
+            def _looks_like_kv_slot_error(err):
+                msg = str(err).lower()
+                markers = (
+                    "no kv slot available",
+                    "decode failed at pos",
+                    "failed to find a memory slot",
+                    "memory_seq_rm",
+                    "llama_decode failed",
+                )
+                return any(marker in msg for marker in markers)
+
+            def _extract_prompt_overflow_counts(err):
+                err_text = str(err)
+                match = re.search(r"prompt exceeds n_ctx:\s*(\d+)\s*>\s*(\d+)", err_text, flags=re.IGNORECASE)
+                if not match:
+                    return None, None
+                try:
+                    return int(match.group(1)), int(match.group(2))
+                except Exception:
+                    return None, None
+
+            def _trim_prompt_for_context(
+                prompt_text,
+                n_ctx_limit,
+                observed_prompt_tokens=None,
+                extra_reduction_tokens=0,
+            ):
+                safe_prompt = "" if prompt_text is None else str(prompt_text)
+                reserve_tokens = int(kwargs.get("prompt_trim_reserve_tokens", 192))
+                if is_vision_model and images_b64:
+                    reserve_tokens = max(
+                        reserve_tokens,
+                        int(kwargs.get("vision_prompt_trim_reserve_tokens", 1536)),
+                    )
+                elif is_vision_model or bool(kwargs.get("prefer_chat", False)):
+                    reserve_tokens = max(
+                        reserve_tokens,
+                        int(kwargs.get("chat_prompt_trim_reserve_tokens", 384)),
+                    )
+                reserve_tokens = max(32, reserve_tokens + max(0, int(extra_reduction_tokens)))
+                max_prompt_tokens = max(64, int(n_ctx_limit) - reserve_tokens)
+                marker = "\n\n[... prompt trimmed to fit GGUF context window ...]\n\n"
+
+                token_ids = None
+                original_token_count = observed_prompt_tokens
+
+                try:
+                    token_ids = llm.tokenize(safe_prompt.encode("utf-8"), add_bos=False)
+                    original_token_count = len(token_ids)
+                except Exception:
+                    token_ids = None
+
+                if token_ids is not None:
+                    if len(token_ids) <= max_prompt_tokens:
+                        return safe_prompt, len(token_ids), len(token_ids), False
+
+                    marker_tokens = []
+                    try:
+                        marker_tokens = llm.tokenize(marker.encode("utf-8"), add_bos=False)
+                    except Exception:
+                        marker_tokens = []
+
+                    available = max(32, max_prompt_tokens - len(marker_tokens))
+                    head = max(16, int(available * 0.65))
+                    tail = max(16, available - head)
+                    if head + tail > len(token_ids):
+                        head = min(head, len(token_ids))
+                        tail = max(0, len(token_ids) - head)
+
+                    combined_tokens = token_ids[:head]
+                    if marker_tokens:
+                        combined_tokens += marker_tokens
+                    if tail > 0:
+                        combined_tokens += token_ids[-tail:]
+
+                    combined_tokens = combined_tokens[:max_prompt_tokens]
+                    try:
+                        decoded = llm.detokenize(combined_tokens)
+                        trimmed_text = (
+                            decoded.decode("utf-8", errors="ignore")
+                            if isinstance(decoded, (bytes, bytearray))
+                            else str(decoded)
+                        )
+                    except Exception:
+                        trimmed_text = safe_prompt
+
+                    if trimmed_text and trimmed_text != safe_prompt:
+                        return trimmed_text, len(token_ids), len(combined_tokens), True
+
+                if original_token_count is None:
+                    original_token_count = max(1, len(safe_prompt) // 4)
+
+                ratio = min(0.95, float(max_prompt_tokens) / float(max(1, original_token_count)))
+                keep_chars = max(256, int(len(safe_prompt) * ratio))
+                if keep_chars >= len(safe_prompt):
+                    keep_chars = max(1, int(len(safe_prompt) * 0.9))
+                if keep_chars <= 0:
+                    return safe_prompt, int(original_token_count), int(original_token_count), False
+
+                head_chars = max(64, int(keep_chars * 0.7))
+                tail_chars = max(64, keep_chars - head_chars)
+                if head_chars + tail_chars >= len(safe_prompt):
+                    trimmed_text = safe_prompt[:keep_chars]
+                else:
+                    trimmed_text = f"{safe_prompt[:head_chars]}{marker}{safe_prompt[-tail_chars:]}"
+
+                if trimmed_text == safe_prompt:
+                    return safe_prompt, int(original_token_count), int(original_token_count), False
+
+                approx_after = max(1, int(original_token_count * (len(trimmed_text) / max(1, len(safe_prompt)))))
+                return trimmed_text, int(original_token_count), int(approx_after), True
 
             def _extract_chat_content(output):
                 try:
@@ -768,77 +937,180 @@ class GGUFClient:
 
             use_chat_api = bool(is_vision_model or prefer_chat)
             content = ""
+            prompt_for_inference = "" if prompt is None else str(prompt)
+            max_trim_retries = int(kwargs.get("max_prompt_trim_retries", 2))
+            max_trim_retries = max(0, min(max_trim_retries, 4))
+            max_kv_retry_attempts = int(kwargs.get("max_kv_retry_attempts", 1))
+            max_kv_retry_attempts = max(0, min(max_kv_retry_attempts, 2))
+            requested_max_tokens = max(16, int(max_tokens))
+
+            def _compute_safe_max_tokens(prompt_tokens_estimate):
+                prompt_tokens_estimate = max(0, int(prompt_tokens_estimate))
+                if is_vision_model and images_b64:
+                    headroom = int(kwargs.get("vision_generation_headroom_tokens", 1408))
+                    hard_cap = int(kwargs.get("vision_max_output_tokens_cap", 768))
+                elif is_vision_model or use_chat_api:
+                    headroom = int(kwargs.get("chat_generation_headroom_tokens", 512))
+                    hard_cap = int(kwargs.get("chat_max_output_tokens_cap", 1024))
+                else:
+                    headroom = int(kwargs.get("text_generation_headroom_tokens", 256))
+                    hard_cap = int(kwargs.get("text_max_output_tokens_cap", 2048))
+                available = max(64, active_n_ctx - prompt_tokens_estimate - headroom)
+                return max(64, min(requested_max_tokens, hard_cap, available))
 
             if images_b64 and not is_vision_model:
                 print("\033[93m[PromptCrafter] Warning: Images provided, but the loaded GGUF model is not a vision model. Ignoring images.\033[0m")
+            prompt_for_inference, pre_tokens_before, pre_tokens_after, pre_trimmed = _trim_prompt_for_context(
+                prompt_for_inference,
+                n_ctx_limit=active_n_ctx,
+            )
+            if pre_trimmed:
+                print(
+                    f"\033[93m[PromptCrafter] Prompt was trimmed before GGUF inference for '{model_id}' "
+                    f"to fit n_ctx={active_n_ctx} ({pre_tokens_before} -> {pre_tokens_after} tokens).\033[0m"
+                )
 
-            if use_chat_api:
-                if images_b64 and is_vision_model:
-                    user_content = [{"type": "text", "text": prompt}]
-                    for img_b64 in images_b64:
-                        user_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}})
-                    messages = [{"role": "user", "content": user_content}]
-                else:
-                    messages = [{"role": "user", "content": prompt}]
+            if is_vision_model and images_b64 and bool(kwargs.get("reset_kv_before_inference", reset_context)):
+                try:
+                    llm.reset()
+                except Exception:
+                    pass
 
-                chat_kwargs = {"messages": messages, "max_tokens": int(max_tokens)}
-                if temperature is not None:
-                    chat_kwargs["temperature"] = temperature
-                if seed is not None and int(seed) >= 0:
-                    chat_kwargs["seed"] = int(seed)
-                chat_kwargs["stop"] = ["<|end_of_text|>", "<|endoftext|>", "User:", "###"]
+            max_tokens_for_inference = _compute_safe_max_tokens(pre_tokens_after)
+            if max_tokens_for_inference < requested_max_tokens:
+                print(
+                    f"\033[93m[PromptCrafter] Capping GGUF max_tokens for '{model_id}' "
+                    f"from {requested_max_tokens} to {max_tokens_for_inference} to preserve KV headroom.\033[0m"
+                )
 
-                content, timed_out = _run_chat_completion(chat_kwargs)
-                if timed_out:
-                    if content and allow_partial_on_timeout:
-                        print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
-                        return True, content
-                    return False, _timeout_error(content)
-                if not content:
-                    # Retry once without explicit stop tokens to avoid premature truncation.
-                    retry_kwargs = dict(chat_kwargs)
-                    retry_kwargs.pop("stop", None)
-                    content, timed_out = _run_chat_completion(retry_kwargs)
-                    if timed_out:
-                        if content and allow_partial_on_timeout:
-                            print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
-                            return True, content
-                        return False, _timeout_error(content)
+            trim_retry_count = 0
+            kv_retry_count = 0
+            while True:
+                try:
+                    content = ""
+                    if use_chat_api:
+                        if images_b64 and is_vision_model:
+                            user_content = [{"type": "text", "text": prompt_for_inference}]
+                            for img_b64 in images_b64:
+                                user_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}})
+                            messages = [{"role": "user", "content": user_content}]
+                        else:
+                            messages = [{"role": "user", "content": prompt_for_inference}]
 
-                # Some VLMs still behave better with plain completion in text-only mode.
-                if not content and is_vision_model and not images_b64:
-                    completion_kwargs = {
-                        "prompt": f"User:\n{prompt}\n\nAssistant:\n",
-                        "max_tokens": int(max_tokens),
-                        "stop": ["<|end_of_text|>", "<|endoftext|>", "User:", "###"],
-                    }
-                    if temperature is not None:
-                        completion_kwargs["temperature"] = temperature
-                    if seed is not None and int(seed) >= 0:
-                        completion_kwargs["seed"] = int(seed)
-                    content, timed_out = _run_completion(completion_kwargs)
-                    if timed_out:
-                        if content and allow_partial_on_timeout:
-                            print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
-                            return True, content
-                        return False, _timeout_error(content)
-            else:
-                inference_kwargs = {
-                    "prompt": prompt,
-                    "max_tokens": int(max_tokens),
-                    "stop": ["<|end_of_text|>", "User:", "###"],
-                }
-                if temperature is not None:
-                    inference_kwargs["temperature"] = temperature
-                if seed is not None and int(seed) >= 0:
-                    inference_kwargs["seed"] = int(seed)
+                        chat_kwargs = {"messages": messages, "max_tokens": int(max_tokens_for_inference)}
+                        if temperature is not None:
+                            chat_kwargs["temperature"] = temperature
+                        if seed is not None and int(seed) >= 0:
+                            chat_kwargs["seed"] = int(seed)
+                        chat_kwargs["stop"] = ["<|end_of_text|>", "<|endoftext|>", "User:", "###"]
 
-                content, timed_out = _run_completion(inference_kwargs)
-                if timed_out:
-                    if content and allow_partial_on_timeout:
-                        print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
-                        return True, content
-                    return False, _timeout_error(content)
+                        content, timed_out = _run_chat_completion(chat_kwargs)
+                        if timed_out:
+                            if content and allow_partial_on_timeout:
+                                print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
+                                return True, content
+                            return False, _timeout_error(content)
+                        if not content:
+                            # Retry once without explicit stop tokens to avoid premature truncation.
+                            retry_kwargs = dict(chat_kwargs)
+                            retry_kwargs.pop("stop", None)
+                            content, timed_out = _run_chat_completion(retry_kwargs)
+                            if timed_out:
+                                if content and allow_partial_on_timeout:
+                                    print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
+                                    return True, content
+                                return False, _timeout_error(content)
+
+                        # Some VLMs still behave better with plain completion in text-only mode.
+                        if not content and is_vision_model and not images_b64:
+                            completion_kwargs = {
+                                "prompt": f"User:\n{prompt_for_inference}\n\nAssistant:\n",
+                                "max_tokens": int(max_tokens_for_inference),
+                                "stop": ["<|end_of_text|>", "<|endoftext|>", "User:", "###"],
+                            }
+                            if temperature is not None:
+                                completion_kwargs["temperature"] = temperature
+                            if seed is not None and int(seed) >= 0:
+                                completion_kwargs["seed"] = int(seed)
+                            content, timed_out = _run_completion(completion_kwargs)
+                            if timed_out:
+                                if content and allow_partial_on_timeout:
+                                    print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
+                                    return True, content
+                                return False, _timeout_error(content)
+                    else:
+                        inference_kwargs = {
+                            "prompt": prompt_for_inference,
+                            "max_tokens": int(max_tokens_for_inference),
+                            "stop": ["<|end_of_text|>", "User:", "###"],
+                        }
+                        if temperature is not None:
+                            inference_kwargs["temperature"] = temperature
+                        if seed is not None and int(seed) >= 0:
+                            inference_kwargs["seed"] = int(seed)
+
+                        content, timed_out = _run_completion(inference_kwargs)
+                        if timed_out:
+                            if content and allow_partial_on_timeout:
+                                print(f"\033[93m[PromptCrafter] {_timeout_error(content)} Returning partial output as requested.\033[0m")
+                                return True, content
+                            return False, _timeout_error(content)
+                    break
+                except Exception as inference_error:
+                    if _looks_like_prompt_overflow(inference_error) and trim_retry_count < max_trim_retries:
+                        observed_prompt_tokens, observed_n_ctx = _extract_prompt_overflow_counts(inference_error)
+                        context_limit = max(256, int(observed_n_ctx or active_n_ctx))
+                        overflow_tokens = (
+                            max(0, int(observed_prompt_tokens) - context_limit)
+                            if observed_prompt_tokens is not None
+                            else 0
+                        )
+                        extra_reduction = overflow_tokens + (128 * (trim_retry_count + 1))
+                        trimmed_prompt, before_tokens, after_tokens, trimmed = _trim_prompt_for_context(
+                            prompt_for_inference,
+                            n_ctx_limit=context_limit,
+                            observed_prompt_tokens=observed_prompt_tokens,
+                            extra_reduction_tokens=extra_reduction,
+                        )
+                        if not trimmed or trimmed_prompt == prompt_for_inference:
+                            raise
+
+                        trim_retry_count += 1
+                        prompt_for_inference = trimmed_prompt
+                        max_tokens_for_inference = _compute_safe_max_tokens(after_tokens)
+                        print(
+                            f"\033[93m[PromptCrafter] Prompt exceeded GGUF context and was trimmed for retry "
+                            f"({before_tokens} -> {after_tokens} tokens, retry {trim_retry_count}/{max_trim_retries}).\033[0m"
+                        )
+                        continue
+
+                    if _looks_like_kv_slot_error(inference_error) and kv_retry_count < max_kv_retry_attempts:
+                        kv_retry_count += 1
+                        extra_reduction = 256 * kv_retry_count
+                        trimmed_prompt, before_tokens, after_tokens, trimmed = _trim_prompt_for_context(
+                            prompt_for_inference,
+                            n_ctx_limit=active_n_ctx,
+                            extra_reduction_tokens=extra_reduction,
+                        )
+                        if trimmed and trimmed_prompt != prompt_for_inference:
+                            prompt_for_inference = trimmed_prompt
+                        max_tokens_for_inference = min(
+                            max_tokens_for_inference,
+                            _compute_safe_max_tokens(after_tokens),
+                            max(64, max_tokens_for_inference // 2),
+                            int(kwargs.get("kv_retry_max_tokens", 256)),
+                        )
+                        try:
+                            llm.reset()
+                        except Exception:
+                            pass
+                        print(
+                            f"\033[93m[PromptCrafter] GGUF decode hit KV-slot limits; retrying with tighter budget "
+                            f"(retry {kv_retry_count}/{max_kv_retry_attempts}, max_tokens={max_tokens_for_inference}).\033[0m"
+                        )
+                        continue
+
+                    raise
 
             if not content:
                 return False, f"GGUF model '{model_id}' returned an empty response."
@@ -1089,13 +1361,16 @@ class HuggingFaceClient:
         parts = model_id.split('-')
         quantization_str = parts[-1].lower() if len(parts) > 1 and (parts[-1].lower().startswith("fp") or "bit" in parts[-1].lower()) else "none"
         base_model_name = model_id.replace(f"-{parts[-1]}", "") if quantization_str != "none" else model_id
+        hf_device = str(kwargs.get("hf_device", "auto")).strip().lower()
+        if hf_device not in {"auto", "cpu"}:
+            hf_device = "auto"
         
-        cache_key = (base_model_name, quantization_str)
+        cache_key = (base_model_name, quantization_str, hf_device)
 
         try:
             with self._cache_lock:
                 if cache_key not in self._model_cache:
-                    self._load_model(base_model_name, quantization_str, **kwargs)
+                    self._load_model(base_model_name, quantization_str, hf_device=hf_device, **kwargs)
                 
                 loaded_model_data = self._model_cache[cache_key]
                 model = loaded_model_data["model"]
@@ -1124,7 +1399,7 @@ class HuggingFaceClient:
                 self._model_cache.pop(cache_key, None)
             return False, error_message
 
-    def _load_model(self, base_model_name, quantization_str, **kwargs):
+    def _load_model(self, base_model_name, quantization_str, hf_device="auto", **kwargs):
         """Loads a HuggingFace model and processor into the cache."""
         # This method is now internal and protected by the parent query's lock
         # Unload any previously loaded HF model to save VRAM
@@ -1141,6 +1416,7 @@ class HuggingFaceClient:
         
         print(f"\033[94m[PromptCrafter] Loading HF model: {base_model_name} ({quantization_str}). This may take a moment...\033[0m")
         
+        hf_device = str(hf_device or "auto").strip().lower()
         # Determine quantization config
         quant_config = None
         if quantization_str in ("4bit", "fp4"):
@@ -1148,8 +1424,19 @@ class HuggingFaceClient:
         elif quantization_str == "8bit":
             quant_config = BitsAndBytesConfig(load_in_8bit=True)
 
-        device = comfy.model_management.get_torch_device()
-        dtype = torch.bfloat16 if comfy.model_management.supports_bf16(device) else torch.float16
+        if hf_device == "cpu" and quant_config is not None:
+            print("\033[93m[PromptCrafter] CPU mode selected for HF model. Ignoring 4/8-bit bitsandbytes quantization settings.\033[0m")
+            quant_config = None
+
+        if hf_device == "cpu":
+            dtype = torch.float32
+            device_map = "cpu"
+            attn_impl = "eager"
+        else:
+            device = comfy.model_management.get_torch_device()
+            dtype = torch.bfloat16 if comfy.model_management.supports_bf16(device) else torch.float16
+            device_map = "auto"
+            attn_impl = "flash_attention_2" if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else "eager"
 
         processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
         
@@ -1164,13 +1451,13 @@ class HuggingFaceClient:
         model = model_class.from_pretrained(
             model_path,
             torch_dtype=dtype,
-            device_map="auto",
+            device_map=device_map,
             quantization_config=quant_config,
             trust_remote_code=True,
-            attn_implementation="flash_attention_2" if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else "eager"
+            attn_implementation=attn_impl
         )
 
-        cache_key = (base_model_name, quantization_str)
+        cache_key = (base_model_name, quantization_str, hf_device)
         self._model_cache[cache_key] = {"processor": processor, "model": model, "architecture": architecture}
         print(f"\033[92m[PromptCrafter] HF model '{base_model_name}' loaded successfully. Architecture: {architecture}\033[0m")
 
@@ -1469,6 +1756,11 @@ def query_model_auto(model, prompt, images=None, max_tokens=None, **kwargs):
     from ..utils import pgfx_utils as utils
     images_b64 = [utils.encode_image(im) for im in images if im is not None] if images else []
     utils._debug_print(kwargs.get("debug_mode", False), kwargs.get("debug_title", "") or f"Query to {model}", prompt)
+    runtime_overrides = _LLM_RUNTIME_OVERRIDES.get({})
+    if "llm_device" not in kwargs:
+        kwargs["llm_device"] = runtime_overrides.get("llm_device", getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)"))
+    if "reset_context" not in kwargs:
+        kwargs["reset_context"] = runtime_overrides.get("reset_context", getattr(config, "DEFAULT_LLM_STATELESS", True))
     
     if max_tokens:
         kwargs['max_tokens'] = max_tokens
@@ -1497,6 +1789,17 @@ def query_model_auto(model, prompt, images=None, max_tokens=None, **kwargs):
     client = CLIENT_REGISTRY.get(provider.lower())
     if not client:
         return False, f"No client configured for provider '{provider}'. Check your installation and configuration."
+
+    llm_device_choice = _normalize_llm_device_choice(kwargs.get("llm_device"))
+    provider_key = provider.lower()
+    if provider_key == "gguf":
+        if llm_device_choice == "cpu":
+            kwargs.setdefault("n_gpu_layers", 0)
+            kwargs.setdefault("offload_kqv", False)
+            kwargs.setdefault("vision_projector_use_gpu", False)
+            kwargs.setdefault("unload_after_query", True)
+    elif provider_key == "hf":
+        kwargs.setdefault("hf_device", "cpu" if llm_device_choice == "cpu" else "auto")
 
     filtered_kwargs = _filter_kwargs(client.query, kwargs)
     return client.query(model_id, prompt, images_b64=images_b64, **filtered_kwargs)

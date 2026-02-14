@@ -94,6 +94,8 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
             "optional": {
                 "thinking_model": (combined_models, {"tooltip": "Optional: The 'thinker' model for the dual-model chain."} ),
                 "instruct_model": (combined_models, {"tooltip": "Optional: The 'instruct' model for the dual-model chain."} ),
+                "llm_device": (config.LLM_DEVICE_OPTIONS, {"default": config.DEFAULT_LLM_DEVICE, "tooltip": "Where local LLM inference should run. 'Default (GPU)' uses configured acceleration; 'CPU' forces CPU for local GGUF/HF models."}),
+                "reset_context": ("BOOLEAN", {"default": config.DEFAULT_LLM_STATELESS, "tooltip": "If enabled, resets local model context before each call to avoid carrying prior conversation state."}),
                 "style_tags": ("STRING", {"multiline": False, "default": ""}),
                 "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "Generic Video (Wan, etc.)"], {"default": "Generic (SD1.5, SD2.1)"}),
                 "generate_schedule": ("BOOLEAN", {"default": False}),
@@ -210,6 +212,8 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     temperature=initial_run_config.temperature,
                     seed=initial_run_config.seed,
                     timeout=initial_run_config.timeout,
+                    llm_device=initial_run_config.llm_device,
+                    reset_context=initial_run_config.reset_context,
                     debug_mode=kwargs.get('debug_mode', False),
                     debug_title="Dual-Model Stage 1: Thinker"
                 )
@@ -272,6 +276,8 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     temperature=0.1, # Low temperature for precise JSON output
                     seed=initial_run_config.seed,
                     timeout=initial_run_config.timeout,
+                    llm_device=initial_run_config.llm_device,
+                    reset_context=initial_run_config.reset_context,
                     debug_mode=kwargs.get('debug_mode', False),
                     debug_title="Dual-Model Stage 2: Instructor (JSON)"
                 )
@@ -722,6 +728,8 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     temperature=run_config.temperature,
                     seed=run_config.seed,
                     timeout=thinking_timeout,
+                    llm_device=run_config.llm_device,
+                    reset_context=run_config.reset_context,
                     debug_mode=kwargs.get('debug_mode', False),
                     debug_title="Dual-Model Stage 1: Thinker (Lyrics)"
                 )
@@ -765,6 +773,8 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     temperature=0.0, # Zero temp for strict formatting
                     seed=run_config.seed,
                     timeout=instruct_timeout,
+                    llm_device=run_config.llm_device,
+                    reset_context=run_config.reset_context,
                     debug_mode=kwargs.get('debug_mode', False),
                     debug_title="Dual-Model Stage 2: Instructor (Lyrics)"
                 )

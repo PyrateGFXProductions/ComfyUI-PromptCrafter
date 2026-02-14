@@ -21,6 +21,7 @@ try:
     from . import pgfx_creator_nodes as creator_nodes
     from . import pgfx_audio_srt as PromptCrafter_SRTCreator
     from ..core import pgfx_api_clients as api_clients
+    from ..core import pgfx_config as config
     from ..utils import pgfx_utils as utils
     from ..utils import pgfx_json_utils as json_utils
     from ..core.profiles import pgfx_sound_engineer_profiles as sound_engineer_profiles
@@ -39,6 +40,13 @@ except ImportError:
     print("[PromptCrafter Studio] Some dependencies are missing. Some features may be disabled.")
 except Exception as e:
     print(f"[PromptCrafter Studio] Unexpected error during node initialization: {e}")
+
+if "config" not in globals():
+    class _StudioConfigFallback:
+        LLM_DEVICE_OPTIONS = ["Default (GPU)", "CPU"]
+        DEFAULT_LLM_DEVICE = "Default (GPU)"
+        DEFAULT_LLM_STATELESS = True
+    config = _StudioConfigFallback()
 
     
 
@@ -90,6 +98,27 @@ def _get_sorted_models_by_preference(all_llm_models):
         return 2  # Lowest preference
 
     return sorted(all_llm_models, key=get_model_rank)
+
+def _studio_llm_runtime_optional_inputs():
+    device_options = getattr(config, "LLM_DEVICE_OPTIONS", ["Default (GPU)", "CPU"])
+    default_device = getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)")
+    default_reset = getattr(config, "DEFAULT_LLM_STATELESS", True)
+    return {
+        "llm_device": (
+            device_options,
+            {
+                "default": default_device,
+                "tooltip": "Where local LLM inference should run. 'Default (GPU)' uses configured acceleration; 'CPU' forces CPU for local GGUF/HF models.",
+            },
+        ),
+        "reset_context": (
+            "BOOLEAN",
+            {
+                "default": default_reset,
+                "tooltip": "If enabled, resets local model context before each call to avoid carrying prior conversation state.",
+            },
+        ),
+    }
 
 
 # --- THE PRODUCER ---
@@ -464,6 +493,7 @@ class PGFX_Studio_Screenwriter:
                 "whisper_model": (whisper_models,),
                 "raw_lyrics_override": ("STRING", {"multiline": True, "tooltip": "Optional: Provide a perfect script to force-align, overriding the internal transcription."}),
                 "debug_mode": ("BOOLEAN", {"default": False}),
+                **_studio_llm_runtime_optional_inputs(),
             }
         }
 
@@ -472,7 +502,19 @@ class PGFX_Studio_Screenwriter:
     FUNCTION = "write_script"
     CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
-    def write_script(self, TIMING_MAP, audio, profile, thinking_model, instruct_model, whisper_model="large-v3", raw_lyrics_override="", debug_mode=False):
+    def write_script(
+        self,
+        TIMING_MAP,
+        audio,
+        profile,
+        thinking_model,
+        instruct_model,
+        whisper_model="large-v3",
+        raw_lyrics_override="",
+        debug_mode=False,
+        llm_device=getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)"),
+        reset_context=getattr(config, "DEFAULT_LLM_STATELESS", True),
+    ):
         # --- Profile Integration ---
         if profile != "None (Manual Input)":
             profile_settings = screenwriter_profiles.NAMED_SCREENWRITER_PROFILES.get(profile, {})
@@ -494,14 +536,20 @@ class PGFX_Studio_Screenwriter:
 
         if whisper_model != "disabled":
             srt_result = srt_node.execute(
-                audio, 
-                whisper_model, 
-                "en",
-                enable_ai_correction,
-                instruct_model, # Use the 'instruct' model for correction, as intended by the SRT Creator
-                raw_lyrics_override,
-                debug_mode,
-                False  # enable_translation
+                audio=audio,
+                whisper_model=whisper_model,
+                language="en",
+                vad_method="silero",
+                enable_ai_correction=enable_ai_correction,
+                correction_model=instruct_model,
+                enable_translation=False,
+                debug_mode=debug_mode,
+                segment_duration_seconds=4.0,
+                enable_ai_text_refinement=False,
+                strict_speaker_detection=False,
+                ground_truth_script=raw_lyrics_override,
+                llm_device=llm_device,
+                reset_context=reset_context,
             )
             timed_segments_json = srt_result[3]
         else: # If whisper is disabled, we can't transcribe, so we can't get timed segments.
@@ -606,6 +654,7 @@ class PGFX_Studio_CreativeDirector:
             },
             "optional": {
                 "reference_image": ("IMAGE",),
+                **_studio_llm_runtime_optional_inputs(),
             }
         }
 
@@ -632,7 +681,9 @@ class PGFX_Studio_CreativeDirector:
         }
 
     def develop_concept(self, SCREENPLAY, TIMING_MAP, thinking_model, instruct_model,
-                   character_override, debug_mode, gguf_gpu_layers=-1, reference_image=None):
+                   character_override, debug_mode, gguf_gpu_layers=-1, reference_image=None,
+                   llm_device=getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)"),
+                   reset_context=getattr(config, "DEFAULT_LLM_STATELESS", True)):
         # Add input validation
         if not SCREENPLAY or not SCREENPLAY.get("data"):
             return ({}, "[ERROR] SCREENPLAY is empty or invalid.")
@@ -669,7 +720,9 @@ class PGFX_Studio_CreativeDirector:
             instruct_prompt=theme_instruct_prompt, instruct_model=instruct_model,
             images=images_to_pass, debug_mode=debug_mode,
             expect_json=False,
-            n_gpu_layers=gguf_gpu_layers
+            n_gpu_layers=gguf_gpu_layers,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
         if not ok_theme: return ({}, f"[ERROR] Failed to generate global theme: {theme_result}")
         global_theme = theme_result
@@ -717,7 +770,9 @@ class PGFX_Studio_CreativeDirector:
                     images=images_to_pass,
                     debug_mode=debug_mode,
                     n_gpu_layers=gguf_gpu_layers,
-                    timeout=180  # Increased timeout
+                    timeout=180,  # Increased timeout
+                    llm_device=llm_device,
+                    reset_context=reset_context,
                 )
 
                 if ok_vrg and isinstance(vrg_result, dict):
@@ -805,7 +860,9 @@ class PGFX_Studio_Director:
                 "VISUAL_BRIEF": ("DICT",), # Now takes the brief from the Creative Director
                 "director_profile_override": (profile_options, {"default": "None (Manual Input)"}),
                 "manual_character_override": ("STRING", {"multiline": True, "default": ""}),
-                "manual_styles_override": ("STRING", {"multiline": True, "default": ""}),            }
+                "manual_styles_override": ("STRING", {"multiline": True, "default": ""}),
+                **_studio_llm_runtime_optional_inputs(),
+            }
         }
     RETURN_TYPES = ("DICT", "STRING")
     RETURN_NAMES = ("SHOT_LIST", "reasoning_log")
@@ -838,7 +895,7 @@ class PGFX_Studio_Director:
                 edit_plan[i]['transition'] = True
         return edit_plan
 
-    def _get_edit_plan(self, screenplay_data, styles, thinking_model, instruct_model, debug_mode):
+    def _get_edit_plan(self, screenplay_data, styles, thinking_model, instruct_model, debug_mode, llm_device, reset_context):
         """
         First LLM call (The Planner): Creates a high-level plan for which style to use for which scene.
         """
@@ -919,7 +976,9 @@ class PGFX_Studio_Director:
             thinking_model=thinking_model,
             instruct_prompt=instruct_prompt_template,
             instruct_model=instruct_model,
-            debug_mode=debug_mode
+            debug_mode=debug_mode,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
 
         if not ok:
@@ -972,7 +1031,7 @@ class PGFX_Studio_Director:
             prompt = prompt[:300] + "..."
         return prompt
 
-    def _generate_shot_prompt(self, scene_data, assigned_style, character_description, thinking_model, instruct_model, debug_mode):
+    def _generate_shot_prompt(self, scene_data, assigned_style, character_description, thinking_model, instruct_model, debug_mode, llm_device, reset_context):
         """
         Second LLM call (The Shot Director): Generates a detailed prompt for a single scene.
         The LLM is now responsible for analyzing the lyric internally.
@@ -1001,7 +1060,15 @@ class PGFX_Studio_Director:
             task = f"Create a cinematic B-roll or transition shot that conveys the mood of '{assigned_style}'. Use abstract visuals, lighting effects, or symbolic imagery that matches the song's atmosphere. Avoid literal interpretations of lyrics."
             analysis_instruction = "Think about the emotional tone of the music. What colors, textures, and camera movements would best represent this mood?"
         else:
-            visual_metaphor = self._enhance_visual_metaphors(sanitized_lyric_text, assigned_style, thinking_model, instruct_model, debug_mode)
+            visual_metaphor = self._enhance_visual_metaphors(
+                sanitized_lyric_text,
+                assigned_style,
+                thinking_model,
+                instruct_model,
+                debug_mode,
+                llm_device,
+                reset_context,
+            )
             metaphor_guidance = ""
             if visual_metaphor:
                 metaphor_guidance = f"Consider this visual metaphor: {visual_metaphor}."
@@ -1037,7 +1104,9 @@ class PGFX_Studio_Director:
             thinking_model=thinking_model,
             instruct_prompt=instruct_prompt,
             instruct_model=instruct_model,
-            debug_mode=debug_mode
+            debug_mode=debug_mode,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
 
         if not ok:
@@ -1062,7 +1131,7 @@ class PGFX_Studio_Director:
         
         return pos_prompt, neg_prompt
 
-    def _enhance_visual_metaphors(self, lyric_text, assigned_style, thinking_model, instruct_model, debug_mode):
+    def _enhance_visual_metaphors(self, lyric_text, assigned_style, thinking_model, instruct_model, debug_mode, llm_device, reset_context):
         """Generate stronger visual metaphors for abstract lyrics"""
         thinking_prompt = f"""
         Analyze this lyric: "{lyric_text}"
@@ -1101,7 +1170,9 @@ class PGFX_Studio_Director:
             thinking_model=thinking_model,
             instruct_prompt=instruct_prompt,
             instruct_model=instruct_model,
-            debug_mode=debug_mode
+            debug_mode=debug_mode,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
 
         if not ok:
@@ -1119,7 +1190,7 @@ class PGFX_Studio_Director:
         
         return None
 
-    def direct_scenes(self, SCREENPLAY, thinking_model, instruct_model, use_prompt_template, debug_mode, VISUAL_BRIEF=None, director_profile_override="None (Manual Input)", manual_character_override="", manual_styles_override=""):
+    def direct_scenes(self, SCREENPLAY, thinking_model, instruct_model, use_prompt_template, debug_mode, VISUAL_BRIEF=None, director_profile_override="None (Manual Input)", manual_character_override="", manual_styles_override="", llm_device=getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)"), reset_context=getattr(config, "DEFAULT_LLM_STATELESS", True)):
         # --- FIX: ROBUST CACHING ---
         # Create a unique hash of the inputs that matter
         input_str = f"{str(SCREENPLAY)}{str(VISUAL_BRIEF)}{director_profile_override}{manual_styles_override}{manual_character_override}{use_prompt_template}"
@@ -1164,7 +1235,15 @@ class PGFX_Studio_Director:
             return ({"data": []}, "[ERROR] No visual styles provided.")
 
         # Stage 1: Get the high-level edit plan. This is still needed to assign styles.
-        edit_plan, plan_reasoning = self._get_edit_plan(screenplay_data, styles, thinking_model, instruct_model, debug_mode)
+        edit_plan, plan_reasoning = self._get_edit_plan(
+            screenplay_data,
+            styles,
+            thinking_model,
+            instruct_model,
+            debug_mode,
+            llm_device,
+            reset_context,
+        )
         full_reasoning_log += "--- EDIT PLAN REASONING ---\n" + plan_reasoning + "\n\n"
 
         # Validate the style assignments
@@ -1206,7 +1285,16 @@ class PGFX_Studio_Director:
                 neg_prompt = "text, watermark, ugly, blurry"
             else:
                 # Generate the core prompt for this shot using an LLM.
-                pos_prompt, neg_prompt = self._generate_shot_prompt(scene_data, assigned_style, final_char_desc, thinking_model, instruct_model, debug_mode)
+                pos_prompt, neg_prompt = self._generate_shot_prompt(
+                    scene_data,
+                    assigned_style,
+                    final_char_desc,
+                    thinking_model,
+                    instruct_model,
+                    debug_mode,
+                    llm_device,
+                    reset_context,
+                )
 
             shot_list.append({
                 "index": index,
@@ -1540,14 +1628,17 @@ class PGFX_Studio_ScriptSupervisor:
                 "thinking_model": (all_llm_models, {"default": thinking_default}),
                 "instruct_model": (all_llm_models, {"default": instruct_default}),
                 "debug_mode": ("BOOLEAN", {"default": False}),
-            }
+            },
+            "optional": {
+                **_studio_llm_runtime_optional_inputs(),
+            },
         }
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("continuity_report",)
     FUNCTION = "review"
     CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
-    def review(self, SHOT_LIST, SCREENPLAY, thinking_model, instruct_model, debug_mode=False):
+    def review(self, SHOT_LIST, SCREENPLAY, thinking_model, instruct_model, debug_mode=False, llm_device=getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)"), reset_context=getattr(config, "DEFAULT_LLM_STATELESS", True)):
         shot_list_data = SHOT_LIST.get("data", [])
         screenplay_data = SCREENPLAY.get("data", [])
 
@@ -1610,6 +1701,8 @@ class PGFX_Studio_ScriptSupervisor:
             thinking_prompt=thinking_prompt, thinking_model=thinking_model,
             instruct_prompt=instruct_prompt, instruct_model=instruct_model,
             debug_mode=debug_mode,
+            llm_device=llm_device,
+            reset_context=reset_context,
         )
 
         if not ok:

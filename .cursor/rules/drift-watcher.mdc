@@ -1,0 +1,32 @@
+---
+description: Drift Watcher — prevents AI from diverging from project patterns
+alwaysApply: true
+priority: 95
+---
+
+# Drift Watcher
+
+## What is AI Drift?
+AI drift occurs when generated code slowly diverges from your project's established patterns,
+naming conventions, architecture, and style — eventually creating an inconsistent codebase.
+
+## Auth Patterns to Follow (0 rules)
+- No auth rules detected — will learn from scans
+
+## API Contract Compliance (0 contracts)
+- No contracts detected yet
+
+## Drift Prevention Rules
+1. **Naming**: Match existing naming conventions (check neighboring files)
+2. **Patterns**: Use the same patterns as existing code (hooks, services, utils)
+3. **Imports**: Import from the same locations as other files in the same directory
+4. **Error Handling**: Use the same error handling pattern as the rest of the codebase
+5. **State Management**: Use the same state management approach (don't mix Redux and Zustand)
+
+## Self-Check Before Committing
+- Does this code look like it belongs in this codebase?
+- Would a reviewer think a different developer wrote this vs the rest?
+- Am I introducing a new pattern when an existing one would work?
+
+---
+<!-- vibecheck:context-engine:v1 -->
