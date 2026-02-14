@@ -30,15 +30,26 @@ DEFAULT_MAX_TOKENS = 4096
 
 
 # --- Path and Global State Configuration ---
-# This assumes the custom_nodes folder is directly under ComfyUI
-COMFYUI_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-LLM_MODEL_DIR = os.path.join(COMFYUI_ROOT_DIR, "models", "LLM")
-QWEN_MODEL_DIR = os.path.join(COMFYUI_ROOT_DIR, "models", "Qwen")
+# --- Path and Global State Configuration ---
+try:
+    import folder_paths
+    COMFYUI_ROOT_DIR = folder_paths.base_path
+    MODELS_DIR = folder_paths.models_dir
+    TEMP_DIR = folder_paths.get_temp_directory()
+except ImportError:
+    # Fallback for standalone/testing usage (non-ComfyUI environment)
+    COMFYUI_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    MODELS_DIR = os.path.join(COMFYUI_ROOT_DIR, "models")
+    TEMP_DIR = os.path.join(COMFYUI_ROOT_DIR, "temp")
+
+LLM_MODEL_DIR = os.path.join(MODELS_DIR, "LLM")
+QWEN_MODEL_DIR = os.path.join(MODELS_DIR, "Qwen")
+
 # List of directories to scan for HuggingFace models
 HF_MODEL_DIRS = [LLM_MODEL_DIR, QWEN_MODEL_DIR]
 
 # Initialize the disk cache directly here to prevent race conditions.
-cache_dir = os.path.join(COMFYUI_ROOT_DIR, "temp", "comfyui-promptcrafter_cache")
+cache_dir = os.path.join(TEMP_DIR, "comfyui-promptcrafter_cache")
 CACHE = cache.DiskCache(cache_dir=cache_dir, max_size_gb=2.0)
 SHARED_SESSION = None
 

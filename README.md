@@ -18,6 +18,21 @@ Compatibility note: many internal node IDs still use the `PromptCrafter_` prefix
 
 ---
 
+<<<<<<< HEAD
+=======
+## 🧪 Example Workflows
+
+Functional, end-to-end workflow examples are included in `workflows/`. See `workflows/README.md` for details and dependencies.
+
+- `PGFX_VisualCreator_SD15_Image.json`
+- `PGFX_LyricsCreator_Schedule_Export.json`
+- `PGFX_QnA_To_Text.json`
+- `PGFX_Captioner_Single_Image.json`
+- `PGFX_SRT_Subtitle_Burn.json`
+
+---
+
+>>>>>>> origin/main
 ## 🧭 Menu Categories
 
 The nodes are organized under the PGFX menu in ComfyUI:
@@ -121,6 +136,7 @@ After editing profiles, restart ComfyUI to refresh dropdowns.
 - **GGUF or HF issues**: Verify your Python environment has the required libraries installed.
 - **Stale outputs**: Run `🧹 Cache Utility` to clear internal caches.
 - **Web search disabled**: Enable `enable_web_search` in `💬 QnA` when needed.
+<<<<<<< HEAD
 
 ---
 
@@ -139,6 +155,8 @@ Notes:
 
 - If logs show `n_gpu_layers=0`, your vision GGUF is CPU-dominant and will be much slower.
 - If ComfyUI is killed while loading downstream generation models, keep `balanced`/`safe` and do not force `PGFX_GGUF_UNLOAD_VISION_AFTER_QUERY=0`.
+=======
+>>>>>>> origin/main
 
 ---
 

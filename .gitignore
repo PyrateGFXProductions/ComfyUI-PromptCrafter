@@ -17,6 +17,7 @@ build/
 # Local History/Backup files
 .history/
 
+<<<<<<< HEAD
 # Logs and Temporary Files
 debug.log
 js/debug.log 
@@ -24,3 +25,15 @@ ComfyGuard/.venv/
 ComfyGuard/backups/
 ComfyGuard/test_conflict.txt
 ARCHITECTURE.md
+=======
+# Logs and Temporary Files
+debug.log
+js/debug.log 
+ComfyGuard/.venv/
+ComfyGuard/backups/
+ComfyGuard/test_conflict.txt
+agent.context.md
+agent.md
+agent.rules.md
+ARCHITECTURE.md
+>>>>>>> origin/main
