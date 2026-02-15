@@ -39,7 +39,7 @@ export const loadScript = (
   })
 }
 
-const base_path = 'custom_nodes/ComfyUI-PromptCrafter/';
+const base_path = 'custom_nodes/ComfyUI-PromptCrafter/js/';
 
 loadScript(`/${base_path}marked.min.js`).catch((e) => {
   console.error('Failed to load marked.min.js:', e)
