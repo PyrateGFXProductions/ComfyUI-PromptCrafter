@@ -33,6 +33,7 @@ export const loadScript = (
 
       document.body.appendChild(scriptEle)
     } catch (error) {
+      console.error('loadScript error:', error)
       reject(error)
     }
   })
@@ -41,10 +42,12 @@ export const loadScript = (
 const base_path = 'custom_nodes/ComfyUI-PromptCrafter/';
 
 loadScript(`/${base_path}marked.min.js`).catch((e) => {
-  console.log(e)
+  console.error('Failed to load marked.min.js:', e)
+  alert('Failed to load marked.min.js. Some features may not work.')
 })
 loadScript(`/${base_path}purify.min.js`).catch((e) => {
-  console.log(e)
+  console.error('Failed to load purify.min.js:', e)
+  alert('Failed to load purify.min.js. Some features may not work.')
 })
 
 app.registerExtension({
