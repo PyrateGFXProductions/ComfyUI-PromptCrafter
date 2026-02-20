@@ -21,3 +21,10 @@
 - If output count depends on input values, implement dynamic outputs (`IS_DYNAMIC`, `get_output_types`, `get_output_names`).
 - If a node writes files, use a project-scoped folder and write metadata for reproducibility.
 - If auto-queueing or stateful indexing is used, provide explicit reset or override controls.
+- Keep PGFX Studio generation local-only; do not require platform API execution paths.
+- For Studio Director planning, require full `scene_assignments` coverage for every screenplay index.
+- If Director plan is incomplete after repair attempts, fail closed instead of fabricating fallback scene plans.
+- Do not synthesize placeholder shot entries for missing scene indices in adapters.
+- Abort generation when prompt/timing handoff is incomplete (missing shot, missing timing, or empty prompt).
+- Preserve reference-image identity details through CreativeDirector -> Director -> Cinematographer handoff.
+- Keep Auto-Queue bounded by declared scene count; no unbounded or exponential queue growth.

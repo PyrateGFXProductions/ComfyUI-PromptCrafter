@@ -259,7 +259,7 @@ class PromptCrafter_SRTCreator:
     def get_whisper_models(cls):
         """Scans the ComfyUI models directory recursively for faster-whisper models."""
         # Default models that can be downloaded by faster-whisper directly
-        default_models = ["tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en", "large-v1", "large-v2", "large-v3", "distil-large-v2"]
+        default_models = ["disabled", "tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en", "large-v1", "large-v2", "large-v3", "distil-large-v2"]
         
         module_dir = os.path.dirname(os.path.abspath(__file__))
         comfy_root = os.path.abspath(os.path.join(module_dir, '..', '..', '..'))
@@ -288,10 +288,20 @@ class PromptCrafter_SRTCreator:
 
     @classmethod
     def INPUT_TYPES(cls):
+        whisper_models = cls.get_whisper_models()
+        whisper_default = "large-v3" if "large-v3" in whisper_models else whisper_models[0]
+        try:
+            import importlib.util
+            if importlib.util.find_spec("whisperx") is None and "disabled" in whisper_models:
+                whisper_default = "disabled"
+        except Exception:
+            if "disabled" in whisper_models:
+                whisper_default = "disabled"
+
         return {
             "required": {
                 "audio": ("AUDIO",),
-                "whisper_model": (cls.get_whisper_models(), {"default": "large-v3"}),
+                "whisper_model": (whisper_models, {"default": whisper_default}),
                 "language": ("STRING", {"default": "en", "tooltip": "Language code for transcription (e.g., 'en', 'es', 'ja')."}),
                 "vad_method": (["silero", "pyannote"], {"default": "silero", "tooltip": "Voice activity detection backend. Pyannote requires compatible pyannote/speechbrain/torchaudio."}),
                 "enable_ai_correction": ("BOOLEAN", {"default": False}),
@@ -550,14 +560,31 @@ class PromptCrafter_SRTCreator:
     def execute(self, audio, whisper_model, language, vad_method, enable_ai_correction, correction_model, 
             enable_translation, debug_mode, segment_duration_seconds, enable_ai_text_refinement, strict_speaker_detection,
             ground_truth_script="", llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
-        whisperx = _get_whisperx(debug_mode)
-
-        if not isinstance(audio, dict) or "waveform" not in audio:
-
-            raise ValueError("Invalid AUDIO input. Expected a dictionary with 'waveform' and 'sample_rate'.")
-
         def _empty_outputs(msg):
             return ("", "", "", "", "", "", {"data": []}, {"characters": {}, "timeline": []}, msg)
+
+        if whisper_model == "disabled":
+            return _empty_outputs("Whisper model disabled by user.")
+
+        try:
+            whisperx = _get_whisperx(debug_mode)
+        except ModuleNotFoundError as e:
+            msg = (
+                "WhisperX dependency missing. Install whisperx (plus its compatible deps) "
+                "or run Screenwriter with whisper disabled and provide raw_lyrics_override. "
+                f"Details: {e}"
+            )
+            if debug_mode:
+                print(f"[SRTCreator] {msg}")
+            return _empty_outputs(msg)
+        except Exception as e:
+            msg = f"WhisperX initialization error: {e}"
+            if debug_mode:
+                print(f"[SRTCreator] {msg}")
+            return _empty_outputs(msg)
+
+        if not isinstance(audio, dict) or "waveform" not in audio:
+            raise ValueError("Invalid AUDIO input. Expected a dictionary with 'waveform' and 'sample_rate'.")
 
         # --- Prepare Audio ---
         waveform_tensor = audio["waveform"].float()

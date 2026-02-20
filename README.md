@@ -12,8 +12,9 @@ Compatibility note: many internal node IDs still use the `PromptCrafter_` prefix
 - **Creator Nodes**: High‑quality prompt generation for images, videos, and lyrics with style profiles and dual‑model workflows.
 - **Audio & Timing**: Audio splitters, transcription, and SRT generation to drive consistent scene timing.
 - **Video Tools**: Subtitle burning for frame sequences and video pipelines.
+- **LTX-2 Local Workflow**: Local-only LTX-2 manifest + render script generation from PromptCrafter schedules.
 - **Think/Instruct Chains**: Deterministic paired nodes for structured reasoning and strict output control.
-- **Utilities**: QnA, Captioner, File Organizer, Formatter, Save Text, Cache Utility, Prompt Chunker, Image Switcher.
+- **Utilities**: QnA, Captioner, File Organizer, Formatter, Save Text, Cache Utility, Prompt Chunker, Image Switcher, and local LTX-2 pipeline script builder.
 - **ComfyGuard**: A bundled dependency conflict detector for safer installs.
 
 ---
@@ -24,6 +25,11 @@ Functional, end-to-end workflow examples are included in `workflows/`. See `work
 
 - `PGFX_VisualCreator_SD15_Image.json`
 - `PGFX_LyricsCreator_Schedule_Export.json`
+- `PGFX_LTX2_Local_MusicVideo_Starter.json`
+- `PGFX_LTX2_GGUF_T2V_MusicVideo_Starter.json`
+- `PGFX_LTX2_TransformerOnly_T2V_MusicVideo_Starter.json`
+- `PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json`
+- `PGFX_Studio_LTX2_TransformerOnly_Local_EndToEnd.json`
 - `PGFX_QnA_To_Text.json`
 - `PGFX_Captioner_Single_Image.json`
 - `PGFX_SRT_Subtitle_Burn.json`
@@ -77,6 +83,8 @@ The suite supports multiple local and API‑style backends. You choose models fr
 - Ollama
 - OpenAI‑compatible endpoints
 
+Creator nodes also include a `local_only_models` switch (enabled by default) to block non-local provider selections.
+
 ---
 
 ## 🧩 Node Sets (Short Reference)
@@ -103,6 +111,7 @@ The suite supports multiple local and API‑style backends. You choose models fr
 - `🗂️ File Organizer` — rule‑based media sorting
 - `📝 Text Formatter` — reusable templated text
 - `💾 Save Text File` — structured file output
+- `🎬 LTX-2 Local Pipeline Builder` — build local-only LTX-2 manifest + shell commands from schedule JSON
 - `🧹 Cache Utility` — reset internal caches
 - `🧩 Prompt Chunker`, `🔀 Image Switcher`, `🧰 Batch Prompt Processor`, `⏱️ Keyframe Prompt Scheduler`
 
@@ -146,6 +155,7 @@ PromptCrafter now includes built-in GGUF auto-tuning, so users do not need a cus
   - `balanced` (default): moderate speed with safer memory behavior.
   - `speed`: keeps more on GPU and may keep vision models loaded longer.
 - Manual overrides (advanced): `PGFX_VISION_GGUF_N_GPU_LAYERS`, `PGFX_VISION_GGUF_N_BATCH`, `PGFX_VISION_GGUF_N_UBATCH`, `PGFX_GGUF_UNLOAD_VISION_AFTER_QUERY`.
+- Qwen3-VL grounding: `PGFX_QWEN_VL_IMAGE_MIN_TOKENS=1024` (or higher) to avoid low-token grounding warnings.
 
 Notes:
 

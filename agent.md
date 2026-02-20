@@ -221,7 +221,7 @@ When modifying or reviewing nodes:
 - Validate upstream/downstream compatibility.
 - Ensure intended pins auto-connect in ComfyUI.
 - Fail fast on malformed `DICT` contracts.
-- Prefer explicit warnings over silent fallbacks.
+- Prefer explicit errors over silent fallbacks on critical planning/render handoff nodes.
 
 ## Identity Semantics
 
@@ -246,3 +246,22 @@ For speaker/character/identity semantics:
 3. Compare with upstream/downstream consumers.
 4. Normalize contracts or introduce adapters.
 5. Validate graph-level cohesion and state flow.
+
+## LTX-2 Local Generation Rules (Non-Negotiable)
+
+- Local-only generation path: no dependency on remote platform APIs for planning or rendering.
+- Target modern LTX-2 workflows and model families; do not introduce legacy LTXV-13B pipeline assumptions.
+- For Studio music-video workflows, `Director` planning must cover every scene index in `SCREENPLAY`.
+- If plan parsing fails or coverage is incomplete, run a repair pass; if still incomplete, fail closed.
+- `ShotListAdapter` must not synthesize placeholder shots for missing scene indices.
+- `Cinematographer` must halt on missing shot/timing pairs or empty prompts.
+- Reference-image semantics from `CreativeDirector` must propagate downstream into scene prompts each run.
+- Auto-queue behavior must remain finite and bounded by `SCENE_COUNT`.
+- Scene audio/video parity is required: frame counts must be aligned to chunk audio duration at project FPS.
+
+## Prompt Fidelity Rules
+
+- Do not substitute generic templates when LLM planning/prompting is enabled unless explicitly requested.
+- Preserve subject identity continuity from the provided reference image and character brief.
+- Keep prompts scene-specific: include lyric/instrumental context, environment, shot intent, and motion intent.
+- Reject empty or malformed prompt payloads before rendering.

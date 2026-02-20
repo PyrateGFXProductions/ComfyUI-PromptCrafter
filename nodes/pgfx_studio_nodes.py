@@ -101,7 +101,8 @@ def _get_sorted_models_by_preference(all_llm_models):
 
 def _studio_llm_runtime_optional_inputs():
     device_options = getattr(config, "LLM_DEVICE_OPTIONS", ["Default (GPU)", "CPU"])
-    default_device = getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)")
+    # Studio defaults are GPU-first to avoid accidental CPU fallback on long video planning jobs.
+    default_device = "Default (GPU)"
     default_reset = getattr(config, "DEFAULT_LLM_STATELESS", True)
     return {
         "llm_device": (
@@ -390,6 +391,11 @@ class PGFX_Studio_SoundEngineer:
         timing_map_data = []
         all_chunk_frames = []
         num_chunks = (total_samples + chunk_samples - 1) // chunk_samples
+        try:
+            audio_duration = float(total_samples) / float(sample_rate)
+            print(f"[Sound Engineer] Audio duration: {audio_duration:.2f}s -> {num_chunks} scene(s) at {segment_duration:.2f}s each.")
+        except Exception:
+            pass
         
         last_known_emotion = "neutral" # Initialize last known emotion
 
@@ -454,10 +460,21 @@ class PGFX_Studio_SoundEngineer:
 
 # --- THE SCREENWRITER ---
 class PGFX_Studio_Screenwriter:
+    _cached_result = None
+
     @classmethod
     def INPUT_TYPES(cls):
         try:
             whisper_models = PromptCrafter_SRTCreator.PromptCrafter_SRTCreator.get_whisper_models()
+            whisper_default = "large-v3" if "large-v3" in whisper_models else whisper_models[0]
+            try:
+                import importlib.util
+                if importlib.util.find_spec("whisperx") is None and "disabled" in whisper_models:
+                    whisper_default = "disabled"
+            except Exception:
+                if "disabled" in whisper_models:
+                    whisper_default = "disabled"
+
             profile_options = screenwriter_profiles.get_profile_options()
             all_llm_models = creator_nodes.get_combined_models()
             if not all_llm_models:
@@ -476,6 +493,7 @@ class PGFX_Studio_Screenwriter:
 
         except Exception:
             whisper_models = ["disabled"]
+            whisper_default = "disabled"
             profile_options = ["None (Manual Input)"]
             all_llm_models = ["disabled"]
             thinking_default = "disabled"
@@ -490,7 +508,7 @@ class PGFX_Studio_Screenwriter:
                 "instruct_model": (all_llm_models, {"default": instruct_default}),
             },
             "optional": {
-                "whisper_model": (whisper_models,),
+                "whisper_model": (whisper_models, {"default": whisper_default}),
                 "raw_lyrics_override": ("STRING", {"multiline": True, "tooltip": "Optional: Provide a perfect script to force-align, overriding the internal transcription."}),
                 "debug_mode": ("BOOLEAN", {"default": False}),
                 **_studio_llm_runtime_optional_inputs(),
@@ -501,6 +519,123 @@ class PGFX_Studio_Screenwriter:
     RETURN_NAMES = ("SCREENPLAY", "AUDIO_META")
     FUNCTION = "write_script"
     CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
+
+    def _build_fallback_word_segments_from_override(self, raw_lyrics_override, timing_data):
+        raw = "" if raw_lyrics_override is None else str(raw_lyrics_override).strip()
+        if not raw or not timing_data:
+            return []
+
+        lyric_lines = [line.strip() for line in raw.splitlines() if line.strip()]
+        if not lyric_lines:
+            compact = re.sub(r"\s+", " ", raw).strip()
+            if compact:
+                lyric_lines = [compact]
+        if not lyric_lines:
+            return []
+
+        scene_count = max(1, len(timing_data))
+        word_segments = []
+
+        for scene_pos, scene in enumerate(timing_data):
+            start_t = float(scene.get("start", 0.0))
+            end_t = float(scene.get("end", start_t))
+            if end_t <= start_t:
+                continue
+
+            line_idx = min(int((scene_pos / scene_count) * len(lyric_lines)), len(lyric_lines) - 1)
+            line_text = lyric_lines[line_idx]
+            words = [w for w in re.findall(r"\S+", line_text) if w]
+            if not words:
+                continue
+
+            step = (end_t - start_t) / len(words)
+            for i, word in enumerate(words):
+                w_start = start_t + (i * step)
+                w_end = min(end_t, w_start + (step * 0.92))
+                word_segments.append({
+                    "word": word,
+                    "start": w_start,
+                    "end": w_end,
+                })
+
+        return word_segments
+
+    def _audio_signature(self, audio):
+        if not isinstance(audio, dict):
+            return "no-audio"
+        sample_rate = int(audio.get("sample_rate", 0) or 0)
+        waveform = audio.get("waveform")
+        if not torch.is_tensor(waveform):
+            return f"{sample_rate}:no-waveform"
+
+        shape = tuple(int(x) for x in waveform.shape)
+        total = int(waveform.numel())
+        if total <= 0:
+            return f"{sample_rate}:{shape}:empty"
+
+        try:
+            flat = waveform.detach().reshape(-1)
+            step = max(1, total // 32)
+            sampled = flat[::step][:32].float().cpu().tolist()
+            digest_src = ",".join(f"{v:.6f}" for v in sampled)
+            checksum = hashlib.md5(digest_src.encode("utf-8")).hexdigest()
+        except Exception:
+            checksum = hashlib.md5(str(shape).encode("utf-8")).hexdigest()
+        return f"{sample_rate}:{shape}:{checksum}"
+
+    def _timing_signature(self, timing_data):
+        signature = []
+        if not isinstance(timing_data, list):
+            return signature
+        for entry in timing_data:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                idx = int(entry.get("index", -1))
+            except Exception:
+                idx = -1
+            try:
+                start_t = round(float(entry.get("start", 0.0)), 3)
+            except Exception:
+                start_t = 0.0
+            try:
+                end_t = round(float(entry.get("end", 0.0)), 3)
+            except Exception:
+                end_t = 0.0
+            try:
+                frames = int(entry.get("num_frames", 0))
+            except Exception:
+                frames = 0
+            signature.append({
+                "index": idx,
+                "start": start_t,
+                "end": end_t,
+                "contains_speech": bool(entry.get("contains_speech", True)),
+                "num_frames": frames,
+            })
+        return signature
+
+    def _clone_screenplay(self, screenplay_data):
+        if not isinstance(screenplay_data, list):
+            return []
+        return [dict(s) for s in screenplay_data if isinstance(s, dict)]
+
+    def _clone_audio_meta(self, audio_meta):
+        if not isinstance(audio_meta, dict):
+            return {}
+        out = dict(audio_meta)
+        align = out.get("alignment_result", {})
+        if isinstance(align, dict):
+            segments = align.get("segments", [])
+            if isinstance(segments, list):
+                out["alignment_result"] = {"segments": [dict(s) for s in segments if isinstance(s, dict)]}
+        if isinstance(out.get("word_segments"), list):
+            out["word_segments"] = [dict(w) for w in out["word_segments"] if isinstance(w, dict)]
+        if isinstance(out.get("durations"), list):
+            out["durations"] = list(out["durations"])
+        if isinstance(out.get("instrumental_cues"), list):
+            out["instrumental_cues"] = list(out["instrumental_cues"])
+        return out
 
     def write_script(
         self,
@@ -530,45 +665,77 @@ class PGFX_Studio_Screenwriter:
         # 1. Run transcription and alignment once on the full audio clip.
         # This is far more accurate and efficient than transcribing each small chunk.
         srt_node = PromptCrafter_SRTCreator.PromptCrafter_SRTCreator()
-        
+
         # Use AI correction if a ground truth script is provided.
         enable_ai_correction = bool(raw_lyrics_override and raw_lyrics_override.strip())
 
+        timing_data = TIMING_MAP.get("data", [])
+        if not timing_data:
+            print("[Screenwriter] Warning: TIMING_MAP data is empty or invalid.")
+            return ({"data": []}, {})
+
+        cache_payload = {
+            "timing": self._timing_signature(timing_data),
+            "audio": self._audio_signature(audio),
+            "profile": str(profile),
+            "thinking_model": str(thinking_model),
+            "instruct_model": str(instruct_model),
+            "whisper_model": str(whisper_model),
+            "raw_lyrics_override": str(raw_lyrics_override or "").strip(),
+        }
+        cache_hash = hashlib.md5(
+            json.dumps(cache_payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
+        ).hexdigest()
+        if isinstance(self._cached_result, dict) and self._cached_result.get("hash") == cache_hash:
+            if debug_mode:
+                print("[Screenwriter] Using cached screenplay (skipping re-transcription/re-segmentation).")
+            cached_screenplay = self._clone_screenplay(self._cached_result.get("screenplay", []))
+            cached_audio_meta = self._clone_audio_meta(self._cached_result.get("audio_meta", {}))
+            return ({"data": cached_screenplay}, cached_audio_meta)
+
         if whisper_model != "disabled":
-            srt_result = srt_node.execute(
-                audio=audio,
-                whisper_model=whisper_model,
-                language="en",
-                vad_method="silero",
-                enable_ai_correction=enable_ai_correction,
-                correction_model=instruct_model,
-                enable_translation=False,
-                debug_mode=debug_mode,
-                segment_duration_seconds=4.0,
-                enable_ai_text_refinement=False,
-                strict_speaker_detection=False,
-                ground_truth_script=raw_lyrics_override,
-                llm_device=llm_device,
-                reset_context=reset_context,
-            )
-            timed_segments_json = srt_result[3]
+            try:
+                srt_result = srt_node.execute(
+                    audio=audio,
+                    whisper_model=whisper_model,
+                    language="en",
+                    vad_method="silero",
+                    enable_ai_correction=enable_ai_correction,
+                    correction_model=instruct_model,
+                    enable_translation=False,
+                    debug_mode=debug_mode,
+                    segment_duration_seconds=4.0,
+                    enable_ai_text_refinement=False,
+                    strict_speaker_detection=False,
+                    ground_truth_script=raw_lyrics_override,
+                    llm_device=llm_device,
+                    reset_context=reset_context,
+                )
+                timed_segments_json = srt_result[3] if len(srt_result) > 3 else "[]"
+                validation_report = srt_result[8] if len(srt_result) > 8 else ""
+                if debug_mode and validation_report:
+                    print(f"[Screenwriter] SRT validation report: {validation_report}")
+            except ModuleNotFoundError as e:
+                print(f"[Screenwriter] WhisperX unavailable ({e}). Falling back to raw_lyrics_override/timing map.")
+                timed_segments_json = "[]"
+            except Exception as e:
+                print(f"[Screenwriter] SRT transcription failed ({e}). Falling back to raw_lyrics_override/timing map.")
+                timed_segments_json = "[]"
         else: # If whisper is disabled, we can't transcribe, so we can't get timed segments.
             timed_segments_json = "[]"
-        
+
         try:
             parsed_segments = json_utils.extract_and_parse_json(timed_segments_json)
             word_segments = parsed_segments if isinstance(parsed_segments, list) else []
         except Exception:
             print("[Screenwriter] Error: Failed to parse Whisper JSON or result was None. Proceeding without lyrics.")
             word_segments = []
-        
-        screenplay_data = []
-        timing_data = TIMING_MAP.get("data", [])
 
-        # Add a check for None or empty timing_data
-        if not timing_data:
-            print("[Screenwriter] Warning: TIMING_MAP data is empty or invalid.")
-            return ({"data": []}, {})
+        if not word_segments and raw_lyrics_override and raw_lyrics_override.strip():
+            print("[Screenwriter] Using fallback timed word segmentation from raw_lyrics_override.")
+            word_segments = self._build_fallback_word_segments_from_override(raw_lyrics_override, timing_data)
+
+        screenplay_data = []
 
         # 2. Distribute the timed words into the scenes defined by the Sound Engineer.
         for scene in timing_data:
@@ -581,7 +748,8 @@ class PGFX_Studio_Screenwriter:
                 screenplay_data.append({
                     "index": scene_idx,
                     "text": "[INSTRUMENTAL]",
-                    "type": "instrumental"
+                    "type": "instrumental",
+                    "raw_text": "[INSTRUMENTAL]"
                 })
                 continue
 
@@ -596,11 +764,28 @@ class PGFX_Studio_Screenwriter:
             
             text = " ".join(words_in_scene).strip()
             
+            def _looks_like_stage_direction(val: str) -> bool:
+                if not val:
+                    return False
+                raw = val.strip()
+                if raw.startswith("[") and raw.endswith("]"):
+                    return True
+                lowered = raw.lower()
+                markers = ("intro", "outro", "instrumental", "solo", "guitar", "riff", "interlude")
+                return any(m in lowered for m in markers) and len(raw.split()) <= 6
+
+            raw_text = text if text else "[INSTRUMENTAL]"
             entry = {
                 "index": scene_idx,
-                "text": text if text else "[INSTRUMENTAL]",
-                "type": "lyric" if text else "instrumental"
+                "text": raw_text,
+                "type": "lyric" if text else "instrumental",
+                "raw_text": raw_text,
             }
+
+            # Treat bracketed or stage-direction lines as instrumental to avoid literal prompts.
+            if entry["text"] and _looks_like_stage_direction(entry["text"]):
+                entry["text"] = "[INSTRUMENTAL]"
+                entry["type"] = "instrumental"
             screenplay_data.append(entry)
 
         # 3. Construct the audio_meta dictionary for downstream nodes
@@ -612,7 +797,16 @@ class PGFX_Studio_Screenwriter:
             "instrumental_cues": [s.get("type") == "instrumental" for s in screenplay_data],
             "vocal_audio": audio,
         }
-            
+
+        if debug_mode:
+            lyric_count = sum(1 for s in screenplay_data if s.get("type") == "lyric" and s.get("text") and s.get("text") != "[INSTRUMENTAL]")
+            print(f"[Screenwriter] Built screenplay with {len(screenplay_data)} scene(s), {lyric_count} lyric scene(s).")
+
+        self._cached_result = {
+            "hash": cache_hash,
+            "screenplay": self._clone_screenplay(screenplay_data),
+            "audio_meta": self._clone_audio_meta(audio_meta),
+        }
         return ({"data": screenplay_data}, audio_meta)
 
 # --- NEW: THE CREATIVE DIRECTOR ---
@@ -621,6 +815,9 @@ class PGFX_Studio_CreativeDirector:
     The project's lead visionary. This agent analyzes the screenplay to develop a
     global creative concept and a detailed visual brief for the Director.
     """
+    _cached_concept = None
+    _cached_reference_by_sig = {}
+
     @classmethod
     def INPUT_TYPES(cls):
         try:
@@ -649,6 +846,7 @@ class PGFX_Studio_CreativeDirector:
                 "thinking_model": (all_llm_models, {"default": thinking_default}),
                 "instruct_model": (all_llm_models, {"default": instruct_default}),
                 "character_override": ("STRING", {"multiline": True, "default": "", "tooltip": "Manually define the character. If empty, AI will describe from reference images."}),
+                "fast_mode": ("BOOLEAN", {"default": True, "tooltip": "Single-pass concept generation to reduce repeated LLM work and CPU fallback risk."}),
                 "gguf_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 128, "step": 1, "tooltip": "Number of layers to offload to GPU for GGUF models. -1 for all, 0 for none."}),
                 "debug_mode": ("BOOLEAN", {"default": False}),
             },
@@ -672,7 +870,7 @@ class PGFX_Studio_CreativeDirector:
             "song_theme_style": "dystopian industrial, dark fantasy, steampunk, gritty realism, corporate oppression, holiday subversion, worker rebellion, absurdist humor",
             "environment": "industrial workshop, santa's office, reindeer pen, break room, toy assembly line, north pole command center, elf dormitory, empty workshop",
             "lighting": "harsh fluorescent, dim candlelight, spotlight interrogation, cold blue tint, warm fire glow, dramatic shadows, overcast daylight, soft dawn",
-            "camera_motion": "pan left, tilt down, zoom in, track forward, orbit left, pan right, tilt up, zoom out",
+            "camera_motion": "push in, pull back, pan left, pan right, tilt up, tilt down, track forward, orbit",
             "physical_interaction": "hammering toy, writing list, slumping exhausted, pointing angrily, dodging kick, singing off-key, whispering rebel, walking away",
             "facial_expression": "exhausted resignation, defiant smirk, angry shouting, fearful cowering, surprised pain, drunk confusion, quiet determination, relieved smile",
             "shots": "close up, medium shot, wide shot, extreme close up, over the shoulder, profile shot, two shot, extreme wide shot",
@@ -680,8 +878,139 @@ class PGFX_Studio_CreativeDirector:
             "character_visibility": "full body, face only, hands focus, profile view, back view, silhouette, close crop, wide angle"
         }
 
+    def _split_list(self, value):
+        return [s.strip() for s in str(value or "").split(",") if s.strip()]
+
+    def _clone_visual_brief(self, visual_brief):
+        if not isinstance(visual_brief, dict):
+            return {}
+        out = {}
+        for key, value in visual_brief.items():
+            if isinstance(value, list):
+                out[key] = list(value)
+            elif isinstance(value, dict):
+                out[key] = dict(value)
+            else:
+                out[key] = value
+        return out
+
+    def _screenplay_signature(self, screenplay_data):
+        signature = []
+        if not isinstance(screenplay_data, list):
+            return signature
+        for entry in screenplay_data:
+            if not isinstance(entry, dict):
+                continue
+            signature.append({
+                "index": int(entry.get("index", -1)) if isinstance(entry.get("index", None), int) else -1,
+                "type": str(entry.get("type", "") or ""),
+                "text": str(entry.get("text", "") or ""),
+                "raw_text": str(entry.get("raw_text", "") or ""),
+            })
+        return signature
+
+    def _timing_signature(self, TIMING_MAP):
+        timing_data = TIMING_MAP.get("data", []) if isinstance(TIMING_MAP, dict) else []
+        signature = []
+        if not isinstance(timing_data, list):
+            return signature
+        for entry in timing_data:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                idx = int(entry.get("index", -1))
+            except Exception:
+                idx = -1
+            try:
+                start_t = round(float(entry.get("start", 0.0)), 3)
+            except Exception:
+                start_t = 0.0
+            try:
+                end_t = round(float(entry.get("end", 0.0)), 3)
+            except Exception:
+                end_t = 0.0
+            signature.append({
+                "index": idx,
+                "start": start_t,
+                "end": end_t,
+            })
+        return signature
+
+    def _reference_image_signature(self, reference_image):
+        if reference_image is None:
+            return "none"
+        if not torch.is_tensor(reference_image):
+            return f"non-tensor:{type(reference_image).__name__}"
+        shape = tuple(int(x) for x in reference_image.shape)
+        total = int(reference_image.numel())
+        if total <= 0:
+            return f"{shape}:empty"
+        try:
+            flat = reference_image.detach().reshape(-1)
+            step = max(1, total // 32)
+            sampled = flat[::step][:32].float().cpu().tolist()
+            digest_src = ",".join(f"{v:.6f}" for v in sampled)
+            checksum = hashlib.md5(digest_src.encode("utf-8")).hexdigest()
+        except Exception:
+            checksum = hashlib.md5(str(shape).encode("utf-8")).hexdigest()
+        return f"{shape}:{checksum}"
+
+    def _describe_reference_image(
+        self,
+        reference_image,
+        thinking_model,
+        instruct_model,
+        debug_mode,
+        llm_device,
+        reset_context,
+        gguf_gpu_layers=-1,
+    ):
+        """
+        Use a vision-capable LLM to extract a concrete character/environment description
+        from the reference image so downstream prompts are grounded.
+        """
+        if reference_image is None:
+            return {}
+
+        thinking_prompt = textwrap.dedent("""
+            You are a visual analyst. Examine the reference image carefully.
+            Identify the main character, what they are doing, their outfit, props, and the environment.
+            Keep the description literal and grounded in what is visible.
+        """).strip()
+
+        instruct_prompt = textwrap.dedent("""
+            Return a JSON object with these keys:
+            - character_description: 1-2 sentences describing the main character (species/subject, clothing, pose, action, key props).
+            - environment_description: 1 sentence describing the setting and background.
+            - mood: a short phrase capturing lighting/atmosphere.
+            - key_props: a comma-separated list of 3-6 visible props.
+
+            Rules:
+            - Be literal. Do not invent story elements.
+            - Use standard double quotes for JSON keys/values.
+            - Return ONLY the JSON object.
+        """).strip()
+
+        ok, result, reasoning = utils.chain_of_thought_process(
+            thinking_prompt=thinking_prompt,
+            thinking_model=thinking_model,
+            instruct_prompt=instruct_prompt,
+            instruct_model=instruct_model,
+            images=[reference_image],
+            debug_mode=debug_mode,
+            n_gpu_layers=gguf_gpu_layers,
+            llm_device=llm_device,
+            reset_context=reset_context,
+            single_pass_if_same_model=True,
+        )
+        if not ok or not isinstance(result, dict):
+            if debug_mode:
+                print(f"[Creative Director] Reference image analysis failed: {result} | {reasoning}")
+            return {}
+        return result
+
     def develop_concept(self, SCREENPLAY, TIMING_MAP, thinking_model, instruct_model,
-                   character_override, debug_mode, gguf_gpu_layers=-1, reference_image=None,
+                   character_override, fast_mode=True, debug_mode=False, gguf_gpu_layers=-1, reference_image=None,
                    llm_device=getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)"),
                    reset_context=getattr(config, "DEFAULT_LLM_STATELESS", True)):
         # Add input validation
@@ -689,17 +1018,138 @@ class PGFX_Studio_CreativeDirector:
             return ({}, "[ERROR] SCREENPLAY is empty or invalid.")
 
         screenplay_data = SCREENPLAY.get("data", [])
+        reference_sig = self._reference_image_signature(reference_image)
+        cache_payload = {
+            "screenplay": self._screenplay_signature(screenplay_data),
+            "timing": self._timing_signature(TIMING_MAP),
+            "thinking_model": str(thinking_model),
+            "instruct_model": str(instruct_model),
+            "character_override": str(character_override or "").strip(),
+            "fast_mode": bool(fast_mode),
+            "gguf_gpu_layers": int(gguf_gpu_layers),
+            "reference_sig": reference_sig,
+        }
+        cache_hash = hashlib.md5(
+            json.dumps(cache_payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
+        ).hexdigest()
+
+        if isinstance(self._cached_concept, dict) and self._cached_concept.get("hash") == cache_hash:
+            if debug_mode:
+                print("[Creative Director] Using cached VISUAL_BRIEF (skipping repeated concept generation).")
+            cached_brief = self._clone_visual_brief(self._cached_concept.get("brief", {}))
+            cached_log = self._cached_concept.get("log", "")
+            return (cached_brief, cached_log)
 
         # Part 1: Describe reference image
         image_context = "No reference images."
         images_to_pass = []
+        reference_analysis = {}
         if reference_image is not None:
             image_context = "A reference image is provided. Analyze it directly to inform your creative choices."
             images_to_pass = [reference_image]
-            
-        final_character_desc = character_override.strip() or ("A character based on the reference image." if reference_image is not None else "A mysterious figure.")
+            cached_reference = self._cached_reference_by_sig.get(reference_sig, {})
+            if isinstance(cached_reference, dict) and cached_reference:
+                reference_analysis = dict(cached_reference)
+                if debug_mode:
+                    print("[Creative Director] Using cached reference-image analysis.")
+            else:
+                reference_analysis = self._describe_reference_image(
+                    reference_image=reference_image,
+                    thinking_model=thinking_model,
+                    instruct_model=instruct_model,
+                    debug_mode=debug_mode,
+                    llm_device=llm_device,
+                    reset_context=reset_context,
+                    gguf_gpu_layers=gguf_gpu_layers,
+                )
+                if reference_analysis:
+                    self._cached_reference_by_sig[reference_sig] = dict(reference_analysis)
+            if reference_analysis:
+                image_context = (
+                    f"{reference_analysis.get('environment_description','').strip()} "
+                    f"Props: {reference_analysis.get('key_props','').strip()} "
+                    f"Mood: {reference_analysis.get('mood','').strip()}"
+                ).strip()
+
+        final_character_desc = character_override.strip() or reference_analysis.get("character_description") or (
+            "The same main character from the reference image, preserving identity, costume, and key props."
+            if reference_image is not None else "A mysterious figure."
+        )
         lyrics_text = "`\n`".join([s['text'] for s in screenplay_data if s['type'] == 'lyric'])
         lyrics_summary = "`\n`".join(lyrics_text.splitlines()[:20])
+
+        # Fast path: one LLM pass returning both theme and style variable buckets.
+        if fast_mode:
+            fast_thinking_prompt = textwrap.dedent(f"""
+                You are an expert AI Music Video Creative Director.
+                Analyze the lyrics and context, then design a coherent visual concept for LTX-2 scene generation.
+                Keep reasoning concise and production-oriented.
+
+                CONTEXT:
+                - Lyrics: {lyrics_summary}
+                - Character: {final_character_desc}
+                - Reference Image Context: {image_context}
+            """).strip()
+
+            fast_instruct_prompt = textwrap.dedent("""
+                Return a single JSON object with keys:
+                `global_theme`, `song_theme_style`, `environment`, `lighting`,
+                `camera_motion`, `physical_interaction`, `facial_expression`,
+                `shots`, `outfit_rules`, `character_visibility`.
+
+                Rules:
+                - Each field except `global_theme` must be a string containing exactly eight comma-separated entries.
+                - Use cinematic language compatible with LTX-2.
+                - Return ONLY raw JSON with standard double quotes.
+            """).strip()
+
+            ok_fast, fast_result, fast_reasoning = utils.chain_of_thought_process(
+                thinking_prompt=fast_thinking_prompt,
+                thinking_model=thinking_model,
+                instruct_prompt=fast_instruct_prompt,
+                instruct_model=instruct_model,
+                images=images_to_pass,
+                debug_mode=debug_mode,
+                n_gpu_layers=gguf_gpu_layers,
+                llm_device=llm_device,
+                reset_context=reset_context,
+            )
+
+            if not ok_fast or not isinstance(fast_result, dict):
+                if debug_mode:
+                    print(f"[Creative Director] Fast mode failed; using fallback vars. Result: {fast_result}")
+                auto_vrg_vars = self._get_fallback_vrg_vars()
+                global_theme = "A cinematic interpretation of the song's emotional arc."
+                log = f"[FAST MODE FALLBACK]\n{fast_reasoning}"
+            else:
+                auto_vrg_vars = fast_result
+                global_theme = str(fast_result.get("global_theme", "A cinematic interpretation of the song's emotional arc.")).strip()
+                if not global_theme:
+                    global_theme = "A cinematic interpretation of the song's emotional arc."
+                log = f"`--- FAST MODE REASONING ---\n`{fast_reasoning}"
+
+            visual_brief = {
+                "character_description": final_character_desc,
+                "global_theme": global_theme,
+                "visual_styles_auto": self._split_list(auto_vrg_vars.get("song_theme_style", "")),
+                "environment_auto": self._split_list(auto_vrg_vars.get("environment", "")),
+                "lighting_auto": self._split_list(auto_vrg_vars.get("lighting", "")),
+                "camera_motion_auto": self._split_list(auto_vrg_vars.get("camera_motion", "")),
+                "physical_interaction_auto": self._split_list(auto_vrg_vars.get("physical_interaction", "")),
+                "facial_expression_auto": self._split_list(auto_vrg_vars.get("facial_expression", "")),
+                "shots_auto": self._split_list(auto_vrg_vars.get("shots", "")),
+                "outfit_rules_auto": self._split_list(auto_vrg_vars.get("outfit_rules", "")),
+                "character_visibility_auto": self._split_list(auto_vrg_vars.get("character_visibility", "")),
+                "reference_environment": reference_analysis.get("environment_description", ""),
+                "reference_mood": reference_analysis.get("mood", ""),
+                "reference_props": reference_analysis.get("key_props", ""),
+            }
+            self._cached_concept = {
+                "hash": cache_hash,
+                "brief": self._clone_visual_brief(visual_brief),
+                "log": log,
+            }
+            return (self._clone_visual_brief(visual_brief), log)
 
         # Part 2: Generate Global Theme using Chain of Thought
         theme_thinking_prompt = textwrap.dedent(f"""
@@ -745,8 +1195,8 @@ class PGFX_Studio_CreativeDirector:
             Each key's value must be a string containing exactly eight comma-separated cinematic entries.
 
             STRICT CONSTRAINTS: 
-            - `camera_motion` must only use: zoom in, zoom out, pan left, pan right, tilt up, tilt down, track forward, track backward, orbit left, orbit right, rotate.
-            - `shots` must only use: close up, extreme close up, medium shot, wide shot, extreme wide shot, over the shoulder, profile shot, two shot.
+            - `camera_motion` must use cinematic camera language compatible with LTX-2 (examples: push in, pull back, pan, tilt, track, orbit, handheld, static).
+            - `shots` must use cinematic shot language compatible with LTX-2 (examples: close up, medium shot, wide shot, establishing shot, over the shoulder, low angle, high angle, overhead shot).
             - `outfit_rules` must be two-word entries derived directly from the `Image Context` (e.g., white dress, blue shirt, black jacket).
             - The output MUST be a single, raw JSON object. Do not wrap it in markdown ```json ... ```.
             - Use standard double quotes " for all JSON keys and string values.
@@ -800,14 +1250,27 @@ class PGFX_Studio_CreativeDirector:
         visual_brief = {
             "character_description": final_character_desc,
             "global_theme": global_theme,
-            "visual_styles_auto": [s.strip() for s in auto_vrg_vars.get("song_theme_style", "").split(',')],
-            "environment_auto": [s.strip() for s in auto_vrg_vars.get("environment", "").split(',')],
-            "lighting_auto": [s.strip() for s in auto_vrg_vars.get("lighting", "").split(',')],
+            "visual_styles_auto": self._split_list(auto_vrg_vars.get("song_theme_style", "")),
+            "environment_auto": self._split_list(auto_vrg_vars.get("environment", "")),
+            "lighting_auto": self._split_list(auto_vrg_vars.get("lighting", "")),
+            "camera_motion_auto": self._split_list(auto_vrg_vars.get("camera_motion", "")),
+            "physical_interaction_auto": self._split_list(auto_vrg_vars.get("physical_interaction", "")),
+            "facial_expression_auto": self._split_list(auto_vrg_vars.get("facial_expression", "")),
+            "shots_auto": self._split_list(auto_vrg_vars.get("shots", "")),
+            "outfit_rules_auto": self._split_list(auto_vrg_vars.get("outfit_rules", "")),
+            "character_visibility_auto": self._split_list(auto_vrg_vars.get("character_visibility", "")),
+            "reference_environment": reference_analysis.get("environment_description", ""),
+            "reference_mood": reference_analysis.get("mood", ""),
+            "reference_props": reference_analysis.get("key_props", ""),
         }
 
         log = f"`--- THEME REASONING ---\n`{theme_reasoning}`\n\n--- AUTO-STYLES REASONING ---\n`{vrg_reasoning}"
-
-        return (visual_brief, log)
+        self._cached_concept = {
+            "hash": cache_hash,
+            "brief": self._clone_visual_brief(visual_brief),
+            "log": log,
+        }
+        return (self._clone_visual_brief(visual_brief), log)
 
 
 # --- THE DIRECTOR ---
@@ -853,7 +1316,7 @@ class PGFX_Studio_Director:
                 "SCREENPLAY": ("DICT",),
                 "thinking_model": (all_llm_models, {"default": thinking_default}),
                 "instruct_model": (all_llm_models, {"default": instruct_default}),
-                "use_prompt_template": ("BOOLEAN", {"default": False, "tooltip": "If True, uses a simple template for prompts instead of an LLM call per scene."}),
+                "use_prompt_template": ("BOOLEAN", {"default": False, "tooltip": "If True, uses deterministic prompt construction and skips per-scene LLM prompting."}),
                 "debug_mode": ("BOOLEAN", {"default": False}),
             },
             "optional": {
@@ -861,6 +1324,7 @@ class PGFX_Studio_Director:
                 "director_profile_override": (profile_options, {"default": "None (Manual Input)"}),
                 "manual_character_override": ("STRING", {"multiline": True, "default": ""}),
                 "manual_styles_override": ("STRING", {"multiline": True, "default": ""}),
+                "enable_visual_metaphors": ("BOOLEAN", {"default": False, "tooltip": "If True, runs an extra LLM metaphor pass per lyric scene (slow)."}),
                 **_studio_llm_runtime_optional_inputs(),
             }
         }
@@ -895,6 +1359,354 @@ class PGFX_Studio_Director:
                 edit_plan[i]['transition'] = True
         return edit_plan
 
+    def _pick_from_list(self, values, index, fallback=""):
+        if isinstance(values, list) and values:
+            try:
+                return values[int(index) % len(values)]
+            except Exception:
+                return values[0]
+        if isinstance(values, str) and values.strip():
+            return values.strip()
+        return fallback
+
+    def _format_scene_manifest_for_planner(self, screenplay_data, max_text_len=96):
+        lines = []
+        for i, scene in enumerate(screenplay_data):
+            scene_index = scene.get("index", i)
+            scene_type = scene.get("type", "instrumental")
+            text = str(scene.get("text", "") or "")
+            text = re.sub(r"\s+", " ", text.replace("\n", " ").strip())
+            if len(text) > max_text_len:
+                text = text[: max_text_len - 3].rstrip() + "..."
+            lines.append(f'  - Scene {scene_index} ({scene_type}): "{text}"')
+        return "\n".join(lines)
+
+    def _resolve_style_name(self, style_name, styles):
+        candidate = str(style_name or "").strip()
+        if not candidate:
+            return ""
+        for style in styles:
+            if candidate.lower() == str(style).strip().lower():
+                return style
+        for style in styles:
+            style_l = str(style).strip().lower()
+            cand_l = candidate.lower()
+            if cand_l in style_l or style_l in cand_l:
+                return style
+        return ""
+
+    def _normalize_scene_assignments(self, assignments, screenplay_data, styles):
+        expected_indices = []
+        for i, scene in enumerate(screenplay_data):
+            try:
+                expected_indices.append(int(scene.get("index", i)))
+            except Exception:
+                expected_indices.append(i)
+
+        expected_set = set(expected_indices)
+        normalized_by_index = {}
+        invalid_rows = []
+        extra_indices = []
+
+        if not isinstance(assignments, list):
+            return [], {
+                "expected_indices": expected_indices,
+                "missing_indices": expected_indices,
+                "invalid_rows": ["Assignments payload is not a list."],
+                "extra_indices": [],
+            }
+
+        for row in assignments:
+            if not isinstance(row, dict):
+                invalid_rows.append(f"Non-dict assignment: {row}")
+                continue
+
+            raw_index = row.get("index")
+            try:
+                index = int(raw_index)
+            except Exception:
+                invalid_rows.append(f"Invalid index: {raw_index}")
+                continue
+
+            if index not in expected_set:
+                extra_indices.append(index)
+                continue
+            if index in normalized_by_index:
+                continue
+
+            resolved_style = self._resolve_style_name(row.get("style", ""), styles)
+            if not resolved_style:
+                invalid_rows.append(f"Invalid style for scene {index}: {row.get('style')}")
+                continue
+
+            reasoning = str(row.get("reasoning", "") or "").strip() or "Model assignment."
+            normalized_by_index[index] = {
+                "index": index,
+                "style": resolved_style,
+                "reasoning": reasoning,
+            }
+
+        normalized = [normalized_by_index[i] for i in expected_indices if i in normalized_by_index]
+        missing = [i for i in expected_indices if i not in normalized_by_index]
+
+        return normalized, {
+            "expected_indices": expected_indices,
+            "missing_indices": missing,
+            "invalid_rows": invalid_rows,
+            "extra_indices": sorted(set(extra_indices)),
+        }
+
+    def _repair_edit_plan_with_llm(self, screenplay_data, styles, instruct_model, debug_mode, llm_device, reset_context, previous_result, previous_reasoning):
+        scene_manifest = self._format_scene_manifest_for_planner(screenplay_data, max_text_len=80)
+        expected_indices = []
+        for i, scene in enumerate(screenplay_data):
+            try:
+                expected_indices.append(int(scene.get("index", i)))
+            except Exception:
+                expected_indices.append(i)
+        style_list_for_prompt = "\n".join([f"  - {s}" for s in styles])
+        previous_result_text = str(previous_result)
+        if len(previous_result_text) > 2500:
+            previous_result_text = previous_result_text[:2500] + "..."
+        previous_reasoning_text = str(previous_reasoning or "")
+        if len(previous_reasoning_text) > 2500:
+            previous_reasoning_text = previous_reasoning_text[:2500] + "..."
+
+        repair_prompt = textwrap.dedent(f"""
+            You are repairing an invalid music-video scene plan JSON.
+            Return a single JSON object with key "scene_assignments".
+
+            Allowed styles (must match exactly):
+            {style_list_for_prompt}
+
+            Required scene indices (must appear exactly once each):
+            {expected_indices}
+
+            Screenplay:
+            {scene_manifest}
+
+            Previous invalid output:
+            {previous_result_text}
+
+            Previous reasoning context:
+            {previous_reasoning_text}
+
+            Required schema:
+            {{
+              "scene_assignments": [
+                {{
+                  "index": 0,
+                  "style": "one allowed style",
+                  "reasoning": "brief reason"
+                }}
+              ]
+            }}
+
+            Rules:
+            - Include every required scene index exactly once.
+            - Do not return an empty array.
+            - "style" must be one of the allowed styles exactly.
+            - Return ONLY raw JSON with standard double quotes.
+        """).strip()
+
+        ok, repaired = api_clients._reason_with_model(
+            instruct_model,
+            prompt=repair_prompt,
+            llm_device=llm_device,
+            reset_context=reset_context,
+            debug_mode=debug_mode,
+            debug_title="Director Plan Repair",
+            timeout=180,
+            max_tokens=4096,
+            temperature=0.1,
+        )
+        if not ok:
+            return None, f"Repair pass failed: {repaired}"
+
+        repair_assignments = []
+        if isinstance(repaired, dict) and "scene_assignments" in repaired:
+            repair_assignments = repaired.get("scene_assignments", [])
+        elif isinstance(repaired, list):
+            repair_assignments = repaired
+        else:
+            return None, f"Repair pass returned unexpected structure: {type(repaired).__name__}"
+
+        normalized, stats = self._normalize_scene_assignments(repair_assignments, screenplay_data, styles)
+        if stats["missing_indices"]:
+            return None, f"Repair pass still incomplete. Missing scene indices: {stats['missing_indices'][:12]}"
+
+        return normalized, "Repair pass succeeded."
+
+    def _plan_chunk_assignments_with_llm(self, screenplay_chunk, styles, instruct_model, debug_mode, llm_device, reset_context):
+        if not screenplay_chunk:
+            return [], "Chunk planner received empty screenplay chunk."
+
+        required_indices = []
+        for i, scene in enumerate(screenplay_chunk):
+            try:
+                required_indices.append(int(scene.get("index", i)))
+            except Exception:
+                required_indices.append(i)
+
+        style_list_for_prompt = "\n".join([f"  - {s}" for s in styles])
+        chunk_manifest = self._format_scene_manifest_for_planner(screenplay_chunk, max_text_len=88)
+
+        chunk_prompt = textwrap.dedent(f"""
+            You are an AI music video director planner.
+            Build style assignments for this scene chunk only.
+
+            Allowed styles (must match exactly):
+            {style_list_for_prompt}
+
+            Required scene indices (must be fully covered):
+            {required_indices}
+
+            Scene chunk:
+            {chunk_manifest}
+
+            Return ONLY one JSON object:
+            {{
+              "scene_assignments": [
+                {{
+                  "index": 0,
+                  "style": "one allowed style",
+                  "reasoning": "brief reason"
+                }}
+              ]
+            }}
+
+            Rules:
+            - Include every required index exactly once.
+            - Do not return an empty array.
+            - Do not include indices outside the required list.
+            - Return raw JSON only.
+        """).strip()
+
+        ok, parsed = api_clients._reason_with_model(
+            instruct_model,
+            prompt=chunk_prompt,
+            llm_device=llm_device,
+            reset_context=reset_context,
+            debug_mode=debug_mode,
+            debug_title="Director Chunk Planner",
+            timeout=180,
+            max_tokens=3072,
+            temperature=0.1,
+        )
+        if not ok:
+            return None, f"Chunk planner model call failed: {parsed}"
+
+        assignments = []
+        if isinstance(parsed, dict) and "scene_assignments" in parsed:
+            assignments = parsed.get("scene_assignments", [])
+        elif isinstance(parsed, list):
+            assignments = parsed
+        else:
+            return None, f"Chunk planner returned unexpected structure: {type(parsed).__name__}"
+
+        normalized, stats = self._normalize_scene_assignments(assignments, screenplay_chunk, styles)
+        if stats.get("missing_indices"):
+            return None, f"Chunk planner missing indices: {stats.get('missing_indices')}"
+
+        return normalized, "Chunk planner succeeded."
+
+    def _plan_in_chunks_with_llm(self, screenplay_data, styles, instruct_model, debug_mode, llm_device, reset_context, chunk_size=12):
+        if not screenplay_data:
+            return [], "Chunk planner received empty screenplay."
+
+        chunk_size = max(6, int(chunk_size))
+        combined = []
+        logs = []
+
+        for start in range(0, len(screenplay_data), chunk_size):
+            end = min(len(screenplay_data), start + chunk_size)
+            chunk = screenplay_data[start:end]
+            chunk_plan, chunk_log = self._plan_chunk_assignments_with_llm(
+                screenplay_chunk=chunk,
+                styles=styles,
+                instruct_model=instruct_model,
+                debug_mode=debug_mode,
+                llm_device=llm_device,
+                reset_context=reset_context,
+            )
+            scene_bounds = f"{chunk[0].get('index', start)}..{chunk[-1].get('index', end - 1)}"
+            logs.append(f"Chunk {scene_bounds}: {chunk_log}")
+            if chunk_plan is None:
+                return None, "\n".join(logs)
+            combined.extend(chunk_plan)
+
+        normalized, stats = self._normalize_scene_assignments(combined, screenplay_data, styles)
+        if stats.get("missing_indices"):
+            return None, "\n".join(logs + [f"Combined chunk plan missing indices: {stats.get('missing_indices')}"])
+
+        return normalized, "\n".join(logs)
+
+    def _build_ltx2_prompt(self, scene_data, assigned_style, character_description, visual_brief, scene_index):
+        # Pull structured hints from the visual brief
+        env_hint = self._pick_from_list(visual_brief.get("environment_auto"), scene_index, "")
+        lighting_hint = self._pick_from_list(visual_brief.get("lighting_auto"), scene_index, "")
+        camera_motion = self._pick_from_list(visual_brief.get("camera_motion_auto"), scene_index, "slow push in")
+        interaction = self._pick_from_list(visual_brief.get("physical_interaction_auto"), scene_index, "performing to the music")
+        expression = self._pick_from_list(visual_brief.get("facial_expression_auto"), scene_index, "focused expression")
+        shot_type = self._pick_from_list(visual_brief.get("shots_auto"), scene_index, "medium shot")
+        outfit = self._pick_from_list(visual_brief.get("outfit_rules_auto"), scene_index, "")
+        visibility = self._pick_from_list(visual_brief.get("character_visibility_auto"), scene_index, "full body")
+
+        ref_env = str(visual_brief.get("reference_environment", "") or "").strip()
+        ref_mood = str(visual_brief.get("reference_mood", "") or "").strip()
+        ref_props = str(visual_brief.get("reference_props", "") or "").strip()
+        global_theme = str(visual_brief.get("global_theme", "") or "").strip()
+        outfit_rules_all = [str(x).strip() for x in visual_brief.get("outfit_rules_auto", []) if str(x).strip()]
+        # Keep identity constraints stable across scenes to reduce character drift.
+        stable_outfit = ", ".join(outfit_rules_all[:3]) if outfit_rules_all else ""
+
+        env_parts = []
+        if env_hint:
+            env_parts.append(env_hint)
+        if ref_env and (ref_env.lower() not in " ".join(env_parts).lower()):
+            env_parts.append(ref_env)
+        env_text = ", ".join(p for p in env_parts if p) or "a cinematic setting"
+
+        props_sentence = f" Props include {ref_props}." if ref_props else ""
+        outfit_sentence = f" wearing {outfit}" if outfit else ""
+        continuity_sentence = ""
+        if stable_outfit or ref_props:
+            continuity_bits = [b for b in [stable_outfit, ref_props] if b]
+            continuity_sentence = f" Keep character identity and wardrobe continuity fixed: {', '.join(continuity_bits)}."
+        visibility_sentence = f", {visibility}" if visibility else ""
+
+        lyric_text = (scene_data.get("text") or "").strip()
+        raw_text = (scene_data.get("raw_text") or "").strip()
+        scene_type = scene_data.get("type", "instrumental")
+
+        # Sentence 1: shot + subject + action + environment
+        s1 = (
+            f"A {shot_type}{visibility_sentence} frames {character_description}{outfit_sentence}, "
+            f"{interaction}, in {env_text}.{props_sentence}"
+        ).strip()
+
+        # Sentence 2: style + lighting + mood
+        mood = ref_mood or (global_theme if len(global_theme.split()) < 12 else "")
+        mood_clause = f", mood {mood}" if mood else ""
+        lighting_clause = f"{lighting_hint} lighting" if lighting_hint else "cinematic lighting"
+        s2 = f"The visual style is {assigned_style} with {lighting_clause}{mood_clause}."
+
+        # Sentence 3: camera movement + expression
+        s3 = f"The camera {camera_motion} to emphasize {expression}."
+
+        # Sentence 4: audio + dialogue
+        if scene_type == "lyric" and lyric_text and lyric_text != "[INSTRUMENTAL]":
+            s4 = f'The character sings, \"{lyric_text}\", with clear lip sync.'
+        else:
+            if raw_text and raw_text != "[INSTRUMENTAL]":
+                cue = raw_text if raw_text.startswith("[") else f"[{raw_text}]"
+                s4 = f"Audio is instrumental, {cue}."
+            else:
+                s4 = "Audio is instrumental."
+
+        # Single paragraph as required by LTX-2 guidance.
+        return " ".join([s1, s2, s3, s4, continuity_sentence]).replace("  ", " ").strip()
+
     def _get_edit_plan(self, screenplay_data, styles, thinking_model, instruct_model, debug_mode, llm_device, reset_context):
         """
         First LLM call (The Planner): Creates a high-level plan for which style to use for which scene.
@@ -904,18 +1716,17 @@ class PGFX_Studio_Director:
         if climax_indices:
             climax_info = f"\nPre-analysis suggests the emotional climax occurs around scenes: {', '.join(map(str, climax_indices))}. Pay special attention to these scenes when assigning styles and camera work."
         
-        MAX_LLM_SCREENPLAY_LINES = 25
-        if len(screenplay_data) > MAX_LLM_SCREENPLAY_LINES:
-            first_scene_text = screenplay_data[0].get('text', '').strip()
-            if all(s.get('type') == 'instrumental' and s.get('text', '').strip() == first_scene_text for s in screenplay_data):
-                screenplay_for_prompt = f"  - Scene 0 to {len(screenplay_data) - 1} (instrumental): All scenes are identical instrumentals with the text \"{first_scene_text}\"."
-                print(f"\033[93m[Director] Summarized {len(screenplay_data)} identical instrumental scenes to prevent LLM context overflow.\033[0m")
-            else:
-                print(f"\033[93m[Director] Screenplay has {len(screenplay_data)} scenes. Truncating to prevent LLM context overflow.\033[0m")
-                screenplay_for_prompt = "\n".join([f"  - Scene {s['index']} ({s['type']}): \"{s['text']}\"" for s in screenplay_data[:20]])
-                screenplay_for_prompt += f"\n  - ... and {len(screenplay_data) - 20} more scenes."
-        else:
-            screenplay_for_prompt = "\n".join([f"  - Scene {s['index']} ({s['type']}): \"{s['text']}\"" for s in screenplay_data])
+        screenplay_for_prompt = self._format_scene_manifest_for_planner(screenplay_data, max_text_len=96)
+        if len(screenplay_data) > 40:
+            print(f"[Director] Planning {len(screenplay_data)} scenes with compact manifest formatting.")
+
+        required_indices = []
+        for i, scene in enumerate(screenplay_data):
+            try:
+                required_indices.append(int(scene.get("index", i)))
+            except Exception:
+                required_indices.append(i)
+
         style_list_for_prompt = "\n".join([f"  - {s}" for s in styles])
 
         thinking_prompt = textwrap.dedent(f"""
@@ -958,6 +1769,7 @@ class PGFX_Studio_Director:
             ---
 
             The `scene_assignments` array MUST cover every scene index from the screenplay.
+            Required indices: {required_indices}
 
             **Schema:** {json.dumps(plan_schema, indent=2)}
             
@@ -986,8 +1798,9 @@ class PGFX_Studio_Director:
             result_data = {}
 
         # Add robust JSON parsing
+        parse_error = None
+        assignments = []
         try:
-            assignments = []
             parsed = result_data
             if isinstance(result_data, str):
                 parsed = json_utils.extract_and_parse_json(result_data)
@@ -1004,13 +1817,62 @@ class PGFX_Studio_Director:
                 raise ValueError("Assignments is not a list")
 
         except Exception as e:
-            error_log = f"Failed to parse edit plan: {str(e)}. Reasoning: {reasoning}. Result: {result_data}"
-            print(f"[Director] {error_log}")
-            fallback_plan = [{"index": s["index"], "style": styles[0], "reasoning": "Fallback due to parsing error."}
-                            for s in screenplay_data]
-            return fallback_plan, error_log
+            parse_error = f"Failed to parse edit plan: {str(e)}. Result: {result_data}"
+            print(f"[Director] {parse_error}")
+            assignments = []
 
-        return assignments, reasoning
+        normalized, stats = self._normalize_scene_assignments(assignments, screenplay_data, styles)
+        missing = stats.get("missing_indices", [])
+
+        if missing:
+            missing_preview = ", ".join(map(str, missing[:12]))
+            if len(missing) > 12:
+                missing_preview += ", ..."
+            repair_reason = f"Planner output incomplete. Missing scene indices: {missing_preview}"
+            print(f"[Director] {repair_reason}")
+            repaired_plan, repair_log = self._repair_edit_plan_with_llm(
+                screenplay_data=screenplay_data,
+                styles=styles,
+                instruct_model=instruct_model,
+                debug_mode=debug_mode,
+                llm_device=llm_device,
+                reset_context=reset_context,
+                previous_result=result_data,
+                previous_reasoning=reasoning,
+            )
+            if repaired_plan is not None:
+                merged_log = reasoning + f"\n\n[Director] {repair_reason}\n[Director] {repair_log}"
+                return repaired_plan, merged_log
+            chunk_plan, chunk_log = self._plan_in_chunks_with_llm(
+                screenplay_data=screenplay_data,
+                styles=styles,
+                instruct_model=instruct_model,
+                debug_mode=debug_mode,
+                llm_device=llm_device,
+                reset_context=reset_context,
+            )
+            if chunk_plan is not None:
+                merged_log = (
+                    reasoning
+                    + f"\n\n[Director] {repair_reason}\n[Director] {repair_log}"
+                    + "\n[Director] Global planner failed, chunk planner recovered full coverage."
+                    + f"\n{chunk_log}"
+                )
+                return chunk_plan, merged_log
+            error_log = (
+                f"{parse_error + ' | ' if parse_error else ''}{repair_reason}. {repair_log}. "
+                f"Chunk planner failed: {chunk_log}"
+            )
+            return [], error_log
+
+        if parse_error:
+            reasoning = reasoning + f"\n\n[Director] {parse_error}"
+
+        invalid_rows = stats.get("invalid_rows", [])
+        if invalid_rows:
+            reasoning = reasoning + f"\n\n[Director] Ignored invalid assignment rows: {len(invalid_rows)}"
+
+        return normalized, reasoning
 
 
     # In nodes_studio.py, in the PGFX_Studio_Director class, modify the _generate_shot_prompt method:
@@ -1027,11 +1889,11 @@ class PGFX_Studio_Director:
         # Normalize whitespace
         prompt = re.sub(r'\s+', ' ', prompt).strip()
         # Limit length
-        if len(prompt) > 300:
-            prompt = prompt[:300] + "..."
+        if len(prompt) > 520:
+            prompt = prompt[:520] + "..."
         return prompt
 
-    def _generate_shot_prompt(self, scene_data, assigned_style, character_description, thinking_model, instruct_model, debug_mode, llm_device, reset_context):
+    def _generate_shot_prompt(self, scene_data, assigned_style, character_description, visual_brief, scene_index, thinking_model, instruct_model, debug_mode, llm_device, reset_context, enable_visual_metaphors=False):
         """
         Second LLM call (The Shot Director): Generates a detailed prompt for a single scene.
         The LLM is now responsible for analyzing the lyric internally.
@@ -1056,19 +1918,28 @@ class PGFX_Studio_Director:
         climax_instruction = "This is the song's climax; use dynamic, high-energy camera work like dolly zooms or fast tracking shots." if is_climax else ""
 
         if scene_type == "instrumental":
-            # Generate mood-based visuals instead of literal interpretations
-            task = f"Create a cinematic B-roll or transition shot that conveys the mood of '{assigned_style}'. Use abstract visuals, lighting effects, or symbolic imagery that matches the song's atmosphere. Avoid literal interpretations of lyrics."
-            analysis_instruction = "Think about the emotional tone of the music. What colors, textures, and camera movements would best represent this mood?"
-        else:
-            visual_metaphor = self._enhance_visual_metaphors(
-                sanitized_lyric_text,
-                assigned_style,
-                thinking_model,
-                instruct_model,
-                debug_mode,
-                llm_device,
-                reset_context,
+            # Keep instrumental scenes character-led to preserve likeness continuity.
+            task = (
+                f"Create a cinematic instrumental scene featuring the SAME main character '{character_description}' "
+                f"in the style '{assigned_style}'. Keep outfit and props consistent with the reference image while "
+                f"using musical body language, performance beats, and atmospheric motion."
             )
+            analysis_instruction = (
+                "Think about the emotional tone of the music. Build a shot that preserves character identity, "
+                "costume, and key props while expressing mood through action, lighting, and camera movement."
+            )
+        else:
+            visual_metaphor = None
+            if enable_visual_metaphors:
+                visual_metaphor = self._enhance_visual_metaphors(
+                    sanitized_lyric_text,
+                    assigned_style,
+                    thinking_model,
+                    instruct_model,
+                    debug_mode,
+                    llm_device,
+                    reset_context,
+                )
             metaphor_guidance = ""
             if visual_metaphor:
                 metaphor_guidance = f"Consider this visual metaphor: {visual_metaphor}."
@@ -1076,14 +1947,43 @@ class PGFX_Studio_Director:
             task = f"Brainstorm a cinematic scene visualizing this lyric: '{sanitized_lyric_text}'. The main character is '{character_description}'. The scene must be in the style of '{assigned_style}'. {climax_instruction} {metaphor_guidance}"
             analysis_instruction = "First, analyze the provided lyric for its emotional tone, key narrative elements, and any visual opportunities (like colors, textures, or actions). If a visual metaphor is provided, use it as your primary creative direction. Based on your analysis, think step-by-step about the lighting, camera angle, composition, and mood that would best represent the lyric."
 
+        ref_env = str(visual_brief.get("reference_environment", "") or "").strip()
+        ref_mood = str(visual_brief.get("reference_mood", "") or "").strip()
+        ref_props = str(visual_brief.get("reference_props", "") or "").strip()
+        env_hint = self._pick_from_list(visual_brief.get("environment_auto"), scene_index, "")
+        lighting_hint = self._pick_from_list(visual_brief.get("lighting_auto"), scene_index, "")
+        camera_hint = self._pick_from_list(visual_brief.get("camera_motion_auto"), scene_index, "")
+        shot_hint = self._pick_from_list(visual_brief.get("shots_auto"), scene_index, "")
+        interaction_hint = self._pick_from_list(visual_brief.get("physical_interaction_auto"), scene_index, "")
+        expression_hint = self._pick_from_list(visual_brief.get("facial_expression_auto"), scene_index, "")
+
         thinking_prompt = textwrap.dedent(f"""
-            You are a detailed-oriented cinematographer.
+            You are a detail-oriented cinematographer creating LTX-2 prompts.
+            Follow the LTX-2 prompt guidelines:
+            - Single paragraph, present tense, 4–8 sentences.
+            - Include shot type, subject description, action, environment, lighting, camera movement, and audio.
+            - Dialogue/singing must be in double quotes. Performance cues may be in [brackets].
+            - Preserve reference-character identity across scenes; do not switch subjects or wardrobe.
+
+            REFERENCE IMAGE NOTES:
+            - Environment: {ref_env}
+            - Props: {ref_props}
+            - Mood: {ref_mood}
+
+            STYLE HINTS:
+            - Environment hint: {env_hint}
+            - Lighting hint: {lighting_hint}
+            - Shot hint: {shot_hint}
+            - Camera motion hint: {camera_hint}
+            - Interaction hint: {interaction_hint}
+            - Expression hint: {expression_hint}
+
             {analysis_instruction}
             **Task:** {task}
         """).strip()
         
         instruct_schema = {
-            "positive_prompt": "string (The detailed visual description for an AI image generator)",
+            "positive_prompt": "string (Single-paragraph LTX-2 prompt, present tense, 4–8 sentences, includes audio/dialogue)",
             "negative_prompt": "string (What to avoid, e.g., text, watermarks, ugly, blurry)"
         }
         instruct_prompt = textwrap.dedent(f"""
@@ -1095,6 +1995,7 @@ class PGFX_Studio_Director:
             - The final output MUST be a single, raw JSON object.
             - Do not wrap the JSON in markdown code fences.
             - Use standard double-quotes for all keys and string values.
+            - The positive_prompt must follow LTX-2 prompt rules (single paragraph, present tense, 4–8 sentences).
 
             Return ONLY the JSON object.
         """).strip()
@@ -1118,16 +2019,24 @@ class PGFX_Studio_Director:
 
         # SANITIZE THE FINAL PROMPT OUTPUT FOR VIDEO MODEL COMPATIBILITY
         if isinstance(result_data, dict):
-            pos_prompt = result_data.get("positive_prompt", f"{assigned_style}, {character_description}, {sanitized_lyric_text}")
+            pos_prompt = result_data.get("positive_prompt")
+            if not pos_prompt:
+                pos_prompt = self._build_ltx2_prompt(scene_data, assigned_style, character_description, visual_brief, scene_index)
             neg_prompt = result_data.get("negative_prompt", "text, watermark, ugly, blurry")
         else:
             print(f"\033[93m[Director] LLM shot generation failed for scene {scene_data['index']}. Using fallback.\033[0m")
-            pos_prompt = f"{assigned_style}, {character_description}, cinematic shot visualizing '{sanitized_lyric_text}'"
+            pos_prompt = self._build_ltx2_prompt(scene_data, assigned_style, character_description, visual_brief, scene_index)
             neg_prompt = "text, watermark, ugly, blurry"
         
         # Additional sanitization for video model compatibility
         pos_prompt = self._sanitize_prompt_for_video_model(pos_prompt)
         neg_prompt = self._sanitize_prompt_for_video_model(neg_prompt)
+
+        # Ensure the final shot prompt always carries the current character identity text.
+        char_desc = self._sanitize_prompt_for_video_model(character_description)
+        if char_desc and char_desc.lower() not in pos_prompt.lower():
+            pos_prompt = f"{char_desc}. {pos_prompt}".strip()
+            pos_prompt = self._sanitize_prompt_for_video_model(pos_prompt)
         
         return pos_prompt, neg_prompt
 
@@ -1190,10 +2099,14 @@ class PGFX_Studio_Director:
         
         return None
 
-    def direct_scenes(self, SCREENPLAY, thinking_model, instruct_model, use_prompt_template, debug_mode, VISUAL_BRIEF=None, director_profile_override="None (Manual Input)", manual_character_override="", manual_styles_override="", llm_device=getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)"), reset_context=getattr(config, "DEFAULT_LLM_STATELESS", True)):
+    def direct_scenes(self, SCREENPLAY, thinking_model, instruct_model, use_prompt_template, debug_mode, VISUAL_BRIEF=None, director_profile_override="None (Manual Input)", manual_character_override="", manual_styles_override="", enable_visual_metaphors=False, llm_device=getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)"), reset_context=getattr(config, "DEFAULT_LLM_STATELESS", True)):
         # --- FIX: ROBUST CACHING ---
         # Create a unique hash of the inputs that matter
-        input_str = f"{str(SCREENPLAY)}{str(VISUAL_BRIEF)}{director_profile_override}{manual_styles_override}{manual_character_override}{use_prompt_template}"
+        input_str = (
+            f"{str(SCREENPLAY)}{str(VISUAL_BRIEF)}{director_profile_override}{manual_styles_override}"
+            f"{manual_character_override}{use_prompt_template}{enable_visual_metaphors}"
+            f"{thinking_model}{instruct_model}{llm_device}{reset_context}"
+        )
         input_hash = hashlib.md5(input_str.encode('utf-8')).hexdigest()
         
         # Check if we already have a plan for this exact input
@@ -1208,6 +2121,8 @@ class PGFX_Studio_Director:
         screenplay_data = SCREENPLAY.get("data", [])
         if not screenplay_data:
             return ({"data": []}, "[ERROR] SCREENPLAY is empty or invalid.")
+        if debug_mode:
+            print(f"[Director] use_prompt_template={use_prompt_template}")
         
         # --- NEW: Evolved Logic for Sourcing Creative Direction ---
         # Priority: 1. Manual Overrides -> 2. VISUAL_BRIEF -> 3. Profile Override
@@ -1234,20 +2149,46 @@ class PGFX_Studio_Director:
         if not styles:
             return ({"data": []}, "[ERROR] No visual styles provided.")
 
-        # Stage 1: Get the high-level edit plan. This is still needed to assign styles.
-        edit_plan, plan_reasoning = self._get_edit_plan(
-            screenplay_data,
-            styles,
-            thinking_model,
-            instruct_model,
-            debug_mode,
-            llm_device,
-            reset_context,
-        )
+        # Stage 1: Assign styles to scenes.
+        if use_prompt_template:
+            # Fast deterministic mode: avoid planner LLM call entirely.
+            edit_plan = []
+            for idx, scene in enumerate(screenplay_data):
+                assigned_style = styles[idx % len(styles)]
+                edit_plan.append({
+                    "index": scene.get("index", idx),
+                    "style": assigned_style,
+                    "reasoning": "Template mode deterministic style assignment."
+                })
+            plan_reasoning = "[Director] Template mode: skipped LLM edit planner."
+        else:
+            edit_plan, plan_reasoning = self._get_edit_plan(
+                screenplay_data,
+                styles,
+                thinking_model,
+                instruct_model,
+                debug_mode,
+                llm_device,
+                reset_context,
+            )
+
         full_reasoning_log += "--- EDIT PLAN REASONING ---\n" + plan_reasoning + "\n\n"
 
-        # Validate the style assignments
+        # Validate assignments (also smooths abrupt style transitions)
         edit_plan = self._validate_style_assignments(edit_plan, styles)
+
+        expected_scene_count = len(screenplay_data)
+        if not isinstance(edit_plan, list):
+            err = f"[ERROR] Director edit plan is not a list (got {type(edit_plan).__name__})."
+            print(err)
+            return ({"data": []}, full_reasoning_log + err)
+        if len(edit_plan) != expected_scene_count:
+            err = (
+                f"[ERROR] Director edit plan is incomplete: got {len(edit_plan)} assignments "
+                f"for {expected_scene_count} scenes."
+            )
+            print(err)
+            return ({"data": []}, full_reasoning_log + err)
 
         # Create a dictionary for quick lookup
         screenplay_dict = {s["index"]: s for s in screenplay_data}
@@ -1260,13 +2201,15 @@ class PGFX_Studio_Director:
                 if index in screenplay_dict:
                     screenplay_dict[index]['is_climax'] = True
 
+        invalid_assignments = []
+
         # Stage 2: Generate a detailed shot for each item in the plan
         for assignment in edit_plan:
             index = assignment.get("index")
             assigned_style = assignment.get("style")
             
             if index is None or assigned_style is None or index not in screenplay_dict:
-                print(f"[Director] Warning: Skipping invalid assignment in edit plan: {assignment}")
+                invalid_assignments.append(f"Invalid assignment: {assignment}")
                 continue
 
             scene_data = screenplay_dict[index]
@@ -1274,14 +2217,7 @@ class PGFX_Studio_Director:
             if use_prompt_template:
                 if index == 0: # Print only on the first iteration
                     print("[Director] Using prompt template instead of LLM for shot generation.")
-                lyric_text = scene_data["text"]
-                scene_type = scene_data["type"]
-                if scene_type == "instrumental":
-                    pos_prompt = f"{assigned_style}, {final_char_desc}, cinematic b-roll, transition shot"
-                else:
-                    # Escape single quotes in lyric_text to avoid breaking the prompt string
-                    safe_lyric = lyric_text.replace("'", "\\'")
-                    pos_prompt = f"{assigned_style}, {final_char_desc}, cinematic shot visualizing '{safe_lyric}'"
+                pos_prompt = self._build_ltx2_prompt(scene_data, assigned_style, final_char_desc, VISUAL_BRIEF, index)
                 neg_prompt = "text, watermark, ugly, blurry"
             else:
                 # Generate the core prompt for this shot using an LLM.
@@ -1289,11 +2225,14 @@ class PGFX_Studio_Director:
                     scene_data,
                     assigned_style,
                     final_char_desc,
+                    VISUAL_BRIEF,
+                    index,
                     thinking_model,
                     instruct_model,
                     debug_mode,
                     llm_device,
                     reset_context,
+                    enable_visual_metaphors,
                 )
 
             shot_list.append({
@@ -1303,6 +2242,22 @@ class PGFX_Studio_Director:
                 "seed": index * 9999 + 101,
                 "style": assigned_style
             })
+
+        if invalid_assignments:
+            err = (
+                f"[ERROR] Director produced {len(invalid_assignments)} invalid assignment(s). "
+                f"Example: {invalid_assignments[0]}"
+            )
+            print(err)
+            return ({"data": []}, full_reasoning_log + "\n" + err)
+
+        if len(shot_list) != expected_scene_count:
+            err = (
+                f"[ERROR] Director generated {len(shot_list)} shots for {expected_scene_count} scenes. "
+                "Aborting to avoid incomplete/generic output."
+            )
+            print(err)
+            return ({"data": []}, full_reasoning_log + "\n" + err)
             
         # At the very end of the function, save to cache before returning:
         self._cached_plan = {'hash': input_hash, 'data': shot_list, 'log': full_reasoning_log}
@@ -1342,10 +2297,28 @@ class PGFX_Studio_Cinematographer:
         prompt = re.sub(r'`[^`]+`', '', prompt)
 
         # Limit length to prevent token overflow
-        if len(prompt) > 250:
-            prompt = prompt[:250] + "..."
+        if len(prompt) > 520:
+            prompt = prompt[:520] + "..."
 
         return prompt
+
+    def _audio_duration_seconds(self, audio_dict):
+        if not isinstance(audio_dict, dict):
+            return 0.0
+        waveform = audio_dict.get("waveform")
+        sample_rate = audio_dict.get("sample_rate", 0)
+        if not torch.is_tensor(waveform):
+            return 0.0
+        try:
+            sr = float(sample_rate)
+            if sr <= 0:
+                return 0.0
+            total_samples = int(waveform.shape[-1]) if waveform.ndim >= 1 else 0
+            if total_samples <= 0:
+                return 0.0
+            return float(total_samples) / sr
+        except Exception:
+            return 0.0
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1389,7 +2362,16 @@ class PGFX_Studio_Cinematographer:
             print("[Cinematographer] Counter explicitly reset to 0.")
 
         shot_list_data = SHOT_LIST.get("data", [])
-        num_scenes = len(shot_list_data)
+        timing_map_data = TIMING_MAP.get("data", [])
+        durations_frames = TIMING_MAP.get("durations_frames", [])
+        timing_scene_count = 0
+        if isinstance(durations_frames, list) and durations_frames:
+            timing_scene_count = len(durations_frames)
+        elif isinstance(timing_map_data, list):
+            timing_scene_count = len(timing_map_data)
+
+        shot_scene_count = len(shot_list_data) if isinstance(shot_list_data, list) else 0
+        num_scenes = max(shot_scene_count, timing_scene_count)
         empty_audio = {"waveform": torch.zeros((1, 1, 1)), "sample_rate": 44100}
 
         # --- Index and State Management ---
@@ -1410,8 +2392,10 @@ class PGFX_Studio_Cinematographer:
 
         # --- Data Retrieval ---
         if num_scenes == 0:
-            print("[Cinematographer] Warning: SHOT_LIST is empty. Returning empty data.")
-            return ("", "", 0, empty_audio, 0, current_index, remaining_scenes)
+            raise ValueError(
+                "[Cinematographer] SHOT_LIST/TIMING_MAP has zero scenes. "
+                "Director planning failed or upstream contracts are disconnected."
+            )
         
         # In Fixed mode, the user might provide an out-of-bounds index.
         if current_index >= num_scenes:
@@ -1421,12 +2405,13 @@ class PGFX_Studio_Cinematographer:
         effective_index = current_index
         
         shot = next((s for s in shot_list_data if s.get("index") == effective_index), None)
-        timing_map_data = TIMING_MAP.get("data", [])
         timing = next((t for t in timing_map_data if t.get("index") == effective_index), None)
 
         if shot is None or timing is None:
-            print(f"[Cinematographer] Error: No shot or timing data found for index {effective_index}. Check SHOT_LIST/TIMING_MAP alignment.")
-            return ("", "", 0, empty_audio, 0, effective_index, remaining_scenes)
+            raise ValueError(
+                f"[Cinematographer] No shot/timing data for scene index {effective_index}. "
+                "Stopping run to avoid invalid audio/video generation."
+            )
 
         # Optional character context (log-only, no prompt mutation yet)
         if CHARACTER_TRACK and isinstance(CHARACTER_TRACK, dict):
@@ -1438,6 +2423,26 @@ class PGFX_Studio_Cinematographer:
 
         num_frames = timing.get("num_frames", 0)
         audio_chunk = timing.get("audio_dict", empty_audio)
+        fps = PROJECT_CONFIG.get("fps", 24)
+        try:
+            fps = max(1, int(fps))
+        except Exception:
+            fps = 24
+
+        # Enforce audio/video duration parity at scene level.
+        audio_dur = self._audio_duration_seconds(audio_chunk)
+        if audio_dur > 0:
+            expected_frames = max(1, int(round(audio_dur * fps)))
+            try:
+                current_frames = int(num_frames)
+            except Exception:
+                current_frames = 0
+            if current_frames != expected_frames:
+                print(
+                    f"[Cinematographer] Adjusted num_frames from {current_frames} to {expected_frames} "
+                    f"to match audio chunk duration {audio_dur:.2f}s at {fps} FPS."
+                )
+            num_frames = expected_frames
 
         # Sanitize prompts before returning them
         positive_prompt = shot.get("positive", "")
@@ -1446,6 +2451,12 @@ class PGFX_Studio_Cinematographer:
         # Apply sanitization to prevent CUDA errors
         positive_prompt = self._sanitize_prompt_for_video_model(positive_prompt)
         negative_prompt = self._sanitize_prompt_for_video_model(negative_prompt)
+
+        if not positive_prompt.strip():
+            raise ValueError(
+                f"[Cinematographer] Empty positive prompt at scene {effective_index}. "
+                "Stopping run to avoid undefined generation."
+            )
 
         print(f"[Cinematographer] Outputting data for scene {effective_index} ({remaining_scenes} remaining).")
         return (positive_prompt, negative_prompt, shot.get("seed", 0), audio_chunk, num_frames, effective_index, remaining_scenes)
@@ -1492,6 +2503,25 @@ class PGFX_Studio_Editor:
         # 3. Save Video (Simple ImageIO)
         # We save silent video here because the PostMaster adds the Master Audio later
         images_np = (video_frames.cpu().numpy() * 255).astype(np.uint8)
+        if audio_chunk and isinstance(audio_chunk, dict):
+            waveform = audio_chunk.get("waveform")
+            sample_rate = audio_chunk.get("sample_rate", 0)
+            if torch.is_tensor(waveform):
+                try:
+                    sr = float(sample_rate)
+                    if sr > 0:
+                        target_frames = max(1, int(round((float(waveform.shape[-1]) / sr) * float(fps))))
+                        current_frames = int(images_np.shape[0]) if images_np.ndim >= 1 else 0
+                        if current_frames > target_frames:
+                            images_np = images_np[:target_frames]
+                            print(f"[Editor] Trimmed frames {current_frames} -> {target_frames} to match audio duration.")
+                        elif 0 < current_frames < target_frames:
+                            pad_count = target_frames - current_frames
+                            tail = np.repeat(images_np[-1:], pad_count, axis=0)
+                            images_np = np.concatenate([images_np, tail], axis=0)
+                            print(f"[Editor] Padded frames {current_frames} -> {target_frames} to match audio duration.")
+                except Exception as e:
+                    print(f"[Editor] Warning: could not align frame count to audio duration ({e}).")
         try:
             imageio.mimwrite(full_path, images_np, fps=fps, codec='libx264', quality=8, macro_block_size=1)
         except Exception as e:
@@ -2481,6 +3511,50 @@ class PGFX_Studio_ProjectConfigValidator:
         return (cfg_out, cfg_core, "\n".join(report))
 
 
+# --- PROJECT CONFIG TO SIZE ---
+class PGFX_Studio_ProjectConfigToSize:
+    """
+    Adapter to extract width/height/fps from PROJECT_CONFIG and optionally align to a block size.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "PROJECT_CONFIG": ("DICT",),
+            },
+            "optional": {
+                "align_to": ("INT", {"default": 8, "min": 1, "max": 128, "step": 1}),
+            }
+        }
+
+    RETURN_TYPES = ("INT", "INT", "INT")
+    RETURN_NAMES = ("width", "height", "fps")
+    FUNCTION = "extract"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Adapters"
+
+    def _to_int(self, value, fallback):
+        try:
+            return int(value)
+        except Exception:
+            return int(fallback)
+
+    def _align(self, value, align_to):
+        align = max(1, int(align_to))
+        return max(1, (int(value) // align) * align)
+
+    def extract(self, PROJECT_CONFIG, align_to=8):
+        if not isinstance(PROJECT_CONFIG, dict):
+            raise ValueError("PGFX_Studio_ProjectConfigToSize expected PROJECT_CONFIG as dict.")
+        width = self._to_int(PROJECT_CONFIG.get("width", 512), 512)
+        height = self._to_int(PROJECT_CONFIG.get("height", 512), 512)
+        fps = self._to_int(PROJECT_CONFIG.get("fps", 24), 24)
+        width = self._align(width, align_to)
+        height = self._align(height, align_to)
+        if fps <= 0:
+            fps = 24
+        return (width, height, fps)
+
+
 # --- TIMING MAP ADAPTER ---
 class PGFX_Studio_TimingMapAdapter:
     """
@@ -2704,6 +3778,108 @@ class PGFX_Studio_SceneCountAdapter:
         return (total, remaining, "\n".join(report))
 
 
+# --- AUTO-QUEUE ADAPTER ---
+class PGFX_Studio_AutoQueue:
+    """
+    Adapter to auto-queue additional ComfyUI runs so each run renders one scene.
+    Uses Impact Pack's `impact-add-queue` event if available.
+    """
+    _all_at_start_signature_by_project = {}
+    _one_per_scene_seen = set()
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "remaining_scenes": ("INT", {"forceInput": True}),
+                "scene_index": ("INT", {"forceInput": True}),
+                "enable_auto_queue": ("BOOLEAN", {"default": True}),
+                "queue_strategy": (["All At Start", "One Per Run"], {"default": "All At Start"}),
+                "max_queue": ("INT", {"default": 64, "min": 1, "max": 1024}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("queue_status",)
+    FUNCTION = "auto_queue"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Adapters"
+    OUTPUT_NODE = True
+
+    def _to_int(self, value, fallback=0):
+        try:
+            return int(value)
+        except Exception:
+            return fallback
+
+    def _project_key(self, PROJECT_CONFIG):
+        if isinstance(PROJECT_CONFIG, dict):
+            name = str(PROJECT_CONFIG.get("project_name", "") or "").strip()
+            if name:
+                return name
+        return "default"
+
+    def _clear_project_state(self, project_key):
+        self._all_at_start_signature_by_project.pop(project_key, None)
+        prefix = f"{project_key}|"
+        self._one_per_scene_seen = {sig for sig in self._one_per_scene_seen if not sig.startswith(prefix)}
+
+    def auto_queue(self, remaining_scenes, scene_index, enable_auto_queue=True, queue_strategy="All At Start", max_queue=64, PROJECT_CONFIG=None, SCENE_COUNT=None, **_kwargs):
+        if not enable_auto_queue:
+            return ("Auto-queue disabled.",)
+
+        remaining = self._to_int(remaining_scenes, 0)
+        idx = self._to_int(scene_index, 0)
+        max_q = max(1, self._to_int(max_queue, 1))
+        project_key = self._project_key(PROJECT_CONFIG)
+        scene_total = self._to_int(SCENE_COUNT, idx + remaining + 1)
+
+        if scene_total > 0:
+            expected_remaining = max(0, scene_total - (idx + 1))
+            if remaining > expected_remaining:
+                remaining = expected_remaining
+
+        if remaining <= 0:
+            self._clear_project_state(project_key)
+            return ("No remaining scenes to queue.",)
+
+        if queue_strategy == "All At Start":
+            if idx != 0:
+                return (f"Auto-queue skipped (scene_index={idx}).",)
+            signature = f"{project_key}|{scene_total}|{remaining}|{max_q}"
+            if self._all_at_start_signature_by_project.get(project_key) == signature:
+                return ("Auto-queue skipped (already queued for this run signature).",)
+            self._all_at_start_signature_by_project[project_key] = signature
+            prefix = f"{project_key}|"
+            self._one_per_scene_seen = {sig for sig in self._one_per_scene_seen if not sig.startswith(prefix)}
+            runs = min(remaining, max_q)
+            scene_signature = None
+        else:
+            scene_signature = f"{project_key}|{idx}"
+            if scene_signature in self._one_per_scene_seen:
+                return ("Auto-queue skipped (scene already queued for this run).",)
+            self._one_per_scene_seen.add(scene_signature)
+            runs = 1
+
+        queued = 0
+        try:
+            if "server" not in globals():
+                return ("Auto-queue unavailable: server not initialized.",)
+            for _ in range(runs):
+                server.PromptServer.instance.send_sync("impact-add-queue", {})
+                queued += 1
+        except Exception as e:
+            if queue_strategy == "All At Start":
+                self._all_at_start_signature_by_project.pop(project_key, None)
+            elif scene_signature:
+                self._one_per_scene_seen.discard(scene_signature)
+            return (f"Auto-queue failed after {queued} job(s): {e}",)
+
+        if queue_strategy == "All At Start" and remaining > runs:
+            return (f"Auto-queued {queued} job(s). {remaining - runs} scene(s) left; raise max_queue or queue manually.",)
+
+        return (f"Auto-queued {queued} job(s).",)
+
+
 # --- SHOT LIST ADAPTER ---
 class PGFX_Studio_ShotListAdapter:
     """
@@ -2780,6 +3956,15 @@ class PGFX_Studio_ShotListAdapter:
                 expected_count = len(shots_in)
                 report.append("WARNING: TIMING_MAP missing durations_frames/data. Using SHOT_LIST length.")
 
+        if expected_count > 0 and not shots_in:
+            msg = "ERROR: SHOT_LIST is empty; refusing to synthesize placeholder scenes."
+            if strict:
+                raise ValueError(msg)
+            report.append(msg)
+            shot_out = dict(SHOT_LIST)
+            shot_out["data"] = []
+            return (shot_out, {"data": []}, "\n".join(report))
+
         # Build index -> shot mapping
         by_index = {}
         for entry in shots_in:
@@ -2800,8 +3985,11 @@ class PGFX_Studio_ShotListAdapter:
         for idx in range(max(0, expected_count)):
             entry = dict(by_index.get(idx, {}))
             if not entry:
-                report.append(f"WARNING: Missing shot for index {idx}; inserted placeholder.")
-                entry = {"index": idx}
+                msg = f"ERROR: Missing shot for index {idx}."
+                if strict:
+                    raise ValueError(msg)
+                report.append(msg)
+                continue
 
             # Ensure required keys
             entry["index"] = idx
@@ -2823,6 +4011,9 @@ class PGFX_Studio_ShotListAdapter:
         extra_indices = [i for i in by_index.keys() if i < 0 or i >= expected_count]
         if extra_indices:
             report.append(f"WARNING: Dropped shots outside timing range: {sorted(extra_indices)}.")
+
+        if expected_count > 0 and len(normalized) != expected_count:
+            report.append(f"ERROR: SHOT_LIST incomplete ({len(normalized)}/{expected_count}).")
 
         shot_out = dict(SHOT_LIST)
         shot_out["data"] = normalized
@@ -3027,8 +4218,10 @@ NODE_CLASS_MAPPINGS = {
     "PGFX_Studio_ScriptSupervisor": PGFX_Studio_ScriptSupervisor,
     "PGFX_Studio_AudioPinAdapter": PGFX_Studio_AudioPinAdapter,
     "PGFX_Studio_ProjectConfigValidator": PGFX_Studio_ProjectConfigValidator,
+    "PGFX_Studio_ProjectConfigToSize": PGFX_Studio_ProjectConfigToSize,
     "PGFX_Studio_TimingMapAdapter": PGFX_Studio_TimingMapAdapter,
     "PGFX_Studio_SceneCountAdapter": PGFX_Studio_SceneCountAdapter,
+    "PGFX_Studio_AutoQueue": PGFX_Studio_AutoQueue,
     "PGFX_Studio_ShotListAdapter": PGFX_Studio_ShotListAdapter,
     "PGFX_Studio_CharacterTrackAdapter": PGFX_Studio_CharacterTrackAdapter,
 }
@@ -3060,8 +4253,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_Studio_ControlNet": "👄 Studio ControlNet (Viseme Bridge)",
     "PGFX_Studio_AudioPinAdapter": "🔌 Studio Adapter (AUDIO→audio)",
     "PGFX_Studio_ProjectConfigValidator": "🔌 Studio Adapter (PROJECT_CONFIG core)",
+    "PGFX_Studio_ProjectConfigToSize": "📐 Studio Adapter (PROJECT_CONFIG → Size)",
     "PGFX_Studio_TimingMapAdapter": "🔌 Studio Adapter (TIMING_MAP core)",
     "PGFX_Studio_SceneCountAdapter": "🔌 Studio Adapter (Scene Count)",
+    "PGFX_Studio_AutoQueue": "🔁 Studio Auto-Queue (Scenes)",
     "PGFX_Studio_ShotListAdapter": "🔌 Studio Adapter (SHOT_LIST core)",
     "PGFX_Studio_CharacterTrackAdapter": "🔌 Studio Adapter (CHARACTER_TRACK core)",
 }

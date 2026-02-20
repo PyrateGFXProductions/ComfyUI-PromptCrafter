@@ -1,0 +1,4 @@
+interface:
+  display_name: "LTX-2 Workflow Alignment"
+  short_description: "Build and refine LTX-2-only video generation workflows"
+  default_prompt: "Use LTX-2-only workflow rules and map them to PGFX PromptCrafter nodes and outputs."

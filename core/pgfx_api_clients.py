@@ -436,6 +436,21 @@ class GGUFClient:
             "offload_kqv": offload_kqv,
             "verbose": True,
         }
+        def _supports_llama_arg(arg_name: str) -> bool:
+            try:
+                return arg_name in inspect.signature(Llama.__init__).parameters
+            except Exception:
+                return False
+
+        if is_vision_model and "qwen" in model_id.lower():
+            image_min_tokens = int(getattr(config, "QWEN_VL_IMAGE_MIN_TOKENS", 0) or 0)
+            if image_min_tokens > 0 and _supports_llama_arg("image_min_tokens"):
+                llama_kwargs["image_min_tokens"] = image_min_tokens
+            elif image_min_tokens > 0:
+                print(
+                    "\033[93m[PromptCrafter] Llama() does not accept image_min_tokens in this "
+                    "llama-cpp-python build. Consider upgrading for better Qwen-VL grounding.\033[0m"
+                )
         print(
             f"\033[94m[PromptCrafter] GGUF runtime settings for '{model_id}': "
             f"n_ctx={n_ctx}, n_gpu_layers={n_gpu_layers}, n_batch={n_batch}, n_ubatch={n_ubatch}, offload_kqv={offload_kqv}\033[0m"
@@ -485,12 +500,27 @@ class GGUFClient:
         
         if is_vision_model:
             print(f"\033[94m[PromptCrafter] Vision model detected. Auto-configuring chat handler...\033[0m")
-            vision_projector_use_gpu = bool(
-                kwargs.get(
-                    "vision_projector_use_gpu",
-                    getattr(config, "GGUF_VISION_PROJECTOR_USE_GPU", False),
-                )
-            )
+            explicit_projector_kw = "vision_projector_use_gpu" in kwargs
+            if explicit_projector_kw:
+                vision_projector_use_gpu = bool(kwargs.get("vision_projector_use_gpu", False))
+            elif getattr(config, "GGUF_VISION_PROJECTOR_USE_GPU_WAS_SET", False):
+                vision_projector_use_gpu = bool(getattr(config, "GGUF_VISION_PROJECTOR_USE_GPU", False))
+            else:
+                # Auto-enable projector GPU when vision offload is already active and VRAM looks healthy.
+                auto_gpu = False
+                free_mib = None
+                if vision_runtime is not None:
+                    free_mib = vision_runtime.get("free_vram_mib")
+                    if int(vision_runtime.get("n_gpu_layers", 0)) != 0:
+                        auto_gpu = True
+                if free_mib is not None and free_mib < 5000:
+                    auto_gpu = False
+                vision_projector_use_gpu = auto_gpu
+                if vision_projector_use_gpu:
+                    print(
+                        "\033[94m[PromptCrafter] Auto-enabled vision projector GPU backend. "
+                        "Set PGFX_GGUF_VISION_PROJECTOR_USE_GPU=0 to force CPU.\033[0m"
+                    )
             
             # For modern llama-cpp-python, we don't need to find the projector manually.
             # We just need to select the correct chat handler if it's a known architecture.
@@ -510,12 +540,28 @@ class GGUFClient:
                     if not projector_file:
                         raise FileNotFoundError(f"Qwen3-VL model requires a projector file (e.g., *mmproj*.gguf) in the same directory, but none was found in '{model_dir}'.")
                         
+                    def _supports_handler_arg(arg_name: str) -> bool:
+                        try:
+                            return arg_name in inspect.signature(Qwen3VLChatHandler.__init__).parameters
+                        except Exception:
+                            return False
+
                     force_reasoning = "thinking" in model_id.lower()
-                    chat_handler = Qwen3VLChatHandler(
-                        clip_model_path=os.path.join(model_dir, projector_file),
-                        force_reasoning=force_reasoning,
-                        use_gpu=vision_projector_use_gpu,
-                    )
+                    handler_kwargs = {
+                        "clip_model_path": os.path.join(model_dir, projector_file),
+                        "force_reasoning": force_reasoning,
+                        "use_gpu": vision_projector_use_gpu,
+                    }
+                    image_min_tokens = int(getattr(config, "QWEN_VL_IMAGE_MIN_TOKENS", 0) or 0)
+                    if image_min_tokens > 0 and _supports_handler_arg("image_min_tokens"):
+                        handler_kwargs["image_min_tokens"] = image_min_tokens
+                    elif image_min_tokens > 0:
+                        print(
+                            "\033[93m[PromptCrafter] Qwen3VLChatHandler does not accept image_min_tokens in this "
+                            "llama-cpp-python build. Consider upgrading for better grounding.\033[0m"
+                        )
+
+                    chat_handler = Qwen3VLChatHandler(**handler_kwargs)
                     projector_backend = "GPU" if vision_projector_use_gpu else "CPU"
                     print(
                         f"\033[92m[PromptCrafter] Configured Qwen3VLChatHandler with projector '{projector_file}' "

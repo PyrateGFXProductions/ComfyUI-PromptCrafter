@@ -42,7 +42,7 @@ from ..core import pgfx_thinking_engine as thinking_process
 # warnings.filterwarnings("ignore", category=UserWarning, module='speechbrain.inference')
 
 def get_combined_models():
-    """Helper to get a combined list of GGUF, HuggingFace and API models."""
+    """Helper to get a combined list of local-first models and configured providers."""
     gguf_files = api_clients.get_local_llm_gguf_files()
     gguf_models = [f"gguf/{m}" for m in gguf_files if "not installed" not in m and "not_found" not in m and "error_scanning" not in m]
     
@@ -53,6 +53,50 @@ def get_combined_models():
     # Combine lists, ensuring local models are listed first.
     combined = hf_models_formatted + gguf_models + [m for m in api_models if m not in hf_models_formatted + gguf_models]
     return combined
+
+
+_LOCAL_PROVIDER_PREFIXES = ("gguf/", "hf/", "ollama/", "lmstudio/", "text-generation-webui/")
+
+
+def _is_local_model_id(model_id):
+    """Returns True when a model identifier resolves to a local runtime/provider."""
+    if not model_id:
+        return True
+    model = str(model_id).strip()
+    lower = model.lower()
+    if lower.startswith(_LOCAL_PROVIDER_PREFIXES):
+        return True
+
+    # Backward compatibility: allow raw local model names.
+    try:
+        if model in api_clients.get_local_hf_models():
+            return True
+        if model in api_clients.get_local_llm_gguf_files():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _enforce_local_only_models(local_only_models, selected_models):
+    """
+    Blocks non-local model identifiers when local-only mode is enabled.
+
+    selected_models: iterable of tuples [(label, model_id), ...]
+    """
+    if not local_only_models:
+        return
+    invalid = []
+    for label, model_id in selected_models:
+        if model_id and str(model_id).strip() and str(model_id).strip().lower() not in ("none", "<none>"):
+            if not _is_local_model_id(model_id):
+                invalid.append(f"{label}='{model_id}'")
+    if invalid:
+        details = ", ".join(invalid)
+        raise ValueError(
+            "Local-only mode is enabled. Non-local model selection blocked: "
+            f"{details}. Use local providers only (gguf/, hf/, ollama/, lmstudio/, text-generation-webui/)."
+        )
 
 
 # ------------------------------------------------------------------------------------
@@ -73,7 +117,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 "pipeline_mode": (["Image", "Video"], {"default": "Image"}),
                 "instruction": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT}),
                 "subject": ("STRING", {"multiline": True, "default": "" } ),
-                "model": (combined_models, {"tooltip": "The language model to use. Can be a local GGUF file or an API-based model."} ),
+                "model": (combined_models, {"tooltip": "The language model to use. Prefer local backends (gguf/, hf/, or local provider runtimes)."} ),
                 "image_count": ("INT", {"default": 1, "min": 1, "max": 5, "step": 1}),
                 "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "artistry_level": ("INT", {"default": 5, "min": 1, "max": 10, "step": 1}),
@@ -96,8 +140,9 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 "instruct_model": (combined_models, {"tooltip": "Optional: The 'instruct' model for the dual-model chain."} ),
                 "llm_device": (config.LLM_DEVICE_OPTIONS, {"default": config.DEFAULT_LLM_DEVICE, "tooltip": "Where local LLM inference should run. 'Default (GPU)' uses configured acceleration; 'CPU' forces CPU for local GGUF/HF models."}),
                 "reset_context": ("BOOLEAN", {"default": config.DEFAULT_LLM_STATELESS, "tooltip": "If enabled, resets local model context before each call to avoid carrying prior conversation state."}),
+                "local_only_models": ("BOOLEAN", {"default": True, "tooltip": "If enabled, blocks non-local model providers for strict local workflows."}),
                 "style_tags": ("STRING", {"multiline": False, "default": ""}),
-                "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "Generic Video (Wan, etc.)"], {"default": "Generic (SD1.5, SD2.1)"}),
+                "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "LTX-2 (Audio/Lip Sync/Retake)"], {"default": "Generic (SD1.5, SD2.1)"}),
                 "generate_schedule": ("BOOLEAN", {"default": False}),
                 "max_frames": ("INT", {"default": 240, "min": 1, "max": 99999}),
                 "interpolate_keyframes": ("BOOLEAN", {"default": False}),
@@ -140,6 +185,14 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 thinking_model = mode_kwargs.get("thinking_model")
                 instruct_model = mode_kwargs.get("instruct_model")
             kwargs = mode_kwargs
+            _enforce_local_only_models(
+                bool(kwargs.get("local_only_models", True)),
+                (
+                    ("model", model),
+                    ("thinking_model", thinking_model),
+                    ("instruct_model", instruct_model),
+                ),
+            )
 
             user_text = instruction
             if subject and subject.strip():
@@ -484,7 +537,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
         types = copy.deepcopy(PromptCrafter_VisualCreator.INPUT_TYPES())
         if "response_mode" not in types["required"]:
             types["required"]["response_mode"] = (["Predictable", "Creative"], {"default": "Predictable", "tooltip": "Predictable = deterministic, instruction-only. Creative = current behavior."})
-        types["required"]["model"] = (combined_models, {"tooltip": "The language model to use. Can be a local GGUF file or an API-based model."} )
+        types["required"]["model"] = (combined_models, {"tooltip": "The language model to use. Prefer local backends (gguf/, hf/, or local provider runtimes)."} )
         types["required"]["temperature"] = ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01})
         types["required"]["max_length_words"] = ("INT", {"default": 2000, "min": 0, "max": 10000, "step": 100})
         types["required"]["style_override"] = (style_profiles.get_style_override_options("Lyrics"), {"default": "None"})
@@ -514,7 +567,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             "whisper_model": (cls.get_whisper_models(), {"default": "large-v3", "tooltip": "The Whisper model to use for transcription. Larger models are more accurate but slower and use more VRAM."} ),
             "whisper_language": (["auto-detect", "en", "es", "fr", "de", "it", "pt", "is", "ru", "ja", "ko", "zh"], {"default": "auto-detect", "tooltip": "Language of the audio. 'is' for Icelandic. Providing this greatly improves accuracy."} ),
             "whisper_engine": (["faster-whisper", "insanely-fast-whisper"], {"default": "faster-whisper", "tooltip": "Default: faster-whisper. Alternative: insanely-fast-whisper (optimized for batch processing)."} ),
-            "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "Generic Video (Wan, etc.)"], {"default": "Generic Video (Wan, etc.)", "tooltip": "Format the prompt for a specific model's syntax. OVI speech format is handled automatically."} ),
+            "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "LTX-2 (Audio/Lip Sync/Retake)"], {"default": "LTX-2 (Audio/Lip Sync/Retake)", "tooltip": "Format the prompt for a specific model syntax. Use LTX-2 for audio/lip-sync/retake-oriented workflows. OVI speech format is handled automatically."} ),
             "use_vrg_prompt_builder": ("BOOLEAN", {"default": False, "tooltip": "If True, use the detailed music video prompt builder inputs below, overriding the main user_text input."} ),
             "automate_vrg_variables": ("BOOLEAN", {"default": False, "tooltip": "If True, use an LLM to automatically fill the VRGDG variables based on the lyrics."} ),
             "character_description": ("STRING", {"multiline": True, "default": "The Women."} ),
@@ -524,10 +577,10 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             "list_handling_mode": (["Strict Cycle (use each once, then repeat)", "Reference Guide (LLM creates variations inspired by list)", "Random Selection (pick randomly from list)", "Free Interpretation (LLM can ignore or combine items)"], {"default": "Reference Guide (LLM creates variations inspired by list)"}),
             "environment": ("STRING", {"multiline": True, "default": "open field at dusk, dimly lit bedroom, empty city street at night, forest clearing with morning fog, seaside cliff at golden hour, rainy urban alley, sunlit living room, desert road at sunrise"}),
             "lighting": ("STRING", {"multiline": True, "default": "warm amber glow, cool window light, neon reflections, diffused morning light, soft backlight haze, flickering streetlights, gentle afternoon sun, pink-orange dawn light"}),
-            "camera_motion": ("STRING", {"multiline": True, "default": "zoom in, zoom out, tilt down, rotate around, tilt up, pan, track"}),
+            "camera_motion": ("STRING", {"multiline": True, "default": "push in, pull back, pan left, pan right, tilt up, tilt down, track forward, orbit"}),
             "physical_interaction": ("STRING", {"multiline": True, "default": "walking through tall grass, lying on bed staring upward, leaning against a wall in stillness, reaching toward sunlight, hair moving in wind, footsteps in puddles, brushing hand across furniture, standing motionless in breeze"}),
             "facial_expression": ("STRING", {"multiline": True, "default": "Intense raw emotion"}),
-            "shots": ("STRING", {"multiline": True, "default": "Close up, medium, wide angle, over the shoulder, point of view, overhead, ground level"}),
+            "shots": ("STRING", {"multiline": True, "default": "close up, medium shot, wide shot, over the shoulder, establishing shot, low angle, high angle, overhead shot"}),
             "outfit_rules": ("STRING", {"multiline": True, "default": "a white dress"}),
             "character_visibility": ("STRING", {"multiline": True, "default": "mostly visible, half-shadowed, silhouetted, reflected or obscured, seen from behind, partially out of frame, emerging from light, fading into darkness"}),
         })
@@ -600,6 +653,14 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 thinking_model = mode_kwargs.get("thinking_model")
                 instruct_model = mode_kwargs.get("instruct_model")
             kwargs = mode_kwargs
+            _enforce_local_only_models(
+                bool(kwargs.get("local_only_models", True)),
+                (
+                    ("model", model),
+                    ("thinking_model", thinking_model),
+                    ("instruct_model", instruct_model),
+                ),
+            )
             user_text = instruction
             if subject and subject.strip():
                 user_text = f"SUBJECT:\n{subject}\n\nINSTRUCTION:\n{instruction}"
@@ -948,7 +1009,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 if prompt is None or (isinstance(prompt, str) and prompt.startswith("An error occurred:")):
                     return self._handle_creator_exception(Exception(prompt or "A critical error occurred in the thought process."))
 
-                target_model_format = kwargs.get("target_model_format", "Generic Video (Wan, etc.)")
+                target_model_format = kwargs.get("target_model_format", "LTX-2 (Audio/Lip Sync/Retake)")
                 
                 passthrough_images = [img for img, _ in images_with_weights]
                 passthrough_images.extend([None] * (self.MAX_DYNAMIC_IMAGES - len(passthrough_images)))

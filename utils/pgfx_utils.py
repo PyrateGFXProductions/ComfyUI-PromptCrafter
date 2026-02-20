@@ -1354,6 +1354,63 @@ def chain_of_thought_process(thinking_prompt, thinking_model, instruct_prompt, i
     debug_mode = kwargs.get('debug_mode', False)
     expect_json = kwargs.get('expect_json', True)
     timeout = kwargs.get('timeout', 120)  # Add timeout parameter with default
+
+    def _norm_model_name(value: str) -> str:
+        try:
+            normalized = normalise_model_name(value)
+        except Exception:
+            normalized = value
+        return (normalized or "").strip().lower()
+
+    single_pass = bool(kwargs.get("single_pass_if_same_model", True))
+    if single_pass and _norm_model_name(thinking_model) and _norm_model_name(thinking_model) == _norm_model_name(instruct_model):
+        single_prompt = textwrap.dedent(f"""
+            You are performing both the analysis and the final response in one pass.
+            Use the task context below, then follow the output requirements exactly.
+
+            TASK CONTEXT:
+            {thinking_prompt}
+
+            OUTPUT REQUIREMENTS:
+            {instruct_prompt}
+
+            {"Return ONLY valid JSON with no markdown fences." if expect_json else "Return ONLY the final answer text."}
+        """).strip()
+
+        single_kwargs = kwargs.copy()
+        single_kwargs.setdefault('prefer_chat', True)
+        single_kwargs.setdefault('temperature', 0.2 if expect_json else 0.3)
+        single_kwargs.setdefault('debug_title', "Single-Pass (Think+Instruct)")
+        single_kwargs['timeout'] = timeout
+
+        ok, output_text = api_clients.query_model_auto(
+            thinking_model,
+            prompt=single_prompt,
+            images=images,
+            **single_kwargs
+        )
+        if not ok:
+            error_message = f"Single-pass call failed: {output_text}"
+            print(f"\033[91m[PromptCrafter] {error_message}\033[0m")
+            return False, error_message, ""
+
+        if not output_text or not str(output_text).strip():
+            error_message = "Single-pass call returned an empty response."
+            print(f"\033[91m[PromptCrafter] {error_message}\033[0m")
+            return False, error_message, ""
+
+        _debug_print(debug_mode, "Single-Pass Output", output_text)
+
+        if expect_json:
+            try:
+                parsed = json_utils.extract_and_parse_json(str(output_text))
+            except Exception as e:
+                return False, f"Single-pass JSON parse error: {e}", ""
+            if parsed is None:
+                return False, "Single-pass returned non-JSON output.", ""
+            return True, parsed, ""
+
+        return True, str(output_text).strip(), ""
     
     # --- STAGE 1: The Thinker (Reasoning) ---
     print(f"\033[94m[PromptCrafter] Dual-Model Chain: Kicking off Stage 1 (Thinking) with {thinking_model}...\033[0m")

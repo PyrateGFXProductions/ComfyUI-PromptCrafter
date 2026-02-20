@@ -97,6 +97,10 @@ GGUF_UNLOAD_VISION_AFTER_QUERY = _env_flag("PGFX_GGUF_UNLOAD_VISION_AFTER_QUERY"
 # Keep projector on CPU by default; enable with PGFX_GGUF_VISION_PROJECTOR_USE_GPU=1 if you have ample VRAM.
 GGUF_VISION_PROJECTOR_USE_GPU_WAS_SET = os.getenv("PGFX_GGUF_VISION_PROJECTOR_USE_GPU") is not None
 GGUF_VISION_PROJECTOR_USE_GPU = _env_flag("PGFX_GGUF_VISION_PROJECTOR_USE_GPU", "0")
+# Qwen3-VL grounding can degrade when image tokens are too low.
+# Set PGFX_QWEN_VL_IMAGE_MIN_TOKENS=1024+ for better grounding/lip-sync prompt reliability.
+QWEN_VL_IMAGE_MIN_TOKENS_WAS_SET = os.getenv("PGFX_QWEN_VL_IMAGE_MIN_TOKENS") is not None
+QWEN_VL_IMAGE_MIN_TOKENS = max(0, int(os.getenv("PGFX_QWEN_VL_IMAGE_MIN_TOKENS", "1024")))
 
 # --- Dependency Flags (set at runtime in __init__.py) ---
 LLAMA_CPP_AVAILABLE = False

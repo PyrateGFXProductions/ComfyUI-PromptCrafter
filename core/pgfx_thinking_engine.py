@@ -89,16 +89,16 @@ class ThoughtProcess:
         self.lyrics_list_handling_mode = kwargs.pop('lyrics_list_handling_mode', "Reference Guide (LLM creates variations inspired by list)")
         self.lyrics_environment = kwargs.pop('lyrics_environment', "open field at dusk, dimly lit bedroom, empty city street at night, forest clearing with morning fog, seaside cliff at golden hour, rainy urban alley, sunlit living room, desert road at sunrise")
         self.lyrics_lighting = kwargs.pop('lyrics_lighting', "warm amber glow, cool window light, neon reflections, diffused morning light, soft backlight haze, flickering streetlights, gentle afternoon sun, pink-orange dawn light")
-        self.lyrics_camera_motion = kwargs.pop('lyrics_camera_motion', "zoom in, zoom out, tilt down, rotate around, tilt up, pan, track")
+        self.lyrics_camera_motion = kwargs.pop('lyrics_camera_motion', "push in, pull back, pan left, pan right, tilt up, tilt down, track forward, orbit")
         self.lyrics_physical_interaction = kwargs.pop('lyrics_physical_interaction', "walking through tall grass, lying on bed staring upward, leaning against a wall in stillness, reaching toward sunlight, hair moving in wind, footsteps in puddles, brushing hand across furniture, standing motionless in breeze")
         self.lyrics_facial_expression = kwargs.pop('lyrics_facial_expression', "Intense raw emotion")
-        self.lyrics_shots = kwargs.pop('lyrics_shots', "Close up, medium, wide angle, over the shoulder, point of view, overhead, ground level")
+        self.lyrics_shots = kwargs.pop('lyrics_shots', "close up, medium shot, wide shot, over the shoulder, establishing shot, low angle, high angle, overhead shot")
         self.lyrics_outfit_rules = kwargs.pop('lyrics_outfit_rules', "a white dress")
         self.lyrics_character_visibility = kwargs.pop('lyrics_character_visibility', "mostly visible, half-shadowed, silhouetted, reflected or obscured, seen from behind, partially out of frame, emerging from light, fading into darkness")
         self.lyrics_generate_schedule = kwargs.pop('lyrics_generate_schedule', True)
         self.lyrics_interpolate_keyframes = kwargs.pop('lyrics_interpolate_keyframes', False)
         self.lyrics_interpolation_frame_interval = kwargs.pop('lyrics_interpolation_frame_interval', 0)
-        self.lyrics_target_model_format = kwargs.pop('lyrics_target_model_format', "Generic Video (Wan, etc.)")
+        self.lyrics_target_model_format = kwargs.pop('lyrics_target_model_format', "LTX-2 (Audio/Lip Sync/Retake)")
 
         # The nodes now handle image collection and description, so we just store the results.
         self.images_with_weights = self._collect_images_with_weights(image_count, image_weights_json)
@@ -474,7 +474,7 @@ class ThoughtProcess:
 
         # --- ENHANCEMENT: The prompt is rewritten to enforce the primacy of image context. ---
         prompt = textwrap.dedent(f"""
-            You are an expert AI Music Video Director. Your task is to analyze reference images and song lyrics to produce nine creative visual categories.
+            You are an expert AI Music Video Director. Your task is to analyze reference images and song lyrics to produce ten creative visual categories.
 
             **CRITICAL HIERARCHY:**
             1.  **IMAGE CONTEXT IS PRIMARY:** The `Image Context` is the absolute source of truth for all visual elements. The generated `character_description`, `outfit_rules`, and `environment` MUST directly and accurately reflect the content of the images.
@@ -488,8 +488,8 @@ class ThoughtProcess:
 
             **STRICT RULES:**
             -   `character_description` MUST be a direct, factual description of the person in the `Image Context`.
-            -   `camera_motion` must only use: zoom in, zoom out, pan left, pan right, tilt up, tilt down, track forward, track backward, orbit left, orbit right, rotate.
-            -   `shots` must only use: close up, extreme close up, medium shot, wide shot, extreme wide shot, over the shoulder, profile shot, two shot.
+            -   `camera_motion` must use standard cinematic camera language suitable for LTX-2 (for example: push in, pull back, pan, tilt, track, orbit, handheld, static).
+            -   `shots` must use standard cinematic shot language suitable for LTX-2 (for example: close up, medium shot, wide shot, establishing shot, over the shoulder, low angle, high angle, overhead shot).
             -   `outfit_rules` must be two-word entries derived directly from the `Image Context` (e.g., white dress, blue shirt, black jacket).
             -   **Positional Pairing is CRITICAL**: The first entry in `environment` corresponds to the first in `lighting`, `camera_motion`, etc. The second entries correspond, and so on for all eight positions.
             -   Do NOT include lyric text or unrelated commentary in the output.
@@ -566,15 +566,27 @@ class ThoughtProcess:
 
         # Enforce allowed actions for camera_motion
         if categories["auto_camera_motion"]:
-            allowed_motions = {"zoom in", "zoom out", "pan left", "pan right", "tilt up", "tilt down", "track forward", "track backward", "orbit left", "orbit right", "rotate"}
-            entries = [e.strip() for e in categories["auto_camera_motion"].split(",")]
+            allowed_motions = {
+                "static", "handheld", "zoom in", "zoom out", "push in", "pull back",
+                "dolly in", "dolly out", "pan", "pan left", "pan right", "tilt", "tilt up", "tilt down",
+                "track", "tracking shot", "track forward", "track backward",
+                "orbit", "orbit left", "orbit right", "rotate", "rotate around",
+                "truck left", "truck right", "arc left", "arc right", "crane up", "crane down",
+                "follow", "follow shot", "whip pan", "locked-off"
+            }
+            entries = [e.strip().lower() for e in categories["auto_camera_motion"].split(",")]
             valid_entries = [e for e in entries if e in allowed_motions]
             categories["auto_camera_motion"] = ", ".join(valid_entries)
 
         # Enforce standard framing types for shots
         if categories["auto_shots"]:
-            allowed_shots = {"close up", "extreme close up", "medium shot", "wide shot", "extreme wide shot", "over the shoulder", "profile shot", "two shot"}
-            entries = [e.strip() for e in categories["auto_shots"].split(",")]
+            allowed_shots = {
+                "close up", "extreme close up", "medium close up", "medium shot",
+                "full shot", "wide shot", "extreme wide shot", "long shot", "establishing shot",
+                "over the shoulder", "profile shot", "two shot", "point of view", "insert shot",
+                "macro shot", "overhead shot", "high angle", "low angle"
+            }
+            entries = [e.strip().lower() for e in categories["auto_shots"].split(",")]
             valid_entries = [e for e in entries if e in allowed_shots]
             categories["auto_shots"] = ", ".join(valid_entries)
 

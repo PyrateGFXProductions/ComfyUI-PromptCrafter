@@ -4,6 +4,7 @@ import shutil
 import re
 import json
 import time
+import shlex
 import random
 import copy
 import concurrent.futures
@@ -1705,6 +1706,413 @@ class PromptCrafter_SaveTextFile:
 
         return (f"Saved to {full_path}",)
 
+
+# ------------------------------------------------------------------------------------
+# PromptCrafter_LTX2LocalPipelineBuilder Node
+# ------------------------------------------------------------------------------------
+class PromptCrafter_LTX2LocalPipelineBuilder:
+    DESCRIPTION = (
+        "Builds a local-only LTX-2 manifest and shell script from a PromptCrafter "
+        "schedule JSON. This node emits local CLI commands only and does not call "
+        "platform APIs."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "schedule_json": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": "{\n  \"0\": \"Cinematic opening shot...\"\n}",
+                        "tooltip": "Schedule JSON from PromptCrafter (frame->prompt map).",
+                    },
+                ),
+                "output_folder": (
+                    "STRING",
+                    {
+                        "default": "output/PromptCrafter/LTX2_local",
+                        "tooltip": "Folder where manifest/script files are saved when write_files is enabled.",
+                    },
+                ),
+                "pipeline_mode": (
+                    ["one-stage", "two-stage", "distilled", "ic-lora", "keyframe-interp"],
+                    {"default": "two-stage"},
+                ),
+                "model_id": (
+                    [
+                        "ltx-2-19b-dev-fp8_transformer_only.safetensors",
+                        "ltx-2-19b-dev_Q4_K_M.gguf",
+                        "ltx-2-19b-distilled_Q6_K.gguf",
+                    ],
+                    {
+                        "default": "ltx-2-19b-dev-fp8_transformer_only.safetensors",
+                        "tooltip": "Local LTX-2 model reference installed in your environment.",
+                    },
+                ),
+                "width": ("INT", {"default": 768, "min": 64, "max": 4096, "step": 8}),
+                "height": ("INT", {"default": 432, "min": 64, "max": 4096, "step": 8}),
+                "num_frames": ("INT", {"default": 121, "min": 1, "max": 2048, "step": 1}),
+                "fps": ("INT", {"default": 24, "min": 1, "max": 120, "step": 1}),
+                "num_inference_steps": ("INT", {"default": 30, "min": 1, "max": 300, "step": 1}),
+                "guidance_scale": ("FLOAT", {"default": 3.5, "min": 0.0, "max": 30.0, "step": 0.1}),
+                "base_seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "seed_strategy": (
+                    ["Increment Per Scene", "Single Seed"],
+                    {"default": "Increment Per Scene"},
+                ),
+            },
+            "optional": {
+                "negative_prompt": ("STRING", {"multiline": True, "default": ""}),
+                "split_by_keyframes": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "If enabled, each keyframe prompt becomes a scene command.",
+                    },
+                ),
+                "conditioning_method": (
+                    ["merge", "head", "concatenate"],
+                    {"default": "merge"},
+                ),
+                "image_conditioning": (
+                    "STRING",
+                    {
+                        "multiline": False,
+                        "default": "",
+                        "tooltip": "Optional image conditioning media entries (e.g., path,start_frame,strength;...).",
+                    },
+                ),
+                "video_conditioning": (
+                    "STRING",
+                    {
+                        "multiline": False,
+                        "default": "",
+                        "tooltip": "Optional video conditioning media entries (e.g., path,strength).",
+                    },
+                ),
+                "precision": (["bf16", "fp16", "fp32"], {"default": "bf16"}),
+                "quantization": (["none", "fp8-cast", "fp8-scaled-mm"], {"default": "none"}),
+                "offload_to_cpu": ("BOOLEAN", {"default": False}),
+                "decode_timestep": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "decode_noise_scale": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 5.0, "step": 0.001}),
+                "stg_scale": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 30.0, "step": 0.1}),
+                "stg_rescale": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 5.0, "step": 0.1}),
+                "audio_file": (
+                    "STRING",
+                    {
+                        "multiline": False,
+                        "default": "",
+                        "tooltip": "Optional local audio path for downstream lip-sync/viseme stages.",
+                    },
+                ),
+                "write_files": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Write manifest + script files to output_folder.",
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("manifest_json", "render_script", "manifest_path", "script_path", "status")
+    FUNCTION = "build"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+
+    def _parse_schedule_items(self, schedule_json):
+        parsed = None
+        if isinstance(schedule_json, dict):
+            parsed = schedule_json
+        else:
+            raw = "" if schedule_json is None else str(schedule_json).strip()
+            if not raw:
+                return []
+            parsed = json_utils.extract_and_parse_json(raw)
+            if parsed is None and raw and not raw.startswith("{") and not raw.startswith("["):
+                return [(0, raw)]
+
+        pairs = []
+        if isinstance(parsed, dict):
+            for frame_key, prompt in parsed.items():
+                try:
+                    frame = int(str(frame_key).strip())
+                except Exception:
+                    continue
+                prompt_text = "" if prompt is None else str(prompt).strip()
+                if prompt_text:
+                    pairs.append((frame, prompt_text))
+        elif isinstance(parsed, list):
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                frame = item.get("frame", item.get("start_frame", item.get("index", 0)))
+                prompt = item.get("prompt", item.get("positive", item.get("text", "")))
+                try:
+                    frame = int(frame)
+                except Exception:
+                    continue
+                prompt_text = "" if prompt is None else str(prompt).strip()
+                if prompt_text:
+                    pairs.append((frame, prompt_text))
+
+        # Last write wins for duplicate frames.
+        dedup = {}
+        for frame, prompt in pairs:
+            dedup[int(frame)] = prompt
+        return sorted(dedup.items(), key=lambda x: x[0])
+
+    def _build_scene_specs(self, schedule_items, split_by_keyframes, num_frames, base_seed, seed_strategy):
+        if not schedule_items:
+            return []
+
+        first_frame, first_prompt = schedule_items[0]
+        if not split_by_keyframes:
+            return [{
+                "scene_index": 0,
+                "start_frame": int(first_frame),
+                "num_frames": int(num_frames),
+                "prompt": first_prompt,
+                "seed": int(base_seed),
+            }]
+
+        scenes = []
+        for i, (frame, prompt) in enumerate(schedule_items):
+            if i + 1 < len(schedule_items):
+                next_frame = int(schedule_items[i + 1][0])
+                scene_frames = max(1, next_frame - int(frame))
+            else:
+                scene_frames = max(1, int(num_frames))
+
+            if seed_strategy == "Increment Per Scene":
+                seed = int(base_seed) + i
+            else:
+                seed = int(base_seed)
+
+            scenes.append({
+                "scene_index": i,
+                "start_frame": int(frame),
+                "num_frames": int(scene_frames),
+                "prompt": prompt,
+                "seed": int(seed),
+            })
+        return scenes
+
+    def _resolve_output_dir(self, output_folder):
+        if not output_folder:
+            output_folder = "output/PromptCrafter/LTX2_local"
+        if os.path.isabs(output_folder):
+            out_dir = os.path.abspath(output_folder)
+        else:
+            out_dir = os.path.abspath(os.path.join(config.COMFYUI_ROOT_DIR, output_folder))
+        os.makedirs(out_dir, exist_ok=True)
+        return out_dir
+
+    def _build_command(self, scene, shared, scene_output_path):
+        parts = [
+            "python", "-m", "ltx_pipelines",
+            "--pipeline", shared["pipeline_mode"],
+            "--model_id", shared["model_id"],
+            "--prompt", scene["prompt"],
+            "--width", str(shared["width"]),
+            "--height", str(shared["height"]),
+            "--num_frames", str(scene["num_frames"]),
+            "--num_inference_steps", str(shared["num_inference_steps"]),
+            "--guidance_scale", str(shared["guidance_scale"]),
+            "--seed", str(scene["seed"]),
+            "--output_path", scene_output_path,
+        ]
+        if shared.get("negative_prompt"):
+            parts.extend(["--negative_prompt", shared["negative_prompt"]])
+        if shared.get("conditioning_method"):
+            parts.extend(["--conditioning_method", shared["conditioning_method"]])
+        if shared.get("image_conditioning"):
+            parts.extend(["--image_conditioning_media_paths", shared["image_conditioning"]])
+        if shared.get("video_conditioning"):
+            parts.extend(["--video_conditioning_media_paths", shared["video_conditioning"]])
+        if shared.get("decode_timestep", 0.0) > 0:
+            parts.extend(["--decode_timestep", str(shared["decode_timestep"])])
+        if shared.get("decode_noise_scale", 0.0) > 0:
+            parts.extend(["--decode_noise_scale", str(shared["decode_noise_scale"])])
+        if shared.get("stg_scale", 0.0) > 0:
+            parts.extend(["--stg_scale", str(shared["stg_scale"])])
+        if shared.get("stg_rescale", 0.0) > 0:
+            parts.extend(["--stg_rescale", str(shared["stg_rescale"])])
+        if shared.get("precision"):
+            parts.extend(["--precision", shared["precision"]])
+        if shared.get("quantization") and shared["quantization"] != "none":
+            parts.extend(["--quantization", shared["quantization"]])
+        if shared.get("offload_to_cpu"):
+            parts.append("--offload_to_cpu")
+        return " ".join(shlex.quote(str(p)) for p in parts)
+
+    def build(
+        self,
+        schedule_json,
+        output_folder,
+        pipeline_mode,
+        model_id,
+        width,
+        height,
+        num_frames,
+        fps,
+        num_inference_steps,
+        guidance_scale,
+        base_seed,
+        seed_strategy,
+        negative_prompt="",
+        split_by_keyframes=True,
+        conditioning_method="merge",
+        image_conditioning="",
+        video_conditioning="",
+        precision="bf16",
+        quantization="none",
+        offload_to_cpu=False,
+        decode_timestep=0.0,
+        decode_noise_scale=0.0,
+        stg_scale=0.0,
+        stg_rescale=0.0,
+        audio_file="",
+        write_files=True,
+    ):
+        schedule_items = self._parse_schedule_items(schedule_json)
+        if not schedule_items:
+            raise ValueError("No valid schedule entries found. Provide a JSON frame->prompt map or plain prompt text.")
+
+        scenes = self._build_scene_specs(
+            schedule_items=schedule_items,
+            split_by_keyframes=bool(split_by_keyframes),
+            num_frames=int(num_frames),
+            base_seed=int(base_seed),
+            seed_strategy=seed_strategy,
+        )
+        if not scenes:
+            raise ValueError("Unable to build scene specs from schedule.")
+
+        out_dir = self._resolve_output_dir(output_folder)
+        shared = {
+            "pipeline_mode": pipeline_mode,
+            "model_id": model_id,
+            "width": int(width),
+            "height": int(height),
+            "fps": int(fps),
+            "num_inference_steps": int(num_inference_steps),
+            "guidance_scale": float(guidance_scale),
+            "negative_prompt": str(negative_prompt or "").strip(),
+            "conditioning_method": conditioning_method,
+            "image_conditioning": str(image_conditioning or "").strip(),
+            "video_conditioning": str(video_conditioning or "").strip(),
+            "precision": precision,
+            "quantization": quantization,
+            "offload_to_cpu": bool(offload_to_cpu),
+            "decode_timestep": float(decode_timestep),
+            "decode_noise_scale": float(decode_noise_scale),
+            "stg_scale": float(stg_scale),
+            "stg_rescale": float(stg_rescale),
+            "audio_file": str(audio_file or "").strip(),
+            "output_dir": out_dir,
+        }
+
+        commands = []
+        for scene in scenes:
+            clip_name = f"scene_{scene['scene_index'] + 1:03d}.mp4"
+            clip_path = os.path.join(out_dir, clip_name)
+            command = self._build_command(scene, shared, clip_path)
+            commands.append({
+                "scene_index": scene["scene_index"],
+                "start_frame": scene["start_frame"],
+                "num_frames": scene["num_frames"],
+                "seed": scene["seed"],
+                "output_path": clip_path,
+                "command": command,
+            })
+
+        manifest = {
+            "format_version": "pgfx_ltx2_local_v1",
+            "local_only": True,
+            "notes": [
+                "Generated by PromptCrafter_LTX2LocalPipelineBuilder.",
+                "No platform API is required for this artifact.",
+                "If your installed ltx-pipelines package has different CLI flags, run: python -m ltx_pipelines --help",
+            ],
+            "pipeline": {
+                "mode": pipeline_mode,
+                "model_id": model_id,
+                "width": int(width),
+                "height": int(height),
+                "fps": int(fps),
+                "num_inference_steps": int(num_inference_steps),
+                "guidance_scale": float(guidance_scale),
+                "precision": precision,
+                "quantization": quantization,
+                "offload_to_cpu": bool(offload_to_cpu),
+                "decode_timestep": float(decode_timestep),
+                "decode_noise_scale": float(decode_noise_scale),
+                "stg_scale": float(stg_scale),
+                "stg_rescale": float(stg_rescale),
+                "conditioning_method": conditioning_method,
+                "image_conditioning": str(image_conditioning or "").strip(),
+                "video_conditioning": str(video_conditioning or "").strip(),
+                "audio_file": str(audio_file or "").strip(),
+            },
+            "scenes": [{
+                "scene_index": s["scene_index"],
+                "start_frame": s["start_frame"],
+                "num_frames": s["num_frames"],
+                "seed": s["seed"],
+                "prompt": s["prompt"],
+            } for s in scenes],
+            "commands": commands,
+        }
+
+        manifest_text = json.dumps(manifest, indent=2, ensure_ascii=False)
+        script_lines = [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            "",
+            "# Local-only LTX-2 render script generated by PGFX PromptCrafter.",
+            "# This does not call platform APIs.",
+            "# If a flag name differs in your installed version, inspect: python -m ltx_pipelines --help",
+            "",
+            f"OUT_DIR={shlex.quote(out_dir)}",
+            "mkdir -p \"$OUT_DIR\"",
+            "python -m ltx_pipelines --help >/dev/null",
+            "",
+        ]
+        if shared["audio_file"]:
+            script_lines.extend([
+                f"# Optional downstream audio path for lip-sync/viseme stages:",
+                f"AUDIO_FILE={shlex.quote(shared['audio_file'])}",
+                "",
+            ])
+        for entry in commands:
+            script_lines.append(entry["command"])
+        script_text = "\n".join(script_lines) + "\n"
+
+        manifest_path = ""
+        script_path = ""
+        status_parts = [f"Prepared {len(scenes)} local LTX-2 scene command(s)."]
+        if write_files:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            manifest_path = os.path.join(out_dir, f"ltx2_local_manifest_{ts}.json")
+            script_path = os.path.join(out_dir, f"run_ltx2_local_{ts}.sh")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(manifest_text)
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(script_text)
+            try:
+                os.chmod(script_path, 0o755)
+            except Exception:
+                pass
+            status_parts.append(f"Saved manifest: {manifest_path}")
+            status_parts.append(f"Saved script: {script_path}")
+        else:
+            status_parts.append("write_files disabled: returning in-memory manifest/script only.")
+
+        return (manifest_text, script_text, manifest_path, script_path, " | ".join(status_parts))
+
 # ------------------------------------------------------------------------------------
 # PromptCrafter_FileOrganizer Node
 # ------------------------------------------------------------------------------------
@@ -2433,6 +2841,7 @@ NODE_CLASS_MAPPINGS = {
     "PromptCrafter_FileOrganizer": PromptCrafter_FileOrganizer,
     "PromptCrafter_Formatter": PromptCrafter_Formatter,
     "PromptCrafter_SaveTextFile": PromptCrafter_SaveTextFile,
+    "PromptCrafter_LTX2LocalPipelineBuilder": PromptCrafter_LTX2LocalPipelineBuilder,
     "PromptCrafter_ImageSwitcher": PromptCrafter_ImageSwitcher,
     "PromptCrafter_PromptChunker": PromptCrafter_PromptChunker,
 }
@@ -2457,6 +2866,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_FileOrganizer": "🗂️ File Organizer",
     "PromptCrafter_Formatter": "📝 Text Formatter",
     "PromptCrafter_SaveTextFile": "💾 Save Text File",
+    "PromptCrafter_LTX2LocalPipelineBuilder": "🎬 LTX-2 Local Pipeline Builder",
     "PromptCrafter_ImageSwitcher": "🔀 Image Switcher",
     "PromptCrafter_PromptChunker": "🧩 Prompt Chunker",
 }

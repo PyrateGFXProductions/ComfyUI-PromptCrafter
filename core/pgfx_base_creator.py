@@ -822,7 +822,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             elif target_format == "Stable Diffusion 3": return prompt_text
             elif target_format == "Stable Cascade": return prompt_text
             elif target_format == "FLUX / Qwen / Hunyuan": return f"{prompt_text}, masterpiece, high quality, 8k"
-            elif target_format == "Generic Video (Wan, etc.)": return prompt_text
+            elif target_format in ("LTX-2 (Audio/Lip Sync/Retake)", "Generic Video (Wan, etc.)"): return prompt_text
             else: return prompt_text
 
     def _generate_prompt_for_scene(self, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, **kwargs): # noqa

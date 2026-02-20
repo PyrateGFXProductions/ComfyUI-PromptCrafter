@@ -47,6 +47,17 @@ Clears internal caches so nodes re‑evaluate inputs (useful after file edits).
 
 ---
 
+## `PromptCrafter_LTX2LocalPipelineBuilder`
+Builds local-only LTX-2 render artifacts from PromptCrafter schedule JSON.
+
+Key behaviors:
+- Converts keyframe schedule JSON into scene-wise local CLI commands.
+- Outputs a manifest JSON plus a runnable shell script.
+- Writes files to disk optionally for immediate local execution.
+- Does not require platform API usage.
+
+---
+
 ## Customizing Profiles
 Profiles are stored in the repo root and control dropdown presets:
 
