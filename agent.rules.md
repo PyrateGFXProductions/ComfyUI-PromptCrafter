@@ -28,3 +28,4 @@
 - Abort generation when prompt/timing handoff is incomplete (missing shot, missing timing, or empty prompt).
 - Preserve reference-image identity details through CreativeDirector -> Director -> Cinematographer handoff.
 - Keep Auto-Queue bounded by declared scene count; no unbounded or exponential queue growth.
+- Only modify files within `ComfyUI/custom_nodes/ComfyUI-PromptCrafter/`. NEVER modify native ComfyUI core, `comfy_extras`, or other third-party custom nodes. All fixes or extensions must be implemented as PGFX-specific wrappers or utility nodes.

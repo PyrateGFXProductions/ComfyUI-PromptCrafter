@@ -105,13 +105,17 @@ except ImportError:
 # --- Soft dependency import for HuggingFace Transformers loading ---
 try:
     import torch
-    from transformers import (
-        AutoProcessor,
-        AutoModelForCausalLM,
-        AutoModelForConditionalGeneration,
-        AutoConfig,
-        BitsAndBytesConfig,
-    )
+    from transformers import AutoProcessor, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
+    try:
+        # Present in some transformers versions.
+        from transformers import AutoModelForConditionalGeneration
+    except ImportError:
+        try:
+            # Newer transformers expose Seq2Seq instead of ConditionalGeneration.
+            from transformers import AutoModelForSeq2SeqLM as AutoModelForConditionalGeneration
+        except ImportError:
+            # Final fallback keeps HF loading available for CausalLM-only environments.
+            AutoModelForConditionalGeneration = AutoModelForCausalLM
     import comfy.model_management
     from pathlib import Path
 
@@ -1619,17 +1623,19 @@ class OllamaClient:
                 return self._parse_response(data_or_err)
 
             last_status_code = status_code
-            if status_code == 404 and endpoint == "chat":
-                with self._lock:
-                    self._chat_api_unsupported.add(model_id)
-                    print(f"\033[94m[PromptCrafter] Ollama model '{model_id}' does not support /api/chat. Switching to /api/generate.\033[0m")
-            else:
-                last_err = data_or_err
-                # Note: 503 and 429 are handled by _make_request's retry logic now.
-                # If we get here, it means all retries failed or it's a different error.
-                if last_status_code == 404 and endpoint == "chat":
-                    continue # Try the next endpoint
-                break 
+            last_err = data_or_err
+
+            # If chat fails and fallback is allowed, try /api/generate before failing.
+            if endpoint == "chat" and allow_chat_fallback and len(endpoints_to_try) > 1:
+                if status_code == 404:
+                    with self._lock:
+                        self._chat_api_unsupported.add(model_id)
+                        print(f"\033[94m[PromptCrafter] Ollama model '{model_id}' does not support /api/chat. Switching to /api/generate.\033[0m")
+                else:
+                    print(f"\033[93m[PromptCrafter] Ollama /api/chat failed for '{model_id}' (status {status_code}). Retrying via /api/generate.\033[0m")
+                continue
+
+            break
         return False, (last_err or "Unknown Ollama error")
 
     def _format_http_error(self, e: requests.exceptions.HTTPError) -> str:

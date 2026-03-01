@@ -52,7 +52,6 @@ Use existing nodes for generation and control (for example KSampler, CLIPTextEnc
 
 - Use unique PGFX node class names and display names.
 - Register nodes in `NODE_CLASS_MAPPINGS` (and `NODE_DISPLAY_NAME_MAPPINGS` when needed).
-- All custom PGFX nodes must use `CATEGORY = "PGFX/Studio"`.
 - Custom nodes must reside under `ComfyUI/custom_nodes/` and follow ComfyUI loading conventions.
 
 ## Planning and Rendering Separation
