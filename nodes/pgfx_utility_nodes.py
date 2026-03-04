@@ -4,6 +4,8 @@ import shutil
 import re
 import json
 import time
+import base64
+import io
 import shlex
 import random
 import copy
@@ -19,6 +21,7 @@ from typing import Union
 import torch
 from PIL import Image
 import librosa
+import numpy as np
 
 # ComfyUI imports
 import comfy.utils
@@ -2776,6 +2779,615 @@ class PromptCrafter_ImageSwitcher:
         return (selected_image, selected_index)
 
 # ------------------------------------------------------------------------------------
+# PromptCrafter_OllamaRouterNode (OpenRouter-compatible workflow adapter)
+# ------------------------------------------------------------------------------------
+def _get_ollama_model_options():
+    all_models = api_clients.get_all_models()
+    ollama_models = [
+        m for m in all_models
+        if isinstance(m, str) and m.lower().startswith("ollama/")
+    ]
+    if not ollama_models:
+        return ["ollama/NO_MODELS_FOUND"]
+
+    fallback = str(getattr(config, "FALLBACK_TEXT_MODEL", "") or "").strip()
+    if fallback and not fallback.lower().startswith("ollama/"):
+        fallback = f"ollama/{fallback}"
+    if fallback in ollama_models:
+        ollama_models = [fallback] + [m for m in ollama_models if m != fallback]
+
+    return ollama_models
+
+
+class PromptCrafter_OllamaRouterNode:
+    DESCRIPTION = (
+        "OpenRouter-style utility node that routes requests to local Ollama models "
+        "for drop-in workflow compatibility."
+    )
+
+    _chat_sessions = {}
+    _chat_lock = threading.Lock()
+    _max_chat_turns = 12
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "system_prompt": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": "You are a helpful assistant.",
+                    },
+                ),
+                "user_message_box": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": "Hello, how are you?",
+                    },
+                ),
+                "model": (
+                    _get_ollama_model_options(),
+                    {
+                        "tooltip": "Ollama model to use (provider/model format).",
+                    },
+                ),
+                "web_search": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Compatibility toggle. Ollama local mode does not include built-in web retrieval.",
+                    },
+                ),
+                "cheapest": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Compatibility toggle from OpenRouter workflows.",
+                    },
+                ),
+                "fastest": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Compatibility toggle from OpenRouter workflows.",
+                    },
+                ),
+                "image_generation": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Best-effort image extraction from model response text/base64 payloads.",
+                    },
+                ),
+                "temperature": (
+                    "FLOAT",
+                    {
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 2.0,
+                        "step": 0.1,
+                        "display": "slider",
+                        "round": 1,
+                    },
+                ),
+                "pdf_engine": (["auto", "mistral-ocr", "pdf-text"], {"default": "auto"}),
+                "chat_mode": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Keeps a short in-memory chat history per model/system prompt while ComfyUI is running.",
+                    },
+                ),
+            },
+            "optional": {
+                "pdf_data": (
+                    "*",
+                    {
+                        "tooltip": "Optional PDF payload in {'filename': str, 'bytes': bytes} format.",
+                    },
+                ),
+                "user_message_input": ("STRING", {"forceInput": True}),
+                "image": ("IMAGE", {"tooltip": "Optional compatibility image input."}),
+                "image_1": ("IMAGE", {"tooltip": "Optional image input 1."}),
+                "image_2": ("IMAGE", {"tooltip": "Optional image input 2."}),
+                "image_3": ("IMAGE", {"tooltip": "Optional image input 3."}),
+                "image_4": ("IMAGE", {"tooltip": "Optional image input 4."}),
+                "image_5": ("IMAGE", {"tooltip": "Optional image input 5."}),
+                "image_6": ("IMAGE", {"tooltip": "Optional image input 6."}),
+                "image_7": ("IMAGE", {"tooltip": "Optional image input 7."}),
+                "image_8": ("IMAGE", {"tooltip": "Optional image input 8."}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "IMAGE", "STRING", "STRING")
+    RETURN_NAMES = ("Output", "image", "Stats", "Credits")
+    FUNCTION = "generate_response"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+
+    @staticmethod
+    def _placeholder_image():
+        return torch.zeros((1, 1, 1, 3), dtype=torch.float32)
+
+    @staticmethod
+    def _validate_temperature(temperature):
+        try:
+            return max(0.0, min(2.0, float(temperature)))
+        except (TypeError, ValueError):
+            return 1.0
+
+    @staticmethod
+    def _estimate_tokens(text):
+        payload = "" if text is None else str(text)
+        if not payload:
+            return 0
+        return max(1, len(payload) // 4)
+
+    @staticmethod
+    def _detect_expected_segment_count(prompt_text):
+        if not prompt_text:
+            return 0
+        direct = re.search(r"#\s*Lyrics\s+to\s+fix:\s*\((\d+)\s*segments\)", prompt_text, re.I)
+        if direct:
+            try:
+                return max(0, int(direct.group(1)))
+            except Exception:
+                return 0
+        found = re.findall(r"\blyricSegment(\d+)\s*=", prompt_text, re.I)
+        if not found:
+            return 0
+        try:
+            return max(int(x) for x in found)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _detect_expected_storygroup_count(prompt_text):
+        if not prompt_text:
+            return 0
+        # Beat-aligned scene JSON commonly uses keys like segment12_Duration_3.170
+        # and implies the number of story groups expected from the model.
+        found = re.findall(r"\bsegment(\d+)_duration_", str(prompt_text), re.I)
+        if not found:
+            return 0
+        try:
+            return max(int(x) for x in found)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _extract_segment_pairs(text):
+        pairs = {}
+        if not text:
+            return pairs
+
+        cleaned = str(text).replace("```json", "").replace("```", "")
+        pattern = re.compile(
+            r'"(?:lyric)?segment(\d+)"\s*:\s*"((?:\\.|[^"\\])*)"',
+            re.I | re.S,
+        )
+        for m in pattern.finditer(cleaned):
+            try:
+                idx = int(m.group(1))
+            except Exception:
+                continue
+            value = m.group(2).strip()
+            pairs[idx] = value
+        return pairs
+
+    @staticmethod
+    def _build_segment_json(pairs, expected_count=0):
+        if not pairs:
+            return ""
+        keys = sorted(pairs.keys())
+        if expected_count > 0:
+            keys = [k for k in range(1, expected_count + 1) if k in pairs]
+        lines = ["{"]
+        for i, k in enumerate(keys):
+            value = pairs.get(k, "")
+            comma = "," if i < len(keys) - 1 else ""
+            lines.append(f'  "segment{k}": "{value}"{comma}')
+        lines.append("}")
+        return "\n".join(lines)
+
+    def _query_ollama_text(
+        self,
+        model_id,
+        prompt_text,
+        images,
+        validated_temp,
+        timeout,
+        max_tokens,
+        system_for_call=None,
+    ):
+        return api_clients.query_model_auto(
+            model_id,
+            prompt=prompt_text,
+            images=images,
+            prefer_chat=False,
+            temperature=validated_temp,
+            timeout=timeout,
+            max_tokens=max_tokens,
+            no_chat_fallback=True,
+            template="{{ .Prompt }}",
+            system=system_for_call,
+        )
+
+    def _repair_segment_output_if_truncated(
+        self,
+        model_id,
+        prompt_text,
+        output_text,
+        images,
+        validated_temp,
+        timeout,
+        max_tokens,
+    ):
+        expected = self._detect_expected_segment_count(prompt_text)
+        if expected <= 0:
+            return output_text
+
+        pairs = self._extract_segment_pairs(output_text)
+        if len(pairs) >= expected:
+            return self._build_segment_json(pairs, expected_count=expected)
+
+        max_rounds = 4
+        round_idx = 0
+        while len(pairs) < expected and round_idx < max_rounds:
+            missing_ids = [i for i in range(1, expected + 1) if i not in pairs]
+            if not missing_ids:
+                break
+            start_missing = missing_ids[0]
+            end_missing = missing_ids[-1]
+            provided = self._build_segment_json(pairs, expected_count=expected)
+
+            continuation_prompt = (
+                "Your previous JSON response for lyric correction was truncated.\n"
+                f"You must now provide ONLY missing entries from segment{start_missing} to segment{end_missing}.\n"
+                "Rules:\n"
+                "- Output valid JSON only.\n"
+                "- Use keys exactly as \"segmentN\".\n"
+                "- Do not repeat segments already present.\n"
+                "- Do not add commentary or code fences.\n\n"
+                f"Original task prompt:\n{prompt_text}\n\n"
+                f"Already provided segments:\n{provided}\n"
+            )
+
+            ok_more, more_resp = self._query_ollama_text(
+                model_id=model_id,
+                prompt_text=continuation_prompt,
+                images=images,
+                validated_temp=max(0.0, min(0.3, float(validated_temp))),
+                timeout=timeout,
+                max_tokens=max_tokens,
+                system_for_call=None,
+            )
+            if not ok_more or not more_resp:
+                break
+
+            more_pairs = self._extract_segment_pairs(more_resp)
+            if not more_pairs:
+                break
+            pairs.update(more_pairs)
+            round_idx += 1
+
+        if not pairs:
+            return output_text
+        return self._build_segment_json(pairs, expected_count=expected)
+
+    @staticmethod
+    def _normalize_model(model):
+        raw = str(model or "").strip()
+        if raw.lower().startswith("ollama/"):
+            return raw
+
+        options = _get_ollama_model_options()
+        fallback = next((m for m in options if m != "ollama/NO_MODELS_FOUND"), None)
+        return fallback or raw or "ollama/NO_MODELS_FOUND"
+
+    @staticmethod
+    def _collect_images(kwargs):
+        ordered = []
+        base_image = kwargs.get("image")
+        if base_image is not None:
+            ordered.append(base_image)
+
+        image_keys = []
+        for key in kwargs.keys():
+            if not key.startswith("image_"):
+                continue
+            try:
+                idx = int(key.split("_", 1)[1])
+            except (TypeError, ValueError):
+                continue
+            image_keys.append((idx, key))
+
+        for _, key in sorted(image_keys):
+            image_val = kwargs.get(key)
+            if image_val is not None:
+                ordered.append(image_val)
+
+        return ordered
+
+    @staticmethod
+    def _extract_pdf_text(pdf_data, max_chars=12000):
+        if not (isinstance(pdf_data, dict) and isinstance(pdf_data.get("bytes"), bytes)):
+            return ""
+
+        pdf_bytes = pdf_data.get("bytes", b"")
+        if not pdf_bytes:
+            return ""
+
+        try:
+            from pypdf import PdfReader
+        except Exception:
+            return ""
+
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            chunks = []
+            for page in reader.pages:
+                page_text = (page.extract_text() or "").strip()
+                if page_text:
+                    chunks.append(page_text)
+
+            merged = "\n\n".join(chunks).strip()
+            if not merged:
+                return ""
+
+            if len(merged) > max_chars:
+                return merged[:max_chars] + "\n\n[PDF context truncated for local inference.]"
+            return merged
+        except Exception:
+            return ""
+
+    @classmethod
+    def _build_chat_prompt(cls, model_id, system_prompt, user_text):
+        key = f"{model_id}::{hash(system_prompt)}"
+        with cls._chat_lock:
+            history = list(cls._chat_sessions.get(key, []))
+
+        lines = []
+        if system_prompt.strip():
+            lines.append(f"System:\n{system_prompt.strip()}")
+
+        for turn in history[-cls._max_chat_turns:]:
+            user_prev = str(turn.get("user", "")).strip()
+            assistant_prev = str(turn.get("assistant", "")).strip()
+            if not user_prev and not assistant_prev:
+                continue
+            lines.append(f"User:\n{user_prev}\nAssistant:\n{assistant_prev}")
+
+        lines.append(f"User:\n{user_text}\nAssistant:")
+        return key, "\n\n".join(lines).strip()
+
+    @classmethod
+    def _store_chat_turn(cls, key, user_text, assistant_text):
+        with cls._chat_lock:
+            history = cls._chat_sessions.setdefault(key, [])
+            history.append({"user": user_text, "assistant": assistant_text})
+            if len(history) > cls._max_chat_turns:
+                del history[:-cls._max_chat_turns]
+
+    @classmethod
+    def _extract_image_from_response(cls, response_text):
+        payload = "" if response_text is None else str(response_text).strip()
+        if not payload:
+            return cls._placeholder_image()
+
+        candidate_b64 = None
+        data_url_match = re.search(
+            r"data:image\/[a-zA-Z0-9.+-]+;base64,([A-Za-z0-9+/=\s]+)",
+            payload,
+        )
+        if data_url_match:
+            candidate_b64 = data_url_match.group(1).strip()
+        else:
+            if payload.startswith("{") or payload.startswith("["):
+                try:
+                    parsed = json.loads(payload)
+                except Exception:
+                    parsed = None
+
+                candidates = []
+                if isinstance(parsed, dict):
+                    candidates.extend(
+                        [
+                            parsed.get("image"),
+                            parsed.get("image_base64"),
+                            parsed.get("b64_json"),
+                        ]
+                    )
+                    if isinstance(parsed.get("data"), list) and parsed["data"]:
+                        first = parsed["data"][0]
+                        if isinstance(first, dict):
+                            candidates.extend([first.get("b64_json"), first.get("image")])
+
+                for item in candidates:
+                    if isinstance(item, str) and item.strip():
+                        text_val = item.strip()
+                        if text_val.startswith("data:image") and "," in text_val:
+                            candidate_b64 = text_val.split(",", 1)[1].strip()
+                        else:
+                            candidate_b64 = text_val
+                        break
+
+        if not candidate_b64:
+            return cls._placeholder_image()
+
+        try:
+            decoded = base64.b64decode(candidate_b64)
+            image = Image.open(io.BytesIO(decoded)).convert("RGB")
+            image_array = np.array(image).astype(np.float32) / 255.0
+            return torch.from_numpy(image_array).unsqueeze(0)
+        except Exception:
+            return cls._placeholder_image()
+
+    def generate_response(
+        self,
+        system_prompt,
+        user_message_box,
+        model,
+        web_search,
+        cheapest,
+        fastest,
+        temperature,
+        pdf_engine,
+        chat_mode,
+        image_generation=False,
+        pdf_data=None,
+        user_message_input=None,
+        **kwargs,
+    ):
+        placeholder_image = self._placeholder_image()
+
+        model_id = self._normalize_model(model)
+        if model_id == "ollama/NO_MODELS_FOUND":
+            return (
+                "No Ollama models are available. Ensure Ollama is running and reachable from PromptCrafter.",
+                placeholder_image,
+                "Stats N/A",
+                "Local Ollama server (credits not applicable)",
+            )
+
+        user_text = (
+            str(user_message_input).strip()
+            if isinstance(user_message_input, str) and user_message_input.strip()
+            else ("" if user_message_box is None else str(user_message_box).strip())
+        )
+        if not user_text:
+            return (
+                "Error: user_message_box is empty.",
+                placeholder_image,
+                "Stats N/A",
+                "Local Ollama server (credits not applicable)",
+            )
+
+        extracted_pdf = self._extract_pdf_text(pdf_data)
+        if extracted_pdf:
+            user_text = (
+                f"{user_text}\n\n[PDF Context - mode: {pdf_engine}]\n"
+                f"{extracted_pdf}\n[/PDF Context]"
+            )
+
+        if web_search:
+            user_text = (
+                f"{user_text}\n\n"
+                "[Web search requested, but this local Ollama adapter does not perform external web retrieval.]"
+            )
+
+        if chat_mode:
+            chat_key, prompt_text = self._build_chat_prompt(
+                model_id=model_id,
+                system_prompt=system_prompt or "",
+                user_text=user_text,
+            )
+            system_for_call = None
+        else:
+            chat_key = None
+            prompt_text = user_text
+            system_for_call = system_prompt
+
+        validated_temp = self._validate_temperature(temperature)
+        images = self._collect_images(kwargs)
+
+        # OpenRouter-style lyric correction prompts can require very long JSON outputs.
+        # Scale completion budget from detected segment count to avoid early truncation.
+        timeout = int(config.LOCAL_SERVER_CONFIG.get("ollama", {}).get("timeout", 120))
+        expected_segments = self._detect_expected_segment_count(prompt_text)
+        expected_storygroups = self._detect_expected_storygroup_count(prompt_text)
+        default_max_tokens = int(getattr(config, "DEFAULT_MAX_TOKENS", 1024))
+        effective_temp = validated_temp
+        max_tokens = default_max_tokens
+
+        if expected_segments > 0:
+            dynamic_budget = 512 + (expected_segments * 96)
+            max_tokens = max(max_tokens, min(32768, dynamic_budget))
+            effective_temp = min(validated_temp, 0.2)
+            print(
+                f"[PromptCrafter/OllamaRouter] Segment task detected: expected={expected_segments}, "
+                f"max_tokens={max_tokens}, temperature={effective_temp:.1f}"
+            )
+        if expected_storygroups > 0:
+            # Story-group generation emits much larger per-item payloads than lyric segments.
+            dynamic_budget = 1024 + (expected_storygroups * 196)
+            max_tokens = max(max_tokens, min(32768, dynamic_budget))
+            effective_temp = min(effective_temp, 0.2)
+            print(
+                f"[PromptCrafter/OllamaRouter] Story-group task detected: expected={expected_storygroups}, "
+                f"max_tokens={max_tokens}, temperature={effective_temp:.1f}"
+            )
+
+        start = time.time()
+        ok, response = self._query_ollama_text(
+            model_id=model_id,
+            prompt_text=prompt_text,
+            images=images,
+            validated_temp=effective_temp,
+            timeout=timeout,
+            max_tokens=max_tokens,
+            system_for_call=system_for_call,
+        )
+        elapsed = max(1e-6, time.time() - start)
+
+        if not ok:
+            return (
+                f"Ollama request failed: {response}",
+                placeholder_image,
+                "Stats N/A",
+                "Local Ollama server (credits not applicable)",
+            )
+
+        output_text = "" if response is None else str(response).strip()
+        if not output_text:
+            return (
+                "Ollama returned an empty response.",
+                placeholder_image,
+                "Stats N/A",
+                "Local Ollama server (credits not applicable)",
+            )
+
+        output_text = self._repair_segment_output_if_truncated(
+            model_id=model_id,
+            prompt_text=prompt_text,
+            output_text=output_text,
+            images=images,
+            validated_temp=effective_temp,
+            timeout=timeout,
+            max_tokens=max_tokens,
+        )
+
+        if chat_mode and chat_key:
+            self._store_chat_turn(chat_key, user_text, output_text)
+
+        prompt_tokens = self._estimate_tokens(prompt_text) + self._estimate_tokens(system_prompt)
+        completion_tokens = self._estimate_tokens(output_text)
+        tps = completion_tokens / elapsed if elapsed > 0 else 0.0
+
+        stats = (
+            f"TPS: {tps:.2f}, "
+            f"Prompt Tokens: {prompt_tokens}, "
+            f"Completion Tokens: {completion_tokens}, "
+            f"Temp: {validated_temp:.1f}, "
+            f"Model: {model_id}"
+        )
+        if web_search:
+            stats += ", Web Search: local-unsupported"
+        if cheapest:
+            stats += ", Cheapest: n/a"
+        if fastest:
+            stats += ", Fastest: n/a"
+
+        if image_generation:
+            image_tensor = self._extract_image_from_response(output_text)
+        else:
+            image_tensor = placeholder_image
+
+        credits = "Local Ollama server (credits not applicable)"
+        return (output_text, image_tensor, stats, credits)
+
+# ------------------------------------------------------------------------------------
 # PromptCrafter_PromptChunker Node
 # ------------------------------------------------------------------------------------
 class PromptCrafter_PromptChunker:
@@ -2842,6 +3454,7 @@ NODE_CLASS_MAPPINGS = {
     "PromptCrafter_Formatter": PromptCrafter_Formatter,
     "PromptCrafter_SaveTextFile": PromptCrafter_SaveTextFile,
     "PromptCrafter_LTX2LocalPipelineBuilder": PromptCrafter_LTX2LocalPipelineBuilder,
+    "PromptCrafter_OllamaRouterNode": PromptCrafter_OllamaRouterNode,
     "PromptCrafter_ImageSwitcher": PromptCrafter_ImageSwitcher,
     "PromptCrafter_PromptChunker": PromptCrafter_PromptChunker,
 }
@@ -2867,6 +3480,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_Formatter": "📝 Text Formatter",
     "PromptCrafter_SaveTextFile": "💾 Save Text File",
     "PromptCrafter_LTX2LocalPipelineBuilder": "🎬 LTX-2 Local Pipeline Builder",
+    "PromptCrafter_OllamaRouterNode": "🦙 Ollama Router Node",
     "PromptCrafter_ImageSwitcher": "🔀 Image Switcher",
     "PromptCrafter_PromptChunker": "🧩 Prompt Chunker",
 }

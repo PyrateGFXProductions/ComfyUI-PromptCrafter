@@ -42,3 +42,9 @@ ARCHITECTURE.md
 .vibecheck/screenshots/
 .vibecheck/scan-results.json
 .vibecheck/context-engine-ledger.json
+.vibecheck/firewall.json
+workflows/PGFX_AI_FilmStudio_Master_Skeletal.json
+workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json
+workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json.bak
+workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json.bak_proper
+workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json.pre_black_fix
