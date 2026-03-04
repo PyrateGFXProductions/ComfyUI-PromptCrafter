@@ -54,7 +54,10 @@ pgfx_director_nodes = _safe_import(".nodes.pgfx_director_nodes", "pgfx_director_
 pgfx_comfyguard_node = _safe_import(".nodes.pgfx_comfyguard_node", "pgfx_comfyguard_node")
 pgfx_viseme_nodes = _safe_import(".nodes.pgfx_viseme_nodes", "pgfx_viseme_nodes")
 pgfx_ltx2_nodes = _safe_import(".nodes.pgfx_ltx2_nodes", "pgfx_ltx2_nodes")
+<<<<<<< HEAD
 pgfx_llm_nodes = _safe_import(".nodes.pgfx_llm_nodes", "pgfx_llm_nodes")
+=======
+>>>>>>> 3be85876973145a59aba6be58b3da295ed05466a
 
 # --- MERGE ALL MAPPINGS ---
 NODE_CLASS_MAPPINGS = {}
@@ -73,7 +76,10 @@ NODE_MODULES = [
     pgfx_comfyguard_node,
     pgfx_viseme_nodes,
     pgfx_ltx2_nodes,
+<<<<<<< HEAD
     pgfx_llm_nodes,
+=======
+>>>>>>> 3be85876973145a59aba6be58b3da295ed05466a
 ]
 NODE_MODULES = [m for m in NODE_MODULES if m is not None]
 
