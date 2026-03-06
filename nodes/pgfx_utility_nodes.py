@@ -2925,7 +2925,6 @@ class PromptCrafter_OllamaRouterNode:
         return max(1, len(payload) // 4)
 
     @staticmethod
-<<<<<<< HEAD
     def _detect_expected_segment_count(prompt_text):
         if not prompt_text:
             return 0
@@ -3078,8 +3077,6 @@ class PromptCrafter_OllamaRouterNode:
         return self._build_segment_json(pairs, expected_count=expected)
 
     @staticmethod
-=======
->>>>>>> 3be85876973145a59aba6be58b3da295ed05466a
     def _normalize_model(model):
         raw = str(model or "").strip()
         if raw.lower().startswith("ollama/"):
@@ -3295,7 +3292,6 @@ class PromptCrafter_OllamaRouterNode:
         validated_temp = self._validate_temperature(temperature)
         images = self._collect_images(kwargs)
 
-<<<<<<< HEAD
         # OpenRouter-style lyric correction prompts can require very long JSON outputs.
         # Scale completion budget from detected segment count to avoid early truncation.
         timeout = int(config.LOCAL_SERVER_CONFIG.get("ollama", {}).get("timeout", 120))
@@ -3332,25 +3328,6 @@ class PromptCrafter_OllamaRouterNode:
             timeout=timeout,
             max_tokens=max_tokens,
             system_for_call=system_for_call,
-=======
-        # OpenRouter workflows often expect low-latency interactive behavior.
-        # Keep defaults conservative and predictable for local runs.
-        timeout = int(config.LOCAL_SERVER_CONFIG.get("ollama", {}).get("timeout", 120))
-        max_tokens = int(getattr(config, "DEFAULT_MAX_TOKENS", 1024))
-
-        start = time.time()
-        ok, response = api_clients.query_model_auto(
-            model_id,
-            prompt=prompt_text,
-            images=images,
-            prefer_chat=False,
-            temperature=validated_temp,
-            timeout=timeout,
-            max_tokens=max_tokens,
-            no_chat_fallback=True,
-            template="{{ .Prompt }}",
-            system=system_for_call,
->>>>>>> 3be85876973145a59aba6be58b3da295ed05466a
         )
         elapsed = max(1e-6, time.time() - start)
 
@@ -3371,7 +3348,6 @@ class PromptCrafter_OllamaRouterNode:
                 "Local Ollama server (credits not applicable)",
             )
 
-<<<<<<< HEAD
         output_text = self._repair_segment_output_if_truncated(
             model_id=model_id,
             prompt_text=prompt_text,
@@ -3381,9 +3357,6 @@ class PromptCrafter_OllamaRouterNode:
             timeout=timeout,
             max_tokens=max_tokens,
         )
-
-=======
->>>>>>> 3be85876973145a59aba6be58b3da295ed05466a
         if chat_mode and chat_key:
             self._store_chat_turn(chat_key, user_text, output_text)
 
