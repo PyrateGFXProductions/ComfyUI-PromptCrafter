@@ -200,7 +200,7 @@ class PGFXTextEncodeAceStepAudio15Advanced:
             },
             "optional": {
                 "reference_audio": ("LATENT", {
-                    "tooltip": "Optional ACE audio LATENT reference (use VAEEncodeAudio first). Used in text2music as timbre/style reference."
+                    "tooltip": "Optional ACE audio LATENT reference (use VAEEncodeAudio first). Used for cover/repaint-style tasks."
                 }),
                 "src_audio": ("LATENT", {
                     "tooltip": "Optional ACE audio LATENT source (use VAEEncodeAudio first). Used by cover/repaint-style tasks."
@@ -237,7 +237,9 @@ class PGFXTextEncodeAceStepAudio15Advanced:
 
         # Route task-specific source/reference behavior to the key Comfy ACE consumes.
         if task_mode == "text2music":
-            routed_reference = ref_samples
+            # In Comfy's ACE backend, providing reference_audio_timbre_latents flips to cover mode.
+            # Keep text2music LM-driven to avoid silent/near-silent cover behavior.
+            routed_reference = None
         else:
             routed_reference = src_samples if src_samples is not None else ref_samples
         try:
