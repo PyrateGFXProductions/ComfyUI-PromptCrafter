@@ -453,11 +453,23 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     ) + tuple(passthrough_images)
                 else:
                     image_context_for_all = self._describe_images(images_with_weights, run_config)
-                    image_context_out = image_context_for_all[0] if image_context_for_all else ""
+                    if image_context_for_all:
+                        image_context_out, _, primary_subjects_from_images = image_context_for_all
+                    else:
+                        image_context_out, primary_subjects_from_images = "", []
                     
                     style_rules = self._build_style_and_composition_rules("Image", [img for img, _ in images_with_weights], run_config, final_user_text, "", image_context_out)
                     
-                    final_prompt = self._generate_prompt_for_scene(final_user_text, "Image", images_with_weights, image_context_out, style_rules, run_config, **kwargs)
+                    final_prompt = self._generate_prompt_for_scene(
+                        final_user_text,
+                        "Image",
+                        images_with_weights,
+                        image_context_out,
+                        style_rules,
+                        run_config,
+                        primary_subjects_from_images=primary_subjects_from_images,
+                        **kwargs,
+                    )
                     
                     ai_negative_prompt = utils._generate_negative_prompt(final_prompt, run_config, user_negative_prompt=negative_prompt)
                     

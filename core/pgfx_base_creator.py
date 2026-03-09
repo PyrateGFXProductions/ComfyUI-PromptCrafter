@@ -749,7 +749,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
 
         generated_prompts: list[str] = [""] * len(scenes)
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(scenes))) as executor:
-            future_to_index = {executor.submit(self._generate_prompt_for_scene, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, **kwargs): i for i, scene_text in enumerate(scenes)}
+            future_to_index = {executor.submit(self._generate_prompt_for_scene, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, primary_subjects_from_images=primary_subjects_from_images, **kwargs): i for i, scene_text in enumerate(scenes)}
             for future in concurrent.futures.as_completed(future_to_index):
                 index = future_to_index[future]
                 try:
@@ -825,22 +825,36 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             elif target_format in ("LTX-2 (Audio/Lip Sync/Retake)", "Generic Video (Wan, etc.)"): return prompt_text
             else: return prompt_text
 
-    def _generate_prompt_for_scene(self, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, **kwargs): # noqa
+    def _generate_prompt_for_scene(self, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, primary_subjects_from_images=None, **kwargs): # noqa
+        if primary_subjects_from_images is None:
+            primary_subjects_from_images = []
+        elif isinstance(primary_subjects_from_images, str):
+            primary_subjects_from_images = [primary_subjects_from_images]
+        elif not isinstance(primary_subjects_from_images, list):
+            primary_subjects_from_images = list(primary_subjects_from_images)
+
+        primary_subjects_from_images = [str(s).strip() for s in primary_subjects_from_images if s and str(s).strip()]
+
         config_key_parts = (run_config.model, run_config.language, run_config.temperature, run_config.use_chat_api, run_config.max_length_words, run_config.seed, run_config.max_retries, run_config.critique_strength, run_config.simplify_for_diffusion, run_config.use_deep_think, str(run_config.style_profile))
-        cache_key = utils._get_cache_key("gen_prompt_for_scene_v1", scene_text, mode, images_with_weights, image_context_for_all, style_rules, config_key_parts)
+        cache_key = utils._get_cache_key("gen_prompt_for_scene_v1", scene_text, mode, images_with_weights, image_context_for_all, style_rules, primary_subjects_from_images, config_key_parts)
         if config.CACHE.has(cache_key):
             print(f"\033[94m[PromptCrafter] Using cached prompt for scene.\033[0m")
             cached_prompt = config.CACHE.get(cache_key)
             return self._enhance_prompt_with_talent_direction(cached_prompt, scene_text, run_config.model)
 
         images = [img for img, _ in images_with_weights]
-        tok_ok, mandatory_tokens = utils._extract_mandatory_tokens_with_model(image_context_for_all, scene_text, run_config)
+        tok_ok, mandatory_tokens = utils._extract_mandatory_tokens_with_model(
+            image_context_for_all, scene_text, run_config, primary_subjects_from_images
+        )
+        if not tok_ok and primary_subjects_from_images:
+            tok_ok = True
+            mandatory_tokens = {"primary": primary_subjects_from_images, "allowed_list": primary_subjects_from_images}
         if not tok_ok: 
             error_prompt = f"[Error extracting tokens for scene: {mandatory_tokens}]"
             return self._enhance_prompt_with_talent_direction(error_prompt, scene_text, run_config.model)
 
         ok_draft, draft_or_err = self._generate_initial_draft(
-            mode, scene_text, "", image_context_for_all, mandatory_tokens, images, run_config
+            mode, scene_text, "", image_context_for_all, mandatory_tokens, images, run_config, primary_subjects_from_images
         )
         
         if not ok_draft: 

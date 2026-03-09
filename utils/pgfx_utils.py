@@ -990,6 +990,16 @@ def _extract_mandatory_tokens_with_model(image_context: str, user_text: str, run
         ok_prim, primary_subjects = _extract_primary_subjects(user_text, run_config)
         if not ok_prim: return False, primary_subjects
         secondary_subjects = primary_subjects_from_images or []
+        if not primary_subjects and secondary_subjects:
+            # If user instructions are generic (no literal subject), fall back to image-identified primaries.
+            primary_subjects = _post_process_extracted_subjects(
+                secondary_subjects,
+                post_process_func=lambda item_text: (
+                    "" if str(item_text).strip("[] ").lower() in {"subject", "a subject"} else re.sub(r"\s+", " ", str(item_text)).strip()
+                ),
+            )
+            if primary_subjects:
+                print("\033[93m[PromptCrafter] No explicit subjects found in user instructions; using primary subjects from reference image(s).\033[0m")
     else: # No user text, so subjects from images are primary.
         primary_subjects = primary_subjects_from_images or []
         ok_sec, secondary_subjects = _extract_secondary_subjects(image_context, run_config)
