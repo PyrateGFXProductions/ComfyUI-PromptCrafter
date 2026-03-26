@@ -1,28 +1,29 @@
-import os
-import sys
-import gc
-import traceback
-import torch
-import numpy as np
+import json
 import re
+import traceback
+
+import torch
 from PIL import Image, ImageDraw
-import folder_paths
 
 from ..utils import pgfx_viseme_utils as viseme_utils
 
+
 class PGFX_ScriptGuidedVisemes:
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "audio_meta": ("DICT", {}),
-                "fps": ("INT", {"default": 25, "min": 1, "max": 60}),
-                "coarticulation_profile": (list(viseme_utils.COARTICULATION_PROFILES.keys()), {"default": "Singing"}),
+                "fps": ("INT", {"default": 25, "min": 1, "max": 120}),
+                "coarticulation_profile": (
+                    list(viseme_utils.COARTICULATION_PROFILES.keys()),
+                    {"default": "Singing"},
+                ),
                 "debug": ("BOOLEAN", {"default": False}),
-                "image_width": ("INT", {"default": 512, "min": 64, "max": 2048, "step": 64}),
-                "image_height": ("INT", {"default": 512, "min": 64, "max": 2048, "step": 64}),
+                "image_width": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 64}),
+                "image_height": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 64}),
                 "max_frames": ("INT", {"default": 0, "min": 0, "max": 99999, "step": 1}),
-                "scene_index": ("INT", {"default": 0, "min": 0, "max": 100}),
+                "scene_index": ("INT", {"default": 0, "min": 0, "max": 99999}),
                 "draw_style": (["Dots", "Outline", "Filled Outline"], {"default": "Filled Outline"}),
                 "dot_color": ("STRING", {"default": "white"}),
                 "line_color": ("STRING", {"default": "white"}),
@@ -33,181 +34,942 @@ class PGFX_ScriptGuidedVisemes:
             },
             "optional": {
                 "face_template": ("IMAGE", {}),
+                "batch_size": ("INT", {"default": 16, "min": 1, "max": 4096}),
                 "speechbrain_model_base_path": ("STRING", {"default": "", "multiline": False}),
-            }
+            },
         }
 
     CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
-    RETURN_TYPES = ("IMAGE", "STRING", "BOOLEAN", "STRING",)
-    RETURN_NAMES = ("control_images", "phoneme_debug_text", "is_silent", "instrumental_cue",)
+    RETURN_TYPES = ("IMAGE", "STRING", "BOOLEAN", "STRING")
+    RETURN_NAMES = ("control_images", "phoneme_debug_text", "is_silent", "instrumental_cue")
     FUNCTION = "execute"
 
-    def execute(self, audio_meta, fps, coarticulation_profile, debug, image_width, image_height, 
-                max_frames, scene_index, draw_style, dot_color, line_color, fill_color, 
-                dot_size, line_thickness, emotion_intensity, face_template=None, 
-                speechbrain_model_base_path="", **kwargs):
-        
-        default_image_output = torch.zeros(1, image_height, image_width, 3, dtype=torch.float32, device="cpu")
-        batch_size = kwargs.get('batch_size', 16)
-        full_phoneme_debug_string = "Silent audio detected. Viseme generation skipped."
-        
-        if debug: 
+    @staticmethod
+    def _clean_word(word):
+        text = str(word or "").strip()
+        text = re.sub(r"[^\w'\- ]+", "", text)
+        return text.strip()
+
+    @staticmethod
+    def _coerce_float_list(values, fps):
+        durations = []
+        for value in values or []:
+            try:
+                durations.append(float(value))
+            except Exception:
+                continue
+        return durations
+
+    @staticmethod
+    def _extract_durations_seconds(audio_meta, fps):
+        if audio_meta.get("durations"):
+            return PGFX_ScriptGuidedVisemes._coerce_float_list(audio_meta.get("durations"), fps)
+
+        if audio_meta.get("durations_seconds"):
+            return PGFX_ScriptGuidedVisemes._coerce_float_list(audio_meta.get("durations_seconds"), fps)
+
+        if audio_meta.get("scene_durations"):
+            return PGFX_ScriptGuidedVisemes._coerce_float_list(audio_meta.get("scene_durations"), fps)
+
+        frames = audio_meta.get("durations_frames") or []
+        durations = []
+        for value in frames:
+            try:
+                durations.append(float(value) / float(fps))
+            except Exception:
+                continue
+        return durations
+
+    @staticmethod
+    def _extract_word_segments(audio_meta):
+        segments = []
+
+        direct_words = audio_meta.get("word_segments") or audio_meta.get("words") or []
+        for word in direct_words:
+            start = word.get("start")
+            end = word.get("end")
+            text = PGFX_ScriptGuidedVisemes._clean_word(word.get("word") or word.get("text"))
+            if text and start is not None and end is not None:
+                try:
+                    segments.append({"word": text, "start": float(start), "end": float(end)})
+                except Exception:
+                    continue
+
+        if segments:
+            return sorted(segments, key=lambda item: item["start"])
+
+        alignment = audio_meta.get("alignment_result") or {}
+        for seg in alignment.get("segments", []):
+            for word in seg.get("words", []):
+                start = word.get("start")
+                end = word.get("end")
+                text = PGFX_ScriptGuidedVisemes._clean_word(word.get("word") or word.get("text"))
+                if text and start is not None and end is not None:
+                    try:
+                        segments.append({"word": text, "start": float(start), "end": float(end)})
+                    except Exception:
+                        continue
+
+        return sorted(segments, key=lambda item: item["start"])
+
+    @staticmethod
+    def _extract_word_segments_from_json(word_timing_json):
+        if not str(word_timing_json or "").strip():
+            return []
+        try:
+            payload = json.loads(word_timing_json)
+        except Exception:
+            return []
+
+        if isinstance(payload, dict):
+            if isinstance(payload.get("word_segments"), list):
+                payload = payload["word_segments"]
+            elif isinstance(payload.get("words"), list):
+                payload = payload["words"]
+            else:
+                payload = []
+
+        segments = []
+        for word in payload if isinstance(payload, list) else []:
+            start = word.get("start")
+            end = word.get("end")
+            text = PGFX_ScriptGuidedVisemes._clean_word(word.get("word") or word.get("text"))
+            if text and start is not None and end is not None:
+                try:
+                    segments.append({"word": text, "start": float(start), "end": float(end)})
+                except Exception:
+                    continue
+        return sorted(segments, key=lambda item: item["start"])
+
+    @staticmethod
+    def _instrumental_cue_for_scene(audio_meta, scene_index):
+        cues = audio_meta.get("instrumental_cues") or []
+        if isinstance(cues, list) and scene_index < len(cues):
+            return str(cues[scene_index] or "")
+        return ""
+
+    @staticmethod
+    def _resolve_scene_window(audio_meta, word_segments, durations, scene_index, fps, max_frames):
+        offset_seconds = float(audio_meta.get("offset_seconds", 0.0) or 0.0)
+
+        if durations:
+            safe_index = min(scene_index, max(len(durations) - 1, 0))
+            start = offset_seconds + sum(durations[:safe_index])
+            duration = max(0.0, float(durations[safe_index]))
+            return start, duration, safe_index
+
+        if scene_index > 0:
+            return offset_seconds, 0.0, scene_index
+
+        if max_frames > 0:
+            return offset_seconds, float(max_frames) / float(fps), scene_index
+
+        if word_segments:
+            start = min(word["start"] for word in word_segments)
+            end = max(word["end"] for word in word_segments)
+            return start, max(0.0, end - start), scene_index
+
+        return offset_seconds, 0.0, scene_index
+
+    @staticmethod
+    def _fallback_frames(total_frames, image_width, image_height, face_template):
+        total_frames = max(1, int(total_frames))
+        if face_template is not None and hasattr(face_template, "numel") and face_template.numel() > 0:
+            frame_count = int(face_template.shape[0])
+            if frame_count >= total_frames:
+                return face_template[:total_frames].detach().cpu().clone()
+            repeats = []
+            for idx in range(total_frames):
+                repeats.append(face_template[idx % frame_count : (idx % frame_count) + 1].detach().cpu())
+            return torch.cat(repeats, dim=0)
+
+        return torch.zeros(total_frames, image_height, image_width, 3, dtype=torch.float32, device="cpu")
+
+    @staticmethod
+    def _emotion_for_word(word):
+        lowered = str(word or "").lower()
+        for emotion, profile in viseme_utils.EMOTION_PROFILES.items():
+            if any(keyword in lowered for keyword in profile.get("keywords", [])):
+                return emotion
+        return "NEUTRAL"
+
+    @staticmethod
+    def _phonemes_for_word(g2p, word):
+        phonemes = g2p(word)
+        cleaned = []
+        for phoneme in phonemes:
+            token = re.sub(r"\d+", "", str(phoneme or "").strip())
+            if token in viseme_utils.PHONEME_TO_VISEME_MAP:
+                cleaned.append(token)
+        return cleaned
+
+    def execute(
+        self,
+        audio_meta,
+        fps,
+        coarticulation_profile,
+        debug,
+        image_width,
+        image_height,
+        max_frames,
+        scene_index,
+        draw_style,
+        dot_color,
+        line_color,
+        fill_color,
+        dot_size,
+        line_thickness,
+        emotion_intensity,
+        face_template=None,
+        batch_size=16,
+        speechbrain_model_base_path="",
+        **kwargs,
+    ):
+        if debug:
             print(f"--- [PGFX Visemes] EXECUTION START (Scene Index: {scene_index}) ---")
 
         try:
             g2p = viseme_utils.get_g2p()
             if not g2p:
-                return (default_image_output, "ERROR: g2p_en library failed to initialize.", True, None)
+                fallback = self._fallback_frames(max_frames or 1, image_width, image_height, face_template)
+                return (fallback, "ERROR: g2p_en library failed to initialize.", True, "")
 
-            # --- Extract data from meta ---
-            alignment_data = audio_meta.get("alignment_result", {})
-            durations = audio_meta.get("durations", [])
-            offset_seconds = audio_meta.get("offset_seconds", 0.0)
-            instrumental_cues = audio_meta.get("instrumental_cues", [])
-            instrumental_cue_for_scene = instrumental_cues[scene_index] if scene_index < len(instrumental_cues) else None
-
-            if not alignment_data or "segments" not in alignment_data:
-                return (default_image_output, "SILENCE (No alignment data)", True, instrumental_cue_for_scene)
-
-            # --- Calculate Time Window for this Scene ---
-            if scene_index >= len(durations):
-                scene_index = len(durations) - 1
-            
-            previous_duration_sum = sum(durations[:scene_index]) if scene_index > 0 else 0.0
-            
-            scene_start_abs = offset_seconds + previous_duration_sum
-            scene_duration = durations[scene_index] if scene_index < len(durations) else 0.0
+            durations = self._extract_durations_seconds(audio_meta, fps)
+            word_segments = self._extract_word_segments(audio_meta)
+            scene_start_abs, scene_duration, resolved_scene_index = self._resolve_scene_window(
+                audio_meta, word_segments, durations, scene_index, fps, max_frames
+            )
             scene_end_abs = scene_start_abs + scene_duration
-            
-            # --- EMOTION DETECTION (Audio-based) ---
-            # NOTE: For now, we keep the audio emotion detection internal to the node 
-            # as it requires SpeechBrain which is heavy and optional.
-            current_emotion = "NEUTRAL"
-            try:
-                vocal_audio = audio_meta.get("vocal_audio", {})
-                waveform = vocal_audio.get("waveform")
-                sample_rate = vocal_audio.get("sample_rate")
+            instrumental_cue = self._instrumental_cue_for_scene(audio_meta, resolved_scene_index)
 
-                if waveform is not None and waveform.numel() > 0:
-                    max_amp = waveform.abs().max()
-                    if 0 < max_amp < 0.25:
-                        waveform = waveform / (max_amp + 1e-7)
-                
-                if waveform is not None and "speechbrain" in sys.modules:
-                    # Logic for audio-based emotion detection would go here if needed
-                    # For now, we default to NEUTRAL or Keyword-based
-                    pass
-            except Exception as e:
-                if debug: print(f"[PGFX Visemes] Emotion detection warning: {e}")
+            total_frames = int(max_frames) if max_frames and max_frames > 0 else int(round(scene_duration * fps))
+            total_frames = max(1, total_frames)
 
-            # --- Generate Phoneme Script ---
+            if scene_duration <= 0.0:
+                fallback = self._fallback_frames(total_frames, image_width, image_height, face_template)
+                return (fallback, "SILENCE (No scene duration resolved)", True, instrumental_cue)
+
+            scene_words = [
+                word for word in word_segments
+                if word["end"] > scene_start_abs and word["start"] < scene_end_abs
+            ]
+
+            if not scene_words:
+                fallback = self._fallback_frames(total_frames, image_width, image_height, face_template)
+                return (fallback, "SILENCE (No words overlap this scene)", True, instrumental_cue)
+
             phoneme_script = []
-            all_word_segments = [word for seg in alignment_data.get("segments", []) for word in seg.get("words", [])]
-            
-            for word_info in all_word_segments:
-                original_word = word_info.get('word', '').strip()
-                if not original_word: continue
-                
-                word_start, word_end = word_info.get('start'), word_info.get('end')
-                if word_start is None or word_end is None: continue
+            debug_parts = []
 
-                if word_end > scene_start_abs and word_start < scene_end_abs:
-                    local_start = word_start - scene_start_abs
-                    local_end = word_end - scene_start_abs
-                    
-                    # Keyword-based emotion fallback
-                    emotion_for_word = "NEUTRAL"
-                    for emo, profile in viseme_utils.EMOTION_PROFILES.items():
-                        if any(keyword in original_word.lower() for keyword in profile.get("keywords", [])):
-                            emotion_for_word = emo
-                            break
-                    
-                    final_emotion = current_emotion if current_emotion != "NEUTRAL" else emotion_for_word
+            for word in scene_words:
+                word_text = word["word"]
+                local_start = max(0.0, word["start"] - scene_start_abs)
+                local_end = min(scene_duration, word["end"] - scene_start_abs)
+                if local_end <= local_start:
+                    continue
 
-                    try:
-                        phonemes = g2p(original_word.upper())
-                        valid_phonemes = [p.replace('0', '').replace('1', '').replace('2', '') for p in phonemes 
-                                         if p.replace('0', '').replace('1', '').replace('2', '') in viseme_utils.PHONEME_TO_VISEME_MAP]
+                phonemes = self._phonemes_for_word(g2p, word_text)
+                emotion = self._emotion_for_word(word_text)
 
-                        if not valid_phonemes:
-                            phoneme_script.append(("SIL", local_start, local_end, final_emotion, local_start, local_end))
-                            continue
+                if not phonemes:
+                    phoneme_script.append(("SIL", local_start, local_end, emotion, local_start, local_end))
+                    debug_parts.append(f"{word_text}:SIL")
+                    continue
 
-                        duration_per_phoneme = (local_end - local_start) / len(valid_phonemes)
-                        current_phoneme_time = local_start
-                        for p_clean in valid_phonemes:
-                            phoneme_script.append((p_clean, current_phoneme_time, current_phoneme_time + duration_per_phoneme, final_emotion, local_start, local_end))
-                            current_phoneme_time += duration_per_phoneme
-                    except Exception as e:
-                        if debug: print(f"[PGFX Visemes] ERROR during phoneme generation for word '{original_word}': {e}")
-                        phoneme_script.append(("SIL", local_start, local_end, final_emotion, local_start, local_end))
+                debug_parts.append(f"{word_text}:{'-'.join(phonemes)}")
+                duration_per_phoneme = (local_end - local_start) / float(len(phonemes))
+                phoneme_time = local_start
+                for idx, phoneme in enumerate(phonemes):
+                    next_time = local_end if idx == len(phonemes) - 1 else phoneme_time + duration_per_phoneme
+                    phoneme_script.append((phoneme, phoneme_time, next_time, emotion, local_start, local_end))
+                    phoneme_time = next_time
 
-            # --- Frame Generation ---
-            total_frames = max_frames if max_frames > 0 else int(scene_duration * fps)
-            if total_frames <= 0: total_frames = 1
+            phoneme_script.sort(key=lambda item: item[1])
 
-            frame_visemes = [] 
-            phoneme_script.sort(key=lambda x: x[1])
+            if not phoneme_script:
+                fallback = self._fallback_frames(total_frames, image_width, image_height, face_template)
+                return (fallback, "SILENCE (No phonemes generated)", True, instrumental_cue)
 
-            for i in range(total_frames):
-                frame_time = (i + 0.5) / fps
-                found_viseme, found_emotion, found_intensity = "SIL", "NEUTRAL", 0.0
-
-                for p_str, p_start, p_end, emo, w_start, w_end in phoneme_script:
-                    if p_start <= frame_time < p_end:
-                        found_viseme = viseme_utils.PHONEME_TO_VISEME_MAP.get(p_str, "SIL")
-                        found_emotion = emo
-                        multiplier = viseme_utils.calculate_dynamic_intensity(frame_time, w_start, w_end)
-                        found_intensity = emotion_intensity * multiplier
+            frame_visemes = []
+            for frame_idx in range(total_frames):
+                frame_time = (frame_idx + 0.5) / float(fps)
+                active_viseme = ("SIL", "NEUTRAL", 0.0)
+                for phoneme, start, end, emotion, word_start, word_end in phoneme_script:
+                    if start <= frame_time < end:
+                        viseme_name = viseme_utils.PHONEME_TO_VISEME_MAP.get(phoneme, "SIL")
+                        multiplier = viseme_utils.calculate_dynamic_intensity(frame_time, word_start, word_end)
+                        active_viseme = (viseme_name, emotion, max(0.0, emotion_intensity * multiplier))
                         break
-                
-                frame_visemes.append((found_viseme, found_emotion, found_intensity))
+                frame_visemes.append(active_viseme)
 
-            # --- Draw Images ---
-            template_frames_pil = viseme_utils.tensor_to_pil(face_template) if face_template is not None and face_template.numel() > 0 else []
-            num_template_frames = len(template_frames_pil)
+            template_frames = viseme_utils.tensor_to_pil(face_template) if face_template is not None and face_template.numel() > 0 else []
+            template_count = len(template_frames)
 
             output_chunks = []
-            current_chunk_images = []
+            current_chunk = []
+            batch_size = max(1, int(batch_size))
 
-            for i in range(total_frames):
-                viseme_name, emotion, current_intensity = frame_visemes[i]
-                curr_landmarks = viseme_utils.VISEME_TO_LANDMARK_MAP.get(viseme_name, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"])
+            for frame_idx, (viseme_name, emotion, intensity) in enumerate(frame_visemes):
+                curr_landmarks = viseme_utils.VISEME_TO_LANDMARK_MAP.get(
+                    viseme_name, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"]
+                )
+                prev_viseme = frame_visemes[max(0, frame_idx - 1)][0]
+                next_viseme = frame_visemes[min(len(frame_visemes) - 1, frame_idx + 1)][0]
+                prev_landmarks = viseme_utils.VISEME_TO_LANDMARK_MAP.get(
+                    prev_viseme, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"]
+                )
+                next_landmarks = viseme_utils.VISEME_TO_LANDMARK_MAP.get(
+                    next_viseme, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"]
+                )
 
-                prev_viseme = frame_visemes[max(0, i - 1)][0]
-                next_viseme = frame_visemes[min(len(frame_visemes) - 1, i + 1)][0]
+                landmarks_norm = viseme_utils.blend_landmarks(
+                    prev_landmarks, curr_landmarks, next_landmarks, coarticulation_profile
+                )
 
-                prev_landmarks = viseme_utils.VISEME_TO_LANDMARK_MAP.get(prev_viseme, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"])
-                next_landmarks = viseme_utils.VISEME_TO_LANDMARK_MAP.get(next_viseme, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"])
+                if emotion == "SURPRISED" and intensity > 0.0:
+                    surprise = viseme_utils.VISEME_TO_LANDMARK_MAP["OO"]
+                    landmarks_norm = [
+                        (
+                            base_x * (1.0 - intensity) + surprise_x * intensity,
+                            base_y * (1.0 - intensity) + surprise_y * intensity,
+                        )
+                        for (base_x, base_y), (surprise_x, surprise_y) in zip(landmarks_norm, surprise)
+                    ]
 
-                landmarks_norm = viseme_utils.blend_landmarks(prev_landmarks, curr_landmarks, next_landmarks, coarticulation_profile)
+                if template_count > 0:
+                    image = template_frames[frame_idx % template_count].copy()
+                else:
+                    image = Image.new("RGB", (image_width, image_height), "black")
 
-                # Special "SURPRISED" handling from old script
-                if emotion == "SURPRISED" and current_intensity > 0:
-                    surprise_shape = viseme_utils.VISEME_TO_LANDMARK_MAP["OO"]
-                    landmarks_norm = [(ox * (1 - current_intensity) + sx * current_intensity, 
-                                       oy * (1 - current_intensity) + sy * current_intensity) 
-                                      for (ox, oy), (sx, sy) in zip(landmarks_norm, surprise_shape)]
+                draw = ImageDraw.Draw(image)
+                viseme_utils.draw_landmarks_helper(
+                    draw,
+                    landmarks_norm,
+                    image.width,
+                    image.height,
+                    draw_style,
+                    dot_color,
+                    line_color,
+                    fill_color,
+                    dot_size,
+                    line_thickness,
+                    emotion,
+                    intensity,
+                )
+                current_chunk.append(image)
 
-                img = template_frames_pil[i % num_template_frames].copy() if num_template_frames > 0 else Image.new('RGB', (image_width, image_height), 'black')
-                draw = ImageDraw.Draw(img)
-                viseme_utils.draw_landmarks_helper(draw, landmarks_norm, img.width, img.height, draw_style, dot_color, line_color, fill_color, dot_size, line_thickness, emotion, current_intensity)
-                current_chunk_images.append(img)
+                if len(current_chunk) == batch_size or frame_idx == total_frames - 1:
+                    output_chunks.append(viseme_utils.pil_to_tensor(current_chunk))
+                    current_chunk = []
 
-                if len(current_chunk_images) == batch_size or i == total_frames - 1:
-                    image_tensor_chunk = viseme_utils.pil_to_tensor(current_chunk_images)
-                    output_chunks.append(image_tensor_chunk)
-                    current_chunk_images = []
+            final_tensor = torch.cat(output_chunks, dim=0) if output_chunks else self._fallback_frames(
+                total_frames, image_width, image_height, face_template
+            )
+            debug_text = " | ".join(debug_parts[:24])
+            if len(debug_parts) > 24:
+                debug_text += f" | ... ({len(debug_parts)} words)"
 
-            if not output_chunks:
-                return (default_image_output, full_phoneme_debug_string, True, instrumental_cue_for_scene)
+            return (final_tensor, debug_text or "Animation Generated", False, instrumental_cue)
 
-            final_image_tensor = torch.cat(output_chunks, dim=0)
-            return (final_image_tensor, "Animation Generated", False, instrumental_cue_for_scene)
+        except Exception as exc:
+            if debug:
+                traceback.print_exc()
+            fallback = self._fallback_frames(max_frames or 1, image_width, image_height, face_template)
+            return (fallback, f"CRITICAL ERROR: {exc}", True, "")
 
-        except Exception as e:
-            if debug: traceback.print_exc()
-            return (default_image_output, f"CRITICAL ERROR: {e}", True, None)
 
-NODE_CLASS_MAPPINGS = {"PGFX_ScriptGuidedVisemes": PGFX_ScriptGuidedVisemes}
-NODE_DISPLAY_NAME_MAPPINGS = {"PGFX_ScriptGuidedVisemes": "👄 Script-Guided Visemes"}
+class PGFX_UniversalVisemeGuides(PGFX_ScriptGuidedVisemes):
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "fps": ("INT", {"default": 25, "min": 1, "max": 120}),
+                "image_width": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 64}),
+                "image_height": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 64}),
+                "max_frames": ("INT", {"default": 0, "min": 0, "max": 99999, "step": 1}),
+                "scene_index": ("INT", {"default": 0, "min": 0, "max": 99999}),
+                "scene_start_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "step": 0.001}),
+                "scene_duration_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "step": 0.001}),
+                "coarticulation_profile": (
+                    list(viseme_utils.COARTICULATION_PROFILES.keys()),
+                    {"default": "Singing"},
+                ),
+                "draw_style": (["Dots", "Outline", "Filled Outline"], {"default": "Filled Outline"}),
+                "dot_color": ("STRING", {"default": "white"}),
+                "line_color": ("STRING", {"default": "white"}),
+                "fill_color": ("STRING", {"default": "black"}),
+                "dot_size": ("INT", {"default": 3, "min": 1, "max": 20}),
+                "line_thickness": ("INT", {"default": 2, "min": 1, "max": 20}),
+                "emotion_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1}),
+                "debug": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "audio_meta": ("DICT", {}),
+                "word_timing_json": ("STRING", {"default": "", "multiline": True}),
+                "face_template": ("IMAGE", {}),
+                "batch_size": ("INT", {"default": 16, "min": 1, "max": 4096}),
+            },
+        }
+
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "STRING", "BOOLEAN", "STRING")
+    RETURN_NAMES = (
+        "control_images",
+        "depth_guides",
+        "canny_guides",
+        "phoneme_debug_text",
+        "is_silent",
+        "instrumental_cue",
+    )
+    FUNCTION = "execute_universal"
+
+    def _draw_guide_frames(
+        self,
+        frame_visemes,
+        total_frames,
+        image_width,
+        image_height,
+        coarticulation_profile,
+        draw_style,
+        dot_color,
+        line_color,
+        fill_color,
+        dot_size,
+        line_thickness,
+        face_template,
+        batch_size,
+    ):
+        template_frames = viseme_utils.tensor_to_pil(face_template) if face_template is not None and face_template.numel() > 0 else []
+        template_count = len(template_frames)
+        main_chunks = []
+        depth_chunks = []
+        canny_chunks = []
+        current_main = []
+        current_depth = []
+        current_canny = []
+        batch_size = max(1, int(batch_size))
+
+        for frame_idx, (viseme_name, emotion, intensity) in enumerate(frame_visemes):
+            curr_landmarks = viseme_utils.VISEME_TO_LANDMARK_MAP.get(
+                viseme_name, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"]
+            )
+            prev_viseme = frame_visemes[max(0, frame_idx - 1)][0]
+            next_viseme = frame_visemes[min(len(frame_visemes) - 1, frame_idx + 1)][0]
+            prev_landmarks = viseme_utils.VISEME_TO_LANDMARK_MAP.get(
+                prev_viseme, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"]
+            )
+            next_landmarks = viseme_utils.VISEME_TO_LANDMARK_MAP.get(
+                next_viseme, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"]
+            )
+            landmarks_norm = viseme_utils.blend_landmarks(
+                prev_landmarks, curr_landmarks, next_landmarks, coarticulation_profile
+            )
+
+            if emotion == "SURPRISED" and intensity > 0.0:
+                surprise = viseme_utils.VISEME_TO_LANDMARK_MAP["OO"]
+                landmarks_norm = [
+                    (
+                        base_x * (1.0 - intensity) + surprise_x * intensity,
+                        base_y * (1.0 - intensity) + surprise_y * intensity,
+                    )
+                    for (base_x, base_y), (surprise_x, surprise_y) in zip(landmarks_norm, surprise)
+                ]
+
+            if template_count > 0:
+                main_image = template_frames[frame_idx % template_count].copy()
+            else:
+                main_image = Image.new("RGB", (image_width, image_height), "black")
+            depth_image = Image.new("RGB", (image_width, image_height), "black")
+            canny_image = Image.new("RGB", (image_width, image_height), "black")
+
+            viseme_utils.draw_landmarks_helper(
+                ImageDraw.Draw(main_image),
+                landmarks_norm,
+                main_image.width,
+                main_image.height,
+                draw_style,
+                dot_color,
+                line_color,
+                fill_color,
+                dot_size,
+                line_thickness,
+                emotion,
+                intensity,
+            )
+            viseme_utils.draw_landmarks_helper(
+                ImageDraw.Draw(depth_image),
+                landmarks_norm,
+                depth_image.width,
+                depth_image.height,
+                "Filled Outline",
+                "white",
+                "white",
+                "gray",
+                dot_size,
+                line_thickness,
+                emotion,
+                intensity,
+            )
+            viseme_utils.draw_landmarks_helper(
+                ImageDraw.Draw(canny_image),
+                landmarks_norm,
+                canny_image.width,
+                canny_image.height,
+                "Outline",
+                "white",
+                "white",
+                "black",
+                dot_size,
+                line_thickness,
+                emotion,
+                intensity,
+            )
+
+            current_main.append(main_image)
+            current_depth.append(depth_image)
+            current_canny.append(canny_image)
+
+            if len(current_main) == batch_size or frame_idx == total_frames - 1:
+                main_chunks.append(viseme_utils.pil_to_tensor(current_main))
+                depth_chunks.append(viseme_utils.pil_to_tensor(current_depth))
+                canny_chunks.append(viseme_utils.pil_to_tensor(current_canny))
+                current_main = []
+                current_depth = []
+                current_canny = []
+
+        return (
+            torch.cat(main_chunks, dim=0),
+            torch.cat(depth_chunks, dim=0),
+            torch.cat(canny_chunks, dim=0),
+        )
+
+    def execute_universal(
+        self,
+        fps,
+        image_width,
+        image_height,
+        max_frames,
+        scene_index,
+        scene_start_seconds,
+        scene_duration_seconds,
+        coarticulation_profile,
+        draw_style,
+        dot_color,
+        line_color,
+        fill_color,
+        dot_size,
+        line_thickness,
+        emotion_intensity,
+        debug,
+        audio_meta=None,
+        word_timing_json="",
+        face_template=None,
+        batch_size=16,
+        **kwargs,
+    ):
+        audio_meta = audio_meta or {}
+        if debug:
+            print(f"--- [PGFX Universal Visemes] START (Scene Index: {scene_index}) ---")
+
+        try:
+            g2p = viseme_utils.get_g2p()
+            if not g2p:
+                fallback = self._fallback_frames(max_frames or 1, image_width, image_height, face_template)
+                return (fallback, fallback.clone(), fallback.clone(), "ERROR: g2p_en library failed to initialize.", True, "")
+
+            word_segments = self._extract_word_segments_from_json(word_timing_json)
+            if not word_segments:
+                word_segments = self._extract_word_segments(audio_meta)
+
+            durations = self._extract_durations_seconds(audio_meta, fps)
+            instrumental_cue = self._instrumental_cue_for_scene(audio_meta, scene_index)
+
+            if scene_duration_seconds > 0.0:
+                scene_start_abs = max(0.0, float(scene_start_seconds))
+                scene_duration = float(scene_duration_seconds)
+            else:
+                scene_start_abs, scene_duration, _ = self._resolve_scene_window(
+                    audio_meta, word_segments, durations, scene_index, fps, max_frames
+                )
+
+            total_frames = int(max_frames) if max_frames and max_frames > 0 else int(round(scene_duration * fps))
+            total_frames = max(1, total_frames)
+            scene_end_abs = scene_start_abs + scene_duration
+
+            if scene_duration <= 0.0 or not word_segments:
+                fallback = self._fallback_frames(total_frames, image_width, image_height, face_template)
+                return (fallback, fallback.clone(), fallback.clone(), "SILENCE (No usable timing data)", True, instrumental_cue)
+
+            scene_words = [
+                word for word in word_segments
+                if word["end"] > scene_start_abs and word["start"] < scene_end_abs
+            ]
+            if not scene_words:
+                fallback = self._fallback_frames(total_frames, image_width, image_height, face_template)
+                return (fallback, fallback.clone(), fallback.clone(), "SILENCE (No words overlap this scene)", True, instrumental_cue)
+
+            phoneme_script = []
+            debug_parts = []
+            for word in scene_words:
+                word_text = word["word"]
+                local_start = max(0.0, word["start"] - scene_start_abs)
+                local_end = min(scene_duration, word["end"] - scene_start_abs)
+                if local_end <= local_start:
+                    continue
+                phonemes = self._phonemes_for_word(g2p, word_text)
+                emotion = self._emotion_for_word(word_text)
+
+                if not phonemes:
+                    phoneme_script.append(("SIL", local_start, local_end, emotion, local_start, local_end))
+                    debug_parts.append(f"{word_text}:SIL")
+                    continue
+
+                debug_parts.append(f"{word_text}:{'-'.join(phonemes)}")
+                duration_per_phoneme = (local_end - local_start) / float(len(phonemes))
+                phoneme_time = local_start
+                for idx, phoneme in enumerate(phonemes):
+                    next_time = local_end if idx == len(phonemes) - 1 else phoneme_time + duration_per_phoneme
+                    phoneme_script.append((phoneme, phoneme_time, next_time, emotion, local_start, local_end))
+                    phoneme_time = next_time
+
+            phoneme_script.sort(key=lambda item: item[1])
+            if not phoneme_script:
+                fallback = self._fallback_frames(total_frames, image_width, image_height, face_template)
+                return (fallback, fallback.clone(), fallback.clone(), "SILENCE (No phonemes generated)", True, instrumental_cue)
+
+            frame_visemes = []
+            for frame_idx in range(total_frames):
+                frame_time = (frame_idx + 0.5) / float(fps)
+                active_viseme = ("SIL", "NEUTRAL", 0.0)
+                for phoneme, start, end, emotion, word_start, word_end in phoneme_script:
+                    if start <= frame_time < end:
+                        viseme_name = viseme_utils.PHONEME_TO_VISEME_MAP.get(phoneme, "SIL")
+                        multiplier = viseme_utils.calculate_dynamic_intensity(frame_time, word_start, word_end)
+                        active_viseme = (viseme_name, emotion, max(0.0, emotion_intensity * multiplier))
+                        break
+                frame_visemes.append(active_viseme)
+
+            main_tensor, depth_tensor, canny_tensor = self._draw_guide_frames(
+                frame_visemes,
+                total_frames,
+                image_width,
+                image_height,
+                coarticulation_profile,
+                draw_style,
+                dot_color,
+                line_color,
+                fill_color,
+                dot_size,
+                line_thickness,
+                face_template,
+                batch_size,
+            )
+
+            debug_text = " | ".join(debug_parts[:24])
+            if len(debug_parts) > 24:
+                debug_text += f" | ... ({len(debug_parts)} words)"
+
+            return (
+                main_tensor,
+                depth_tensor,
+                canny_tensor,
+                debug_text or "Animation Generated",
+                False,
+                instrumental_cue,
+            )
+
+        except Exception as exc:
+            if debug:
+                traceback.print_exc()
+            fallback = self._fallback_frames(max_frames or 1, image_width, image_height, face_template)
+            return (fallback, fallback.clone(), fallback.clone(), f"CRITICAL ERROR: {exc}", True, "")
+
+
+class PGFX_WordTimingJsonBuilder(PGFX_ScriptGuidedVisemes):
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "debug": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "audio_meta": ("DICT", {}),
+                "segments_json_text": ("STRING", {"default": "", "multiline": True}),
+                "srt_text": ("STRING", {"default": "", "multiline": True}),
+                "srt_path": ("STRING", {"default": "", "multiline": False}),
+            },
+        }
+
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    RETURN_TYPES = ("STRING", "DICT", "INT", "STRING")
+    RETURN_NAMES = ("word_timing_json", "word_segments", "total_words", "status_text")
+    FUNCTION = "build"
+
+    @staticmethod
+    def _parse_srt_timestamp(value):
+        text = str(value or "").strip().replace(",", ".")
+        parts = text.split(":")
+        if len(parts) != 3:
+            raise ValueError(f"Invalid SRT timestamp: {value}")
+        hours = float(parts[0])
+        minutes = float(parts[1])
+        seconds = float(parts[2])
+        return hours * 3600.0 + minutes * 60.0 + seconds
+
+    @classmethod
+    def _word_segments_from_timed_segments(cls, timed_segments):
+        segments = []
+        for seg in timed_segments or []:
+            text = str(seg.get("text") or seg.get("lyric") or seg.get("word") or "").strip()
+            if not text:
+                continue
+            start = seg.get("start")
+            end = seg.get("end")
+            if start is None or end is None:
+                continue
+            try:
+                start = float(start)
+                end = float(end)
+            except Exception:
+                continue
+            if end <= start:
+                continue
+            words = [cls._clean_word(word) for word in text.split()]
+            words = [word for word in words if word]
+            if not words:
+                continue
+            weights = [max(len(word), 1) for word in words]
+            total_weight = float(sum(weights))
+            cursor = start
+            for idx, word in enumerate(words):
+                if idx == len(words) - 1:
+                    next_cursor = end
+                else:
+                    next_cursor = cursor + ((end - start) * (weights[idx] / total_weight))
+                segments.append({"word": word, "start": round(cursor, 6), "end": round(next_cursor, 6)})
+                cursor = next_cursor
+        return segments
+
+    @classmethod
+    def _word_segments_from_srt_text(cls, srt_text):
+        raw_text = str(srt_text or "").strip()
+        if not raw_text:
+            return []
+
+        segments = []
+        blocks = re.split(r"\n\s*\n", raw_text.replace("\r\n", "\n"))
+        for block in blocks:
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            if not lines:
+                continue
+            if "-->" not in block:
+                continue
+
+            time_line_index = 0
+            if "-->" not in lines[0] and len(lines) > 1:
+                time_line_index = 1
+            if "-->" not in lines[time_line_index]:
+                continue
+
+            try:
+                start_text, end_text = [part.strip() for part in lines[time_line_index].split("-->", 1)]
+                start = cls._parse_srt_timestamp(start_text)
+                end = cls._parse_srt_timestamp(end_text)
+            except Exception:
+                continue
+
+            caption_text = " ".join(lines[time_line_index + 1 :]).strip()
+            if end <= start or not caption_text:
+                continue
+
+            words = [cls._clean_word(word) for word in caption_text.split()]
+            words = [word for word in words if word]
+            if not words:
+                continue
+
+            weights = [max(len(word), 1) for word in words]
+            total_weight = float(sum(weights))
+            cursor = start
+            for idx, word in enumerate(words):
+                if idx == len(words) - 1:
+                    next_cursor = end
+                else:
+                    next_cursor = cursor + ((end - start) * (weights[idx] / total_weight))
+                segments.append({"word": word, "start": round(cursor, 6), "end": round(next_cursor, 6)})
+                cursor = next_cursor
+
+        return segments
+
+    @staticmethod
+    def _load_srt_text_from_path(srt_path):
+        path = str(srt_path or "").strip()
+        if not path:
+            return ""
+        with open(path, "r", encoding="utf-8-sig") as handle:
+            return handle.read()
+
+    @staticmethod
+    def _normalize_segments(segments):
+        normalized = []
+        for seg in segments or []:
+            word = str(seg.get("word") or seg.get("text") or "").strip()
+            if not word:
+                continue
+            try:
+                start = float(seg.get("start"))
+                end = float(seg.get("end"))
+            except Exception:
+                continue
+            if end <= start:
+                continue
+            normalized.append({"word": word, "start": round(start, 6), "end": round(end, 6)})
+        return sorted(normalized, key=lambda item: (item["start"], item["end"], item["word"]))
+
+    @classmethod
+    def _segments_from_json_text(cls, segments_json_text):
+        raw = str(segments_json_text or "").strip()
+        if not raw:
+            return []
+
+        def _segments_from_duration_map(payload):
+            duration_keys = [
+                key for key in payload.keys() if re.match(r"segment\d+_Duration_[0-9.]+$", str(key), re.I)
+            ]
+            if not duration_keys:
+                return []
+
+            def _segment_sort_key(key):
+                match = re.match(r"segment(\d+)_Duration_([0-9.]+)$", str(key), re.I)
+                if not match:
+                    return (10**9, 0.0)
+                return (int(match.group(1)), float(match.group(2)))
+
+            segments = []
+            cursor = 0.0
+            for key in sorted(duration_keys, key=_segment_sort_key):
+                match = re.match(r"segment(\d+)_Duration_([0-9.]+)$", str(key), re.I)
+                if not match:
+                    continue
+                duration = float(match.group(2))
+                text = str(payload.get(key) or "").strip()
+                if not text or duration <= 0.0:
+                    cursor += max(duration, 0.0)
+                    continue
+                cleaned_words = [cls._clean_word(word) for word in text.split()]
+                cleaned_words = [word for word in cleaned_words if word]
+                if not cleaned_words:
+                    cursor += duration
+                    continue
+                weights = [max(len(word), 1) for word in cleaned_words]
+                total_weight = float(sum(weights))
+                local_cursor = cursor
+                for idx, word in enumerate(cleaned_words):
+                    if idx == len(cleaned_words) - 1:
+                        next_cursor = cursor + duration
+                    else:
+                        next_cursor = local_cursor + (duration * (weights[idx] / total_weight))
+                    segments.append(
+                        {
+                            "word": word,
+                            "start": round(local_cursor, 6),
+                            "end": round(next_cursor, 6),
+                        }
+                    )
+                    local_cursor = next_cursor
+                cursor += duration
+            return cls._normalize_segments(segments)
+
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = {}
+            for line in raw.splitlines():
+                match = re.match(
+                    r'\s*"?(segment\d+_Duration_[0-9.]+)"?\s*:\s*"(.*)"\s*,?\s*$',
+                    line.strip(),
+                    re.I,
+                )
+                if match:
+                    payload[match.group(1)] = match.group(2)
+            if payload:
+                return _segments_from_duration_map(payload)
+            return []
+
+        if isinstance(payload, dict):
+            if isinstance(payload.get("word_segments"), list):
+                return cls._normalize_segments(payload.get("word_segments"))
+            if isinstance(payload.get("timed_segments"), list):
+                return cls._normalize_segments(cls._word_segments_from_timed_segments(payload.get("timed_segments")))
+            if isinstance(payload.get("segments"), list):
+                return cls._normalize_segments(cls._word_segments_from_timed_segments(payload.get("segments")))
+            duration_segments = _segments_from_duration_map(payload)
+            if duration_segments:
+                return duration_segments
+
+        if isinstance(payload, list):
+            if payload and isinstance(payload[0], dict) and "word" in payload[0]:
+                return cls._normalize_segments(payload)
+            return cls._normalize_segments(cls._word_segments_from_timed_segments(payload))
+
+        return []
+
+    def build(self, debug=False, audio_meta=None, segments_json_text="", srt_text="", srt_path=""):
+        audio_meta = audio_meta or {}
+        try:
+            source = "none"
+            segments = []
+
+            if isinstance(audio_meta, dict):
+                segments = self._extract_word_segments(audio_meta)
+                if segments:
+                    source = "audio_meta.word_segments"
+                else:
+                    timed_segments = audio_meta.get("timed_segments") or []
+                    segments = self._word_segments_from_timed_segments(timed_segments)
+                    if segments:
+                        source = "audio_meta.timed_segments"
+
+            if not segments and str(segments_json_text or "").strip():
+                segments = self._segments_from_json_text(segments_json_text)
+                if segments:
+                    source = "segments_json_text"
+
+            if not segments and str(srt_text or "").strip():
+                segments = self._word_segments_from_srt_text(srt_text)
+                if segments:
+                    source = "srt_text"
+
+            if not segments and str(srt_path or "").strip():
+                loaded_srt_text = self._load_srt_text_from_path(srt_path)
+                segments = self._word_segments_from_srt_text(loaded_srt_text)
+                if segments:
+                    source = "srt_path"
+
+            segments = self._normalize_segments(segments)
+            payload = {"word_segments": segments, "source": source, "total_words": len(segments)}
+            output_json = json.dumps(payload, indent=2, ensure_ascii=True)
+
+            if debug:
+                print(f"[PGFX Word Timing Json Builder] source={source} total_words={len(segments)}")
+
+            if not segments:
+                return (output_json, payload, 0, "No word timing data could be derived from audio_meta or SRT input.")
+
+            return (output_json, payload, len(segments), f"Built {len(segments)} word timings from {source}.")
+        except Exception as exc:
+            if debug:
+                traceback.print_exc()
+            payload = {"word_segments": [], "source": "error", "total_words": 0}
+            return (json.dumps(payload, indent=2, ensure_ascii=True), payload, 0, f"CRITICAL ERROR: {exc}")
+
+
+NODE_CLASS_MAPPINGS = {
+    "PGFX_ScriptGuidedVisemes": PGFX_ScriptGuidedVisemes,
+    "PGFX_UniversalVisemeGuides": PGFX_UniversalVisemeGuides,
+    "PGFX_WordTimingJsonBuilder": PGFX_WordTimingJsonBuilder,
+}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "PGFX_ScriptGuidedVisemes": "👄 Script-Guided Visemes",
+    "PGFX_UniversalVisemeGuides": "👄 Universal Viseme Guides",
+    "PGFX_WordTimingJsonBuilder": "📝 Word Timing JSON Builder",
+}

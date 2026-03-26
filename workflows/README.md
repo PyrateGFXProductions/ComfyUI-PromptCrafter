@@ -18,6 +18,9 @@ These workflows are intended as working, end-to-end examples for testing PGFX no
 - `PGFX_QnA_To_Text.json`: Simple QnA response saved to a text file.
 - `PGFX_Captioner_Single_Image.json`: LoadImage -> Captioner -> SaveTextFile.
 - `PGFX_SRT_Subtitle_Burn.json`: Audio to SRT to subtitle burn onto a single image frame.
+- `PGFX_Universal_Viseme_Subgraph.md`: reusable subgraph wiring notes for `PGFX_UniversalVisemeGuides` in image-to-video workflows.
+- `PGFX_Universal_Viseme_Control_Bridge_Demo.json`: small runnable demo showing `PGFX_UniversalVisemeGuides` feeding the PromptCrafter viseme control bridge and saving the guide outputs.
+- `PGFX_Universal_Viseme_LTX_Img2Vid_Demo.json`: minimal LTX img2vid example where `control_images` are injected through `LTXVAddGuide` before sampling, then decoded and saved as frames.
 
 **Dependencies**
 - `PGFX_SRT_Subtitle_Burn.json` uses `VHS_LoadAudioUpload` from `comfyui-videohelpersuite`. Replace it with any node that outputs `AUDIO` if you prefer.
