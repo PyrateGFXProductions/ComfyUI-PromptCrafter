@@ -14,7 +14,7 @@ Compatibility note: many internal node IDs still use the `PromptCrafter_` prefix
 - **Video Tools**: Subtitle burning for frame sequences and video pipelines.
 - **LTX-2 Local Workflow**: Local-only LTX-2 manifest + render script generation from PromptCrafter schedules.
 - **Think/Instruct Chains**: Deterministic paired nodes for structured reasoning and strict output control.
-- **Utilities**: QnA, Captioner, File Organizer, Formatter, Save Text, Cache Utility, Prompt Chunker, Image Switcher, and local LTX-2 pipeline script builder.
+- **Utilities**: QnA, Captioner, File Organizer, Formatter, Save Text, Cache Utility, Prompt Chunker, Image Switcher, Frame Selector, and local LTX-2 pipeline script builder.
 - **ComfyGuard**: A bundled dependency conflict detector for safer installs.
 
 ---
@@ -100,6 +100,7 @@ Creator nodes also include a `local_only_models` switch (enabled by default) to 
 
 **Video**
 - `📝 Subtitle Styler` — burn subtitles onto frame sequences
+- `🎞️ Frame Selector` — pick an exact frame or a frame range from a generated clip and preview it as a contact sheet
 
 **Text / Think / Instruct**
 - `🧠 ... Think` nodes — structured reasoning

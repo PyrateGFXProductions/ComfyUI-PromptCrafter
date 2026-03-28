@@ -47,6 +47,29 @@ Clears internal caches so nodes re‑evaluate inputs (useful after file edits).
 
 ---
 
+## `PromptCrafter_VideoFrameSelector`
+Selects exact frames or frame ranges from a generated video clip represented as an `IMAGE` batch.
+
+Key behaviors:
+- Supports single-frame, frame-range, last-N, and CSV index selection.
+- Accepts negative indices so `-1` means the final frame, `-2` the frame before that, etc.
+- Outputs both the full selected batch and one chosen frame for downstream looping workflows.
+- Generates a labeled contact-sheet preview so you can inspect candidate frames visually before saving.
+
+Outputs:
+- `selected_frames`
+- `selected_frame`
+- `contact_sheet`
+- `selected_count`
+- `selected_frame_index`
+- `selection_info`
+
+Tip:
+- Connect `selected_frame` into your next image-to-video start frame input.
+- Connect `selected_frames` or `selected_frame` into a normal `SaveImage` node to save full-resolution stills.
+
+---
+
 ## `PromptCrafter_LTX2LocalPipelineBuilder`
 Builds local-only LTX-2 render artifacts from PromptCrafter schedule JSON.
 

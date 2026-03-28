@@ -19,7 +19,7 @@ from typing import Union
 
 # Third-party imports
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import librosa
 import numpy as np
 
@@ -2722,6 +2722,388 @@ class PromptCrafter_CacheUtility:
         return (status_message,)
 
 # ------------------------------------------------------------------------------------
+# PromptCrafter_VideoFrameSelector Node
+# ------------------------------------------------------------------------------------
+class PromptCrafter_VideoFrameSelector:
+    DESCRIPTION = get_node_description("PromptCrafter_VideoFrameSelector")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video_frames": ("IMAGE", {"tooltip": "Video frames as a ComfyUI IMAGE batch (frames, H, W, C)."}),
+                "selection_mode": (
+                    ["Single Frame", "Frame Range", "Last N Frames", "Comma-Separated Indices"],
+                    {
+                        "default": "Single Frame",
+                        "tooltip": "Choose one frame, a continuous range, the last N frames, or a custom CSV list.",
+                    },
+                ),
+                "frame_index": (
+                    "INT",
+                    {
+                        "default": -1,
+                        "min": -999999,
+                        "max": 999999,
+                        "step": 1,
+                        "tooltip": "Used in Single Frame mode. Negative values count from the end (-1 = last frame).",
+                    },
+                ),
+                "range_start": (
+                    "INT",
+                    {
+                        "default": -8,
+                        "min": -999999,
+                        "max": 999999,
+                        "step": 1,
+                        "tooltip": "Used in Frame Range mode. Negative values count from the end.",
+                    },
+                ),
+                "range_end": (
+                    "INT",
+                    {
+                        "default": -1,
+                        "min": -999999,
+                        "max": 999999,
+                        "step": 1,
+                        "tooltip": "Used in Frame Range mode. Can be earlier or later than range_start.",
+                    },
+                ),
+                "step": (
+                    "INT",
+                    {
+                        "default": 1,
+                        "min": 1,
+                        "max": 99999,
+                        "step": 1,
+                        "tooltip": "Stride for Frame Range mode.",
+                    },
+                ),
+                "last_n_frames": (
+                    "INT",
+                    {
+                        "default": 8,
+                        "min": 1,
+                        "max": 99999,
+                        "step": 1,
+                        "tooltip": "Used in Last N Frames mode.",
+                    },
+                ),
+                "indices_csv": (
+                    "STRING",
+                    {
+                        "multiline": False,
+                        "default": "-8,-7,-6,-5,-4,-3,-2,-1",
+                        "tooltip": "Used in Comma-Separated Indices mode. Example: -12,-8,-4,-1",
+                    },
+                ),
+                "pick_in_selection": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 99999,
+                        "step": 1,
+                        "tooltip": "Which frame inside the selected set should also be exposed as a single-frame output.",
+                    },
+                ),
+                "clamp_out_of_bounds": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Clamp invalid single/CSV indices into the valid frame range instead of dropping them.",
+                    },
+                ),
+                "deduplicate": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Remove duplicate resolved frame indices while keeping order.",
+                    },
+                ),
+                "contact_sheet_columns": (
+                    "INT",
+                    {
+                        "default": 4,
+                        "min": 1,
+                        "max": 12,
+                        "step": 1,
+                        "tooltip": "How many thumbnail columns to use for the contact-sheet preview.",
+                    },
+                ),
+                "contact_thumb_width": (
+                    "INT",
+                    {
+                        "default": 192,
+                        "min": 64,
+                        "max": 512,
+                        "step": 8,
+                        "tooltip": "Thumbnail width for the contact-sheet preview image.",
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "INT", "INT", "STRING")
+    RETURN_NAMES = (
+        "selected_frames",
+        "selected_frame",
+        "contact_sheet",
+        "selected_count",
+        "selected_frame_index",
+        "selection_info",
+    )
+    FUNCTION = "select_frames"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Video"
+
+    @staticmethod
+    def _ensure_frame_batch(video_frames):
+        if video_frames is None:
+            raise ValueError("No video frames were provided.")
+        if not isinstance(video_frames, torch.Tensor):
+            raise ValueError(f"Expected a torch.Tensor IMAGE batch, got {type(video_frames)}")
+        if video_frames.ndim == 3:
+            video_frames = video_frames.unsqueeze(0)
+        if video_frames.ndim != 4:
+            raise ValueError(f"Expected IMAGE batch with 4 dims (frames,H,W,C), got {tuple(video_frames.shape)}")
+        if int(video_frames.shape[0]) <= 0:
+            raise ValueError("The incoming video batch is empty.")
+        return video_frames
+
+    @staticmethod
+    def _absolute_index(index_value, total_frames):
+        idx = int(index_value)
+        if idx < 0:
+            idx = total_frames + idx
+        return idx
+
+    def _resolve_index(self, index_value, total_frames, clamp_out_of_bounds):
+        idx = self._absolute_index(index_value, total_frames)
+        if clamp_out_of_bounds:
+            return max(0, min(total_frames - 1, idx))
+        if 0 <= idx < total_frames:
+            return idx
+        return None
+
+    @staticmethod
+    def _deduplicate_indices(indices):
+        seen = set()
+        ordered = []
+        for idx in indices:
+            if idx in seen:
+                continue
+            seen.add(idx)
+            ordered.append(idx)
+        return ordered
+
+    @staticmethod
+    def _parse_indices_csv(indices_csv):
+        raw = "" if indices_csv is None else str(indices_csv).strip()
+        if not raw:
+            return []
+
+        parsed = []
+        for token in re.split(r"[\s,]+", raw):
+            if not token:
+                continue
+            try:
+                parsed.append(int(token))
+            except ValueError as exc:
+                raise ValueError(f"Invalid frame index '{token}' in indices_csv.") from exc
+        return parsed
+
+    def _build_index_list(
+        self,
+        selection_mode,
+        total_frames,
+        frame_index,
+        range_start,
+        range_end,
+        step,
+        last_n_frames,
+        indices_csv,
+        clamp_out_of_bounds,
+        deduplicate,
+    ):
+        notes = []
+        dropped = []
+
+        if selection_mode == "Single Frame":
+            resolved = [self._resolve_index(frame_index, total_frames, clamp_out_of_bounds)]
+            if resolved[0] is None:
+                raise ValueError(f"Frame index {frame_index} is outside the valid range 0-{total_frames - 1}.")
+            if resolved[0] != self._absolute_index(frame_index, total_frames):
+                notes.append(f"frame_index {frame_index} clamped to {resolved[0]}")
+
+        elif selection_mode == "Frame Range":
+            start_abs = self._absolute_index(range_start, total_frames)
+            end_abs = self._absolute_index(range_end, total_frames)
+            direction = 1 if end_abs >= start_abs else -1
+
+            if direction > 0:
+                start_eff = max(0, start_abs)
+                end_eff = min(total_frames - 1, end_abs)
+                resolved = list(range(start_eff, end_eff + 1, step)) if start_eff <= end_eff else []
+            else:
+                start_eff = min(total_frames - 1, start_abs)
+                end_eff = max(0, end_abs)
+                resolved = list(range(start_eff, end_eff - 1, -step)) if start_eff >= end_eff else []
+
+            if start_eff != start_abs or end_eff != end_abs:
+                notes.append(f"range clipped to valid bounds ({start_eff} -> {end_eff})")
+
+        elif selection_mode == "Last N Frames":
+            count = max(1, min(total_frames, int(last_n_frames)))
+            resolved = list(range(total_frames - count, total_frames))
+            if count != int(last_n_frames):
+                notes.append(f"last_n_frames reduced to {count}")
+
+        else:
+            raw_indices = self._parse_indices_csv(indices_csv)
+            resolved = []
+            for raw_idx in raw_indices:
+                idx = self._resolve_index(raw_idx, total_frames, clamp_out_of_bounds)
+                if idx is None:
+                    dropped.append(raw_idx)
+                    continue
+                if idx != self._absolute_index(raw_idx, total_frames):
+                    notes.append(f"index {raw_idx} clamped to {idx}")
+                resolved.append(idx)
+
+        if deduplicate:
+            deduped = self._deduplicate_indices(resolved)
+            if len(deduped) != len(resolved):
+                notes.append("duplicate indices removed")
+            resolved = deduped
+
+        if dropped:
+            preview = ", ".join(str(v) for v in dropped[:8])
+            if len(dropped) > 8:
+                preview += ", ..."
+            notes.append(f"dropped out-of-range indices: {preview}")
+
+        if not resolved:
+            raise ValueError("No valid frames were resolved from the current selection settings.")
+
+        return resolved, notes
+
+    @staticmethod
+    def _make_contact_sheet(selected_frames, resolved_indices, columns, thumb_width):
+        frames_np = (
+            selected_frames.detach().cpu().clamp(0.0, 1.0).mul(255.0).round().to(torch.uint8).numpy()
+        )
+
+        count, height, width, _ = frames_np.shape
+        columns = max(1, min(int(columns), count))
+        rows = (count + columns - 1) // columns
+        thumb_width = max(64, int(thumb_width))
+        aspect = float(width) / float(max(1, height))
+        thumb_height = max(64, int(round(thumb_width / max(aspect, 1e-6))))
+        padding = 10
+        label_height = 22
+        canvas_w = padding + columns * (thumb_width + padding)
+        canvas_h = padding + rows * (thumb_height + label_height + padding)
+
+        sheet = Image.new("RGB", (canvas_w, canvas_h), (20, 20, 20))
+        draw = ImageDraw.Draw(sheet)
+        font = ImageFont.load_default()
+        resample_ns = getattr(Image, "Resampling", Image)
+        resample_filter = getattr(resample_ns, "LANCZOS", Image.BICUBIC)
+
+        for pos in range(count):
+            row = pos // columns
+            col = pos % columns
+            x = padding + col * (thumb_width + padding)
+            y = padding + row * (thumb_height + label_height + padding)
+
+            frame_img = Image.fromarray(frames_np[pos], mode="RGB").resize((thumb_width, thumb_height), resample_filter)
+            sheet.paste(frame_img, (x, y))
+
+            draw.rectangle(
+                [x - 1, y - 1, x + thumb_width, y + thumb_height],
+                outline=(85, 85, 85),
+                width=1,
+            )
+            draw.rectangle(
+                [x, y + thumb_height, x + thumb_width, y + thumb_height + label_height],
+                fill=(30, 30, 30),
+            )
+            draw.text((x + 6, y + thumb_height + 5), f"#{resolved_indices[pos]}", fill=(255, 255, 255), font=font)
+
+        contact_np = np.asarray(sheet).astype(np.float32) / 255.0
+        return torch.from_numpy(contact_np).unsqueeze(0)
+
+    @staticmethod
+    def _summarize_indices(indices, limit=24):
+        if len(indices) <= limit:
+            return ", ".join(str(idx) for idx in indices)
+        shown = ", ".join(str(idx) for idx in indices[:limit])
+        return f"{shown}, ... ({len(indices)} total)"
+
+    def select_frames(
+        self,
+        video_frames,
+        selection_mode,
+        frame_index,
+        range_start,
+        range_end,
+        step,
+        last_n_frames,
+        indices_csv,
+        pick_in_selection,
+        clamp_out_of_bounds,
+        deduplicate,
+        contact_sheet_columns,
+        contact_thumb_width,
+    ):
+        video_frames = self._ensure_frame_batch(video_frames)
+        total_frames = int(video_frames.shape[0])
+
+        resolved_indices, notes = self._build_index_list(
+            selection_mode=selection_mode,
+            total_frames=total_frames,
+            frame_index=frame_index,
+            range_start=range_start,
+            range_end=range_end,
+            step=step,
+            last_n_frames=last_n_frames,
+            indices_csv=indices_csv,
+            clamp_out_of_bounds=clamp_out_of_bounds,
+            deduplicate=deduplicate,
+        )
+
+        selected_frames = video_frames[resolved_indices].clone()
+        pick_pos = max(0, min(len(resolved_indices) - 1, int(pick_in_selection)))
+        selected_frame_index = int(resolved_indices[pick_pos])
+        selected_frame = selected_frames[pick_pos : pick_pos + 1].clone()
+        contact_sheet = self._make_contact_sheet(
+            selected_frames,
+            resolved_indices,
+            columns=contact_sheet_columns,
+            thumb_width=contact_thumb_width,
+        )
+
+        info_parts = [
+            f"Mode: {selection_mode}",
+            f"Total frames: {total_frames}",
+            f"Selected: {len(resolved_indices)} frame(s)",
+            f"Indices: {self._summarize_indices(resolved_indices)}",
+            f"pick_in_selection={pick_pos} -> frame {selected_frame_index}",
+        ]
+        if notes:
+            info_parts.append(f"Notes: {'; '.join(notes)}")
+        selection_info = " | ".join(info_parts)
+
+        return (
+            selected_frames,
+            selected_frame,
+            contact_sheet,
+            len(resolved_indices),
+            selected_frame_index,
+            selection_info,
+        )
+
+# ------------------------------------------------------------------------------------
 # PromptCrafter_ImageSwitcher Node
 # ------------------------------------------------------------------------------------
 # In nodes.py, locate and replace the PromptCrafter_ImageSwitcher class:
@@ -3449,6 +3831,7 @@ NODE_CLASS_MAPPINGS = {
     "PromptCrafter_Captioner": PromptCrafter_Captioner,
     "PromptCrafter_AudioSplitter": PromptCrafter_AudioSplitter,
     "PromptCrafter_CacheUtility": PromptCrafter_CacheUtility,
+    "PromptCrafter_VideoFrameSelector": PromptCrafter_VideoFrameSelector,
     "PromptCrafter_FileOrganizer": PromptCrafter_FileOrganizer,
     "PromptCrafter_Formatter": PromptCrafter_Formatter,
     "PromptCrafter_SaveTextFile": PromptCrafter_SaveTextFile,
@@ -3475,6 +3858,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_AudioSplitter_v2": "🎤 Audio Splitter v2",
     "PromptCrafter_AudioSplitter": "🎤 Audio Splitter",
     "PromptCrafter_CacheUtility": "🧹 Cache Utility",
+    "PromptCrafter_VideoFrameSelector": "🎞️ Frame Selector",
     "PromptCrafter_FileOrganizer": "🗂️ File Organizer",
     "PromptCrafter_Formatter": "📝 Text Formatter",
     "PromptCrafter_SaveTextFile": "💾 Save Text File",
