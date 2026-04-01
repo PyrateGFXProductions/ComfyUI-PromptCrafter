@@ -140,3 +140,5 @@ WEB_DIRECTORY = "./js"
 
 print(f"\033[92m[PGFX] Loaded {len(NODE_CLASS_MAPPINGS)} nodes successfully.\033[0m")
 print("\033[95m[PGFX] PromptCrafter Project: Refactored & Ready.\033[0m")
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

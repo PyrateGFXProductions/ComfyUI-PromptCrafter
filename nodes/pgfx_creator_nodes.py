@@ -1076,14 +1076,153 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
 
 
 # ------------------------------------------------------------------------------------
+# Easy / Simplified Variants
+# ------------------------------------------------------------------------------------
+class PromptCrafter_VisualCreatorEasy(PromptCrafter_VisualCreator):
+    DESCRIPTION = "Simplified Visual Creator with optimum defaults for immediate, high-quality prompt generation."
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        combined_models = get_combined_models()
+        return {
+            "required": {
+                "instruction": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT}),
+                "subject": ("STRING", {"multiline": True, "default": ""}),
+                "model": (combined_models, {"tooltip": "The language model to use."}),
+                "pipeline_mode": (["Image", "Video"], {"default": "Image"}),
+                "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "LTX-2 (Audio/Lip Sync/Retake)"], {"default": "Generic (SD1.5, SD2.1)"}),
+                "style_override": (style_profiles.get_style_override_options("Image"), {"default": "None"}),
+                "image_count": ("INT", {"default": 1, "min": 1, "max": 5, "step": 1, "tooltip": "Adjust reference image count inputs."}),
+                "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
+            },
+            "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO", "negative_prompt": "STRING"},
+        }
+
+    def execute(self, instruction, subject, model, negative_prompt="", **kwargs):
+        # Override with optimal settings
+        kwargs["response_mode"] = "Creative"
+        kwargs["temperature"] = 0.3
+        kwargs["artistry_level"] = 7
+        kwargs["creativity_level"] = 7
+        kwargs["logicality_level"] = 7
+        kwargs["max_length_words"] = 0
+        kwargs["critique_strength"] = "Normal"
+        kwargs["deep_think_refinements"] = 3
+        kwargs["simplify_for_diffusion"] = True
+        kwargs["timeout"] = 120
+        kwargs["max_retries"] = 2
+        kwargs["safe_mode"] = True
+        kwargs["debug_mode"] = False
+        kwargs["local_only_models"] = True
+        kwargs["generate_schedule"] = False
+        kwargs["interpolate_keyframes"] = False
+        kwargs["interpolation_frame_interval"] = 10
+        # Ensure optional formatting parameters are properly set to default if missing
+        kwargs.setdefault("format_profile", "Custom")
+        kwargs.setdefault("output_target", "Prompt")
+        kwargs.setdefault("output_format", "Plain Text")
+        kwargs.setdefault("auto_save", False)
+        kwargs.setdefault("auto_save_target", "Prompt")
+        kwargs.setdefault("auto_save_folder_path", "ComfyUI/output/PromptCrafter")
+        kwargs.setdefault("auto_save_filename_template", "{seed}_{model_name}_{target}.txt")
+        kwargs.setdefault("auto_save_file_type", "Match Output Format")
+        kwargs.setdefault("auto_save_custom_var", "")
+        
+        return super().execute(instruction, subject, model, negative_prompt=negative_prompt, **kwargs)
+
+
+class PromptCrafter_LyricsCreatorEasy(PromptCrafter_LyricsCreator):
+    DESCRIPTION = "Simplified Lyrics Creator with optimum defaults for immediate, cinematic scene generation."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        combined_models = get_combined_models()
+        return {
+            "required": {
+                "instruction": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT}),
+                "subject": ("STRING", {"multiline": True, "default": ""}),
+                "model": (combined_models, {"tooltip": "The language model to use."}),
+                "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "LTX-2 (Audio/Lip Sync/Retake)"], {"default": "LTX-2 (Audio/Lip Sync/Retake)"}),
+                "style_override": (style_profiles.get_style_override_options("Lyrics"), {"default": "None"}),
+                "image_count": ("INT", {"default": 1, "min": 1, "max": 5, "step": 1, "tooltip": "Adjust reference image count inputs."}),
+                "audio_file": ("STRING", {"multiline": False, "default": "<none>"}),
+                "lyrics_file": ("STRING", {"multiline": False, "default": "<none>"}),
+                "whisper_model": (cls.get_whisper_models(), {"default": "large-v3"}),
+                "whisper_language": (["auto-detect", "en", "es", "fr", "de", "it", "pt", "is", "ru", "ja", "ko", "zh"], {"default": "auto-detect"}),
+                "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
+            },
+            "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO", "negative_prompt": "STRING"},
+        }
+    
+    def execute(self, instruction, subject, model, negative_prompt="", **kwargs):
+        # Override with optimal settings
+        kwargs["response_mode"] = "Creative"
+        kwargs["temperature"] = 0.3
+        kwargs["artistry_level"] = 7
+        kwargs["creativity_level"] = 7
+        kwargs["logicality_level"] = 7
+        kwargs["max_length_words"] = 2000
+        kwargs["critique_strength"] = "Normal"
+        kwargs["deep_think_refinements"] = 3
+        kwargs["simplify_for_diffusion"] = True
+        kwargs["timeout"] = 120
+        kwargs["max_retries"] = 2
+        kwargs["safe_mode"] = True
+        kwargs["debug_mode"] = False
+        kwargs["local_only_models"] = True
+        kwargs["audio_folder_path"] = "input/audio"
+        kwargs["lyrics_folder_path"] = "input/lyrics"
+        kwargs["use_audio_alignment"] = True
+        kwargs["song_length_seconds"] = 0.0
+        kwargs["fps"] = 16.0
+        kwargs["scene_splitting_mode"] = "Structural Tag"
+        kwargs["max_scene_duration_seconds"] = 5.0
+        kwargs["max_scene_frames"] = 120
+        kwargs["whisper_engine"] = "faster-whisper"
+        kwargs["use_vrg_prompt_builder"] = False
+        kwargs["automate_vrg_variables"] = False
+        kwargs["character_description"] = "The Women."
+        kwargs["song_theme_style"] = "cinematic realism, emotional storytelling, soft surrealism, naturalistic tone, dreamlike nostalgia, modern drama, poetic symbolism, intimate atmosphere"
+        kwargs["word_count_min"] = 30
+        kwargs["word_count_max"] = 50
+        kwargs["list_handling_mode"] = "Reference Guide (LLM creates variations inspired by list)"
+        kwargs["environment"] = "open field at dusk, dimly lit bedroom, empty city street at night, forest clearing with morning fog, seaside cliff at golden hour, rainy urban alley, sunlit living room, desert road at sunrise"
+        kwargs["lighting"] = "warm amber glow, cool window light, neon reflections, diffused morning light, soft backlight haze, flickering streetlights, gentle afternoon sun, pink-orange dawn light"
+        kwargs["camera_motion"] = "push in, pull back, pan left, pan right, tilt up, tilt down, track forward, orbit"
+        kwargs["physical_interaction"] = "walking through tall grass, lying on bed staring upward, leaning against a wall in stillness, reaching toward sunlight, hair moving in wind, footsteps in puddles, brushing hand across furniture, standing motionless in breeze"
+        kwargs["facial_expression"] = "Intense raw emotion"
+        kwargs["shots"] = "close up, medium shot, wide shot, over the shoulder, establishing shot, low angle, high angle, overhead shot"
+        kwargs["outfit_rules"] = "a white dress"
+        kwargs["character_visibility"] = "mostly visible, half-shadowed, silhouetted, reflected or obscured, seen from behind, partially out of frame, emerging from light, fading into darkness"
+        kwargs["generate_schedule"] = True
+        kwargs["interpolate_keyframes"] = False
+        kwargs["interpolation_frame_interval"] = 0
+        kwargs.setdefault("format_profile", "Custom")
+        kwargs.setdefault("output_target", "Schedule")
+        kwargs.setdefault("output_format", "Plain Text")
+        kwargs.setdefault("auto_save", False)
+        kwargs.setdefault("auto_save_target", "Schedule")
+        kwargs.setdefault("auto_save_folder_path", "ComfyUI/output/PromptCrafter")
+        kwargs.setdefault("auto_save_filename_template", "{seed}_{model_name}_{target}.txt")
+        kwargs.setdefault("auto_save_file_type", "Match Output Format")
+        kwargs.setdefault("auto_save_custom_var", "")
+
+        return super().execute(instruction, subject, model, negative_prompt=negative_prompt, **kwargs)
+
+
+# ------------------------------------------------------------------------------------
 # Node Mappings
 # ------------------------------------------------------------------------------------
 NODE_CLASS_MAPPINGS = {
     "PromptCrafter_VisualCreator": PromptCrafter_VisualCreator,
     "PromptCrafter_LyricsCreator": PromptCrafter_LyricsCreator,
+    "PromptCrafter_VisualCreatorEasy": PromptCrafter_VisualCreatorEasy,
+    "PromptCrafter_LyricsCreatorEasy": PromptCrafter_LyricsCreatorEasy,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_VisualCreator": "✨ Visual Creator",
     "PromptCrafter_LyricsCreator": "🎤 Lyrics Creator",
+    "PromptCrafter_VisualCreatorEasy": "✨ Easy Visual Creator",
+    "PromptCrafter_LyricsCreatorEasy": "🎤 Easy Lyrics Creator",
 }
