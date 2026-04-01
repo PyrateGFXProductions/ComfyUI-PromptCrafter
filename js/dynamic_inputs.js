@@ -7,11 +7,15 @@ import { app } from "../../../scripts/app.js";
 // 2. Switcher Nodes: Simpler nodes with only dynamic image inputs.
 // =================================================================================
 
-const DYNAMIC_CREATOR_NODE_CLASSES = [
-    "PromptCrafter_BaseCreator",
-    "PromptCrafter_VisualCreator",
-    "PromptCrafter_LyricsCreator",
-];
+const DYNAMIC_CREATOR_NODE_CONFIG = {
+    PromptCrafter_BaseCreator: { numStandardOutputs: 6 },
+    PromptCrafter_VisualCreator: { numStandardOutputs: 6 },
+    PromptCrafter_VisualCreatorEasy: { numStandardOutputs: 6 },
+    PromptCrafter_LyricsCreator: { numStandardOutputs: 20 },
+    PromptCrafter_LyricsCreatorEasy: { numStandardOutputs: 20 },
+};
+
+const DYNAMIC_CREATOR_NODE_CLASSES = Object.keys(DYNAMIC_CREATOR_NODE_CONFIG);
 
 const DYNAMIC_SWITCHER_NODE_CLASSES = [
     "PromptCrafter_ImageSwitcher",
@@ -113,14 +117,7 @@ app.registerExtension({
 
         // --- Handler for Creator Nodes (Original Logic) ---
         if (DYNAMIC_CREATOR_NODE_CLASSES.includes(nodeType.comfyClass)) {
-            let numStandardOutputs;
-            if (nodeType.comfyClass === "PromptCrafter_VisualCreator") {
-                numStandardOutputs = 6;
-            } else if (nodeType.comfyClass === "PromptCrafter_LyricsCreator") {
-                numStandardOutputs = 20;
-            } else {
-                numStandardOutputs = 6; // Default value
-            }
+            const numStandardOutputs = DYNAMIC_CREATOR_NODE_CONFIG[nodeType.comfyClass]?.numStandardOutputs ?? 6;
             const updateWeightsJSON = function(node) {
                 const weights = {};
                 for (const w of node.widgets) {
