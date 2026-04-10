@@ -1,4 +1,3 @@
-
 import json
 import re
 import torch
@@ -97,6 +96,10 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         if latent is None:
             return None
         if isinstance(latent, dict):
+            if "samples" in latent:
+                return latent["samples"]
+            if "waveform" in latent:
+                return latent["waveform"]
             return latent.get("samples", None)
         if isinstance(latent, torch.Tensor):
             return latent
@@ -183,33 +186,36 @@ class PGFXTextEncodeAceStepAudio15Advanced:
                 "clip": ("CLIP", {
                     "tooltip": "Connect the CLIP encoder from your loaded audio model. This is what reads your text."
                 }),
-                "task_type": ([
-                    "text2music", "cover", "repaint", "extract", "lego", "complete"
-                ], {
+                "task_type": (["text2music", "music_continuation", "text_to_audio_cover_style", "music_editing"], {
+                    "default": "text2music",
                     "tooltip": "ACE task mode. Cover-style tasks follow source latent structure when source/reference audio is connected."
                 }),
                 "instruction": ("STRING", {
+                    "default": "",
                     "multiline": True,
                     "tooltip": "Main plain-English instruction for what you want to generate."
                 }),
                 "tags": ("STRING", {
+                    "default": "",
                     "multiline": True,
                     "tooltip": "Short style keywords (genre, mood, instruments, vibe). Think of this like prompt tags."
                 }),
                 "lyrics": ("STRING", {
+                    "default": "",
                     "multiline": True,
                     "tooltip": "Words to sing/speak. Leave empty if you want music only."
                 }),
-                "instrumental": ([False, True], {
+                "instrumental": ("BOOLEAN", {
                     "default": False,
                     "tooltip": "If True, target an instrumental track with no vocals."
                 }),
-                "vocal_language": (["en", "ja", "zh", "es", "de", "fr", "pt", "ru", "it", "nl", "pl", "tr", "vi", "cs", "fa", "id", "ko", "uk", "hu", "ar", "sv", "ro", "el"], {
+                "vocal_language": (["en", "zh", "ja", "ko"], {
+                    "default": "en",
                     "tooltip": "Language for vocal pronunciation and lyric generation."
                 }),
                 "bpm": ("INT", {
                     "default": 120,
-                    "min": 10,
+                    "min": 1,
                     "max": 300,
                     "tooltip": "Song speed in beats per minute. Higher BPM sounds faster."
                 }),
@@ -219,12 +225,13 @@ class PGFXTextEncodeAceStepAudio15Advanced:
                     "tooltip": "Musical key and mode (major/minor) to steer harmony."
                 }),
                 "timesignature": (['2', '3', '4', '6'], {
+                    "default": '4',
                     "tooltip": "Beats per bar. 4 is most common for pop/electronic."
                 }),
                 "duration": ("FLOAT", {
                     "default": 10.0,
-                    "min": 1.0,
-                    "max": 300.0,
+                    "min": 0.0,
+                    "max": 1000.0,
                     "step": 0.1,
                     "tooltip": "Target output length in seconds."
                 }),
@@ -265,33 +272,33 @@ class PGFXTextEncodeAceStepAudio15Advanced:
                     "step": 0.01,
                     "tooltip": "Top-P sampling for LM-generated codes. Limited effect in source-guided cover workflows."
                 }),
-                "use_cot_metas": ([False, True], {
+                "use_cot_metas": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "Allow internal reasoning over metadata fields before output."
                 }),
-                "use_cot_caption": ([False, True], {
+                "use_cot_caption": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "Allow internal reasoning over caption/context text."
                 }),
-                "use_cot_lyrics": ([False, True], {
+                "use_cot_lyrics": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "Allow internal reasoning over lyrics for better consistency."
                 }),
-                "use_cot_language": ([False, True], {
+                "use_cot_language": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "Allow internal reasoning about language choice and phrasing."
                 }),
-                "use_constrained_decoding": ([False, True], {
+                "use_constrained_decoding": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "Force stricter decoding rules. Helpful for structure, but can reduce creativity."
                 }),
             },
             "optional": {
                 "reference_audio": ("LATENT", {
-                    "tooltip": "Optional ACE audio LATENT reference (use VAEEncodeAudio first). Used for cover/repaint-style tasks."
+                    "tooltip": "Optional ACE-Step latent audio to shift the source audio's timeline. Typically used for cover/repaint style tasks."
                 }),
                 "src_audio": ("LATENT", {
-                    "tooltip": "Optional ACE audio LATENT source (use VAEEncodeAudio first). Used by cover/repaint-style tasks."
+                    "tooltip": "Optional ACE-Step latent audio to shift the source audio's timeline. Typically used for cover/repaint style tasks."
                 }),
                 "audio_codes": ("STRING", {
                     "multiline": True,
@@ -312,9 +319,8 @@ class PGFXTextEncodeAceStepAudio15Advanced:
                     "step": 0.1,
                     "tooltip": "Timeline shift in seconds. In cover-style tasks it shifts source latents; in text2music it shifts audio-code timeline."
                 }),
-                "cover_source_offset_mode": ("COMBO", {
+                "cover_source_offset_mode": (["trim_pad", "wrap"], {
                     "default": "trim_pad",
-                    "options": s.TIMELINE_OFFSET_MODES,
                     "tooltip": "trim_pad removes intro content (stronger). wrap rotates timeline (gentler)."
                 }),
             }
@@ -330,9 +336,7 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         negative_caption = "" if lm_negative_prompt is None else str(lm_negative_prompt).strip()
         lyrics_text = "" if lyrics is None else str(lyrics)
         lyric_lines = [ln.strip() for ln in lyrics_text.splitlines() if ln.strip()]
-        task_mode_raw = str(task_type or "text2music").strip().lower()
-        allowed_task_modes = {"text2music", "cover", "repaint", "extract", "lego", "complete"}
-        task_mode = task_mode_raw if task_mode_raw in allowed_task_modes else "text2music"
+
         ref_samples = self._latent_samples(reference_audio)
         src_samples = self._latent_samples(src_audio)
 
@@ -351,27 +355,27 @@ class PGFXTextEncodeAceStepAudio15Advanced:
             print(
                 f"[PGFX ACE15] applied audio-code offset: {cover_source_offset_seconds:.2f}s "
                 f"({int(round(cover_source_offset_seconds * self.ACE15_AUDIO_CODE_TOKENS_PER_SECOND))} tokens), "
-                f"mode={offset_mode}, task={task_mode}"
+                f"mode={offset_mode}, task={task_type}"
             )
 
-        if task_mode != "text2music" and cover_source_offset_seconds > 0.0:
+        if task_type != "text2music" and cover_source_offset_seconds > 0.0:
             if src_samples is not None:
                 src_samples = self._offset_latent_timeline(src_samples, cover_source_offset_seconds, offset_mode)
                 print(
                     f"[PGFX ACE15] applied source-latent offset: {cover_source_offset_seconds:.2f}s "
                     f"({int(round(cover_source_offset_seconds * self.ACE15_LATENT_FRAMES_PER_SECOND))} frames), "
-                    f"mode={offset_mode}, task={task_mode}, source=src_audio"
+                    f"mode={offset_mode}, task={task_type}, source=src_audio"
                 )
             elif ref_samples is not None:
                 ref_samples = self._offset_latent_timeline(ref_samples, cover_source_offset_seconds, offset_mode)
                 print(
                     f"[PGFX ACE15] applied source-latent offset: {cover_source_offset_seconds:.2f}s "
                     f"({int(round(cover_source_offset_seconds * self.ACE15_LATENT_FRAMES_PER_SECOND))} frames), "
-                    f"mode={offset_mode}, task={task_mode}, source=reference_audio"
+                    f"mode={offset_mode}, task={task_type}, source=reference_audio"
                 )
 
         # Route task-specific source/reference behavior to the key Comfy ACE consumes.
-        if task_mode == "text2music":
+        if task_type == "text2music":
             # In Comfy's ACE backend, providing reference_audio_timbre_latents flips to cover mode.
             # Keep text2music LM-driven to avoid silent/near-silent cover behavior.
             routed_reference = None
@@ -393,7 +397,6 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         )
 
         tokenize_kwargs = {
-            # Keep this aligned with ComfyUI's native TextEncodeAceStepAudio1.5 call.
             "lyrics": lyrics_text,
             "bpm": bpm,
             "duration": duration,
@@ -401,7 +404,7 @@ class PGFXTextEncodeAceStepAudio15Advanced:
             "language": vocal_language,
             "keyscale": keyscale,
             "seed": seed,
-            "task_type": task_mode,
+            "task_type": task_type,
             "generate_audio_codes": (normalized_audio_codes is None and routed_reference is None),
             "cfg_scale": lm_cfg_scale,
             "temperature": lm_temperature,
@@ -434,6 +437,12 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         if normalized_audio_codes is not None and routed_reference is None:
             conditioning_values["audio_codes"] = normalized_audio_codes
         conditioning = node_helpers.conditioning_set_values(conditioning, conditioning_values)
+
+        if lm_cfg_scale > 4.0:
+            print(
+                f"[PGFX ACE15] WARNING: lm_cfg_scale={lm_cfg_scale:.2f} is well above the "
+                "Ace-Step default of 2.0 and can cause clipped or unstable audio."
+            )
         
         return (conditioning,)
 

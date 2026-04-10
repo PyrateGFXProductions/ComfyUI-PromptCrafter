@@ -68,6 +68,90 @@ def _find_json_candidate(text: str) -> str | None:
         
     return None
 
+def repair_truncated_json(text: str) -> str:
+    """
+    Attempts to repair a JSON string that is truncated (e.g., cut off by token limits).
+    It tracks nested braces, brackets, and quotes to close them in the correct order.
+    """
+    if not text:
+        return ""
+
+    stack = []
+    in_string = False
+    is_escaped = False
+    
+    # We'll identify where the JSON likely starts
+    first_brace = text.find('{')
+    first_bracket = text.find('[')
+    start_pos = -1
+    if first_brace != -1 and first_bracket != -1:
+        start_pos = min(first_brace, first_bracket)
+    elif first_brace != -1:
+        start_pos = first_brace
+    elif first_bracket != -1:
+        start_pos = first_bracket
+    
+    if start_pos == -1:
+        return text
+
+    # Slice to the start of the JSON
+    json_part = text[start_pos:]
+    
+    # Track the state to the end of the string
+    last_valid_index = 0
+    for i, char in enumerate(json_part):
+        if char == '\\' and not is_escaped:
+            is_escaped = True
+            continue
+        
+        if char == '"' and not is_escaped:
+            in_string = not in_string
+        elif not in_string:
+            if char == '{' or char == '[':
+                stack.append(char)
+            elif char == '}' or char == ']':
+                if stack:
+                    # Check if it matches the top of stack
+                    if (char == '}' and stack[-1] == '{') or (char == ']' and stack[-1] == '['):
+                        stack.pop()
+        
+        is_escaped = False
+        last_valid_index = i
+
+    # If we stopped inside a string, close the string
+    repaired = json_part[:last_valid_index+1]
+    if in_string:
+        repaired += '"'
+
+    # Pop the stack and close matching braces/brackets in reverse order
+    while stack:
+        opener = stack.pop()
+        repaired += '}' if opener == '{' else ']'
+
+    return repaired
+
+def strip_markdown_code_fences(text: str) -> str:
+    """
+    Removes markdown code fences (```json ... ```) and any text outside of them.
+    If no fences are found, returns the original text stripped of whitespace.
+    This ensures that LLM 'noise' (commentary, intro text) is removed.
+    """
+    if not text:
+        return ""
+        
+    # Search for the content inside the first triple backtick block
+    # It might start with ```json, ```JSON, or just ```
+    match = re.search(r"```(?:json|JSON)?\s*([\s\S]*?)\s*```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    
+    # If no closing fence, but has opening fence, try to catch the rest
+    match = re.search(r"```(?:json|JSON)?\s*([\s\S]*)", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    return text.strip()
+
 def _escape_newlines_in_strings(text: str):
     """A generator that yields characters, escaping newlines only when inside a string."""
     in_string, is_escaped = False, False
@@ -85,9 +169,8 @@ def _escape_newlines_in_strings(text: str):
 
 def _clean_json_string(json_str: str) -> str:
     """Cleans a JSON string candidate to fix common, non-standard syntax produced by LLMs."""
-    # Remove markdown code fences if they somehow got in
-    cleaned_str = re.sub(r"```(?:json)?", "", json_str)
-    cleaned_str = re.sub(r"```", "", cleaned_str)
+    # Aggressively remove markdown code fences if they somehow got in
+    cleaned_str = strip_markdown_code_fences(json_str)
     
     # Remove common LLM-specific garbage
     cleaned_str = re.sub(r'</?ref>', '', cleaned_str)
@@ -119,22 +202,32 @@ def extract_and_parse_json(text: str):
     if not text or not text.strip(): 
         return None
         
-    json_str_candidate = _find_json_candidate(text)
+    # Isolate the JSON part using markdown fences first
+    text_to_scan = strip_markdown_code_fences(text)
+    
+    json_str_candidate = _find_json_candidate(text_to_scan)
     if not json_str_candidate:
-        return None
+        # If no balanced candidate is found, try to repair a truncated one
+        json_str_candidate = repair_truncated_json(text)
+        if not json_str_candidate:
+            return None
         
     cleaned_json_str = _clean_json_string(json_str_candidate)
     
     try:
         return json.loads(cleaned_json_str)
     except json.JSONDecodeError:
-        # Fallback to Python literal evaluation if JSON fails
+        # One last ditch effort: if it's still failing but starts like JSON,
+        # try to parse the repaired version directly.
         try:
-            pythonic_str = (cleaned_json_str
-                .replace('true', 'True')
-                .replace('false', 'False')
-                .replace('null', 'None'))
-            return ast.literal_eval(pythonic_str)
+            return json.loads(repair_truncated_json(cleaned_json_str))
         except Exception:
-            # If everything fails, return None or raise specific error
-            return None
+            # Fallback to Python literal evaluation if JSON fails
+            try:
+                pythonic_str = (cleaned_json_str
+                    .replace('true', 'True')
+                    .replace('false', 'False')
+                    .replace('null', 'None'))
+                return ast.literal_eval(pythonic_str)
+            except Exception:
+                return None

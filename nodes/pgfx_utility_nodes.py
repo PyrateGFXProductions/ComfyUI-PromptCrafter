@@ -282,6 +282,19 @@ class PromptCrafter_QnA:
                 "output_format": (text_io.FORMAT_OPTIONS, {"default": "Plain Text", "tooltip": "Format to apply to the selected output(s)."}),
                 "auto_save": ("BOOLEAN", {"default": False, "tooltip": "Auto-save the selected output(s) to a file."}),
                 "auto_save_target": (text_io.QNA_OUTPUT_TARGET_OPTIONS, {"default": "Response", "tooltip": "Which output(s) to auto-save."}),
+                "enable_web_search": ("BOOLEAN", {"default": True, "tooltip": "Allow the node to perform a web search for questions about recent events or topics requiring current information."} ),
+                "fast_web_search": ("BOOLEAN", {"default": True, "tooltip": "In web search mode, only use search result snippets instead of fetching full page content. Much faster."} ),
+                "folder_path": ("STRING", {"multiline": False, "default": "input", "tooltip": "Folder containing an optional context file (e.g., 'input' or 'input/texts')."} ),
+                "file_name": ("STRING", {"multiline": False, "default": "<none>", "tooltip": "The name of the text file within the specified folder."} ),
+                "chunk_large_context": ("BOOLEAN", {"default": True, "tooltip": "Automatically chunk and summarize context files that are too large."} ),
+                "chunk_size_words": ("INT", {"default": 2000, "min": 500, "max": 8000, "step": 100, "tooltip": "The approximate size of each chunk in words for summarization."} ),
+                "summarization_strategy": (["Default (Abstractive)", "Extractive"], {"default": "Default (Abstractive)", "tooltip": "How to summarize large context. Abstractive creates new text, Extractive pulls key sentences."} ),
+                "instruct_output_mode": (["Answer JSON (Default)", "User Output (No Parsing)", "User Output (Parse JSON)"], {"default": "Answer JSON (Default)", "tooltip": "How to format/parse the instructor output."}),
+                "format_profile": (text_io.QNA_FORMAT_PROFILE_OPTIONS, {"default": "Custom", "tooltip": "Quick presets for output formatting and auto-save."}),
+                "output_target": (text_io.QNA_OUTPUT_TARGET_OPTIONS, {"default": "Response", "tooltip": "Which QnA output(s) to format."}),
+                "output_format": (text_io.FORMAT_OPTIONS, {"default": "Plain Text", "tooltip": "Format to apply to the selected output(s)."}),
+                "auto_save": ("BOOLEAN", {"default": False, "tooltip": "Auto-save the selected output(s) to a file."}),
+                "auto_save_target": (text_io.QNA_OUTPUT_TARGET_OPTIONS, {"default": "Response", "tooltip": "Which output(s) to auto-save."}),
                 "auto_save_folder_path": ("STRING", {"multiline": False, "default": "ComfyUI/output/PromptCrafter", "tooltip": "Folder to save files into."}),
                 "auto_save_filename_template": ("STRING", {"multiline": False, "default": "{seed}_{model_name}_{target}.txt", "tooltip": "Filename template. Supports {model_name}, {seed}, {user_text}, {custom_var}, {target}, {format}, {file_type}."}),
                 "auto_save_file_type": (text_io.AUTO_FILE_TYPE_OPTIONS, {"default": "Match Output Format", "tooltip": "File extension for auto-saved files."}),
@@ -289,16 +302,19 @@ class PromptCrafter_QnA:
                 "max_tokens": ("INT", {"default": 4096, "min": 256, "max": 32768, "step": 256, "tooltip": "Max tokens for the instructor output. Increase for long JSON."}),
                 "history_in": ("STRING", {"multiline": False, "default": "", "input": "hidden"}),
                 "clear_history": ("BOOLEAN", {"default": False, "tooltip": "Set to True for one run to clear the conversation history."} ),
+                "project_state": ("DICT", {"tooltip": "Optional PGFX Project State dictionary."}),
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("response", "history_out", "thinking_process")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "DICT")
+    RETURN_NAMES = ("response_text", "response_json_str", "history_out", "reasoning_log", "project_state")
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
     
-    def execute(self, instruction, subject, model, **kwargs):
+    def execute(self, instruction, subject, model, project_state=None, **kwargs):
         try:
+            if project_state is None:
+                project_state = {}
             llm_runtime_kwargs = _resolve_llm_runtime_kwargs(kwargs)
             thinking_model = kwargs.get("thinking_model")
             instruct_model = kwargs.get("instruct_model")
@@ -341,20 +357,25 @@ class PromptCrafter_QnA:
                 if not ok:
                     raise Exception(response)
                 response_text = "" if response is None else str(response).strip()
-                response_text = _strip_code_fences(response_text)
+                response_text = json_utils.strip_markdown_code_fences(response_text)
                 if not response_text:
-                    return ("", "", "")
+                    return ("", "", "", "", project_state)
                 try:
                     parsed = json.loads(response_text)
-                except Exception as e:
-                    raise Exception(f"JSON-only response requested but model returned invalid JSON: {e}")
+                except Exception:
+                    try:
+                        # Attempt to repair truncated JSON before giving up
+                        repaired = json_utils.repair_truncated_json(response_text)
+                        parsed = json.loads(repaired)
+                    except Exception as e:
+                        raise Exception(f"JSON-only response requested but model returned invalid/truncated JSON: {e}")
                 if expected_keys:
                     if not isinstance(parsed, dict):
                         raise Exception("JSON-only response requested but model returned non-object JSON.")
                 parsed = _force_lyricsegment_keys(parsed)
                 parsed = _enforce_value_quotes(parsed, expected_keys)
                 response_text = json.dumps(parsed, indent=2, ensure_ascii=False)
-                return (response_text, "", "")
+                return (response_text, response_text, "", "", project_state)
 
 
             if format_profile and format_profile != "Custom":
@@ -376,13 +397,7 @@ class PromptCrafter_QnA:
                 return {"Response"}
 
             def _strip_code_fences(text):
-                if text is None:
-                    return ""
-                raw = str(text)
-                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.DOTALL)
-                if match:
-                    return match.group(1).strip()
-                return raw
+                return json_utils.strip_markdown_code_fences(text)
 
             def _format_and_maybe_save(response_text, history_text, thinking_text):
                 response_out = "" if response_text is None else str(response_text)
@@ -466,6 +481,14 @@ class PromptCrafter_QnA:
                     Write down your detailed reasoning and a clear plan for the final response.
                 """).strip()
 
+                # --- Distillation Logic for Massive Instructions ---
+                # If the instruction template is giant, we don't need to re-send
+                # it to the Instructor model. The Thinker already processed it.
+                # We prioritize keeping the SUBJECT data and the Reasoning.
+                distilled_user_text = user_text
+                if len(instruction) > 1500:
+                    distilled_user_text = f"(Follow rules from Reasoning Phase)\n\nSUBJECT:\n{subject}" if subject else "(Follow rules from Reasoning Phase)"
+
                 expect_json = True
                 if instruct_output_mode == "Answer JSON (Default)":
                     instruct_schema = {
@@ -478,8 +501,8 @@ class PromptCrafter_QnA:
                         **REASONING & PLAN:**
                         {{reasoning}}
 
-                        **USER QUESTION:**
-                        {user_text}
+                        **USER QUERY (CONTEXT):**
+                        {distilled_user_text}
 
                         **JSON SCHEMA:**
                         {json.dumps(instruct_schema, indent=2)}
@@ -488,28 +511,28 @@ class PromptCrafter_QnA:
                     """).strip()
                 elif instruct_output_mode == "User Output (Parse JSON)":
                     instruct_prompt = textwrap.dedent(f"""
-                        Use the user's instructions below to produce the final output.
+                        Use the user's instructions and reasoning below to produce the final output.
                         Follow all formatting and output rules exactly.
                         Return ONLY a raw JSON object. Do not wrap the JSON in markdown code fences.
 
-                        **USER INSTRUCTIONS:**
-                        {user_text}
-
                         **REASONING & PLAN:**
                         {{reasoning}}
+
+                        **USER QUERY (CONTEXT):**
+                        {distilled_user_text}
                     """).strip()
                 else:
                     expect_json = False
                     instruct_prompt = textwrap.dedent(f"""
-                        Use the user's instructions below to produce the final output.
+                        Use the user's instructions and reasoning below to produce the final output.
                         Follow all formatting and output rules exactly (including code blocks if requested).
                         Return ONLY the final output.
 
-                        **USER INSTRUCTIONS:**
-                        {user_text}
-
                         **REASONING & PLAN:**
                         {{reasoning}}
+
+                        **USER QUERY (CONTEXT):**
+                        {distilled_user_text}
                     """).strip()
 
                 # 2. Execute the chain of thought
@@ -533,14 +556,14 @@ class PromptCrafter_QnA:
                         final_answer = (result_data.get("answer") or "").strip()
                         if final_answer:
                             response_out, history_out, thinking_out = _format_and_maybe_save(final_answer, "", reasoning_log)
-                            return (response_out, history_out, thinking_out)
+                            return (response_out, final_answer, history_out, reasoning_log, project_state)
                     elif instruct_output_mode == "User Output (Parse JSON)" and isinstance(result_data, (dict, list)):
                         final_answer = json.dumps(result_data, indent=2, ensure_ascii=False)
                         response_out, history_out, thinking_out = _format_and_maybe_save(final_answer, "", reasoning_log)
-                        return (response_out, history_out, thinking_out)
+                        return (response_out, final_answer, history_out, reasoning_log, project_state)
                     elif instruct_output_mode == "User Output (No Parsing)" and isinstance(result_data, str) and result_data.strip():
                         response_out, history_out, thinking_out = _format_and_maybe_save(result_data.strip(), "", reasoning_log)
-                        return (response_out, history_out, thinking_out)
+                        return (response_out, result_data.strip(), history_out, reasoning_log, project_state)
 
                 # Fallback: if the instructor couldn't return valid JSON, request plain text.
                 fallback_answer = ""
@@ -597,7 +620,7 @@ class PromptCrafter_QnA:
 
                 if ok_fallback and fallback_answer and fallback_answer.strip():
                     response_out, history_out, thinking_out = _format_and_maybe_save(fallback_answer.strip(), "", reasoning_log)
-                    return (response_out, history_out, thinking_out)
+                    return (response_out, fallback_answer.strip(), history_out, reasoning_log, project_state)
 
                 if not ok:
                     raise Exception(f"Dual-Model Chain failed: {result_data}")
@@ -663,13 +686,13 @@ class PromptCrafter_QnA:
                     updated_history,
                     "Thinking process not available in single-model mode."
                 )
-                return (response_out, history_out, thinking_out)
+                return (response_out, response_text, history_out, "Thinking process not available in single-model mode.", project_state)
 
         except Exception as e:
             print(f"\033[91m[PromptCrafter] Error in QnA node: {e}\033[0m")
             import traceback
             traceback.print_exc()
-            return (f"An error occurred: {e}", "", "")
+            return (f"An error occurred: {e}", "", "", "", project_state)
 
 # ------------------------------------------------------------------------------------
 # PromptCrafter_QnA_Simple Node

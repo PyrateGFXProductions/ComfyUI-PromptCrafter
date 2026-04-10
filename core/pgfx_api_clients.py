@@ -751,6 +751,10 @@ class GGUFClient:
                 extra_reduction_tokens=0,
             ):
                 safe_prompt = "" if prompt_text is None else str(prompt_text)
+                
+                # Priority markers that we should try to preserve during trimming
+                priority_markers = kwargs.get("priority_markers", ["SUBJECT:", "### Lyric Segment", "### Story"])
+                
                 reserve_tokens = int(kwargs.get("prompt_trim_reserve_tokens", 192))
                 if is_vision_model and images_b64:
                     reserve_tokens = max(
@@ -779,6 +783,8 @@ class GGUFClient:
                     if len(token_ids) <= max_prompt_tokens:
                         return safe_prompt, len(token_ids), len(token_ids), False
 
+                    print(f"\033[93m[PromptCrafter] WARNING: Prompt too long ({len(token_ids)} tokens). Trimming to {max_prompt_tokens} tokens.\033[0m")
+                    
                     marker_tokens = []
                     try:
                         marker_tokens = llm.tokenize(marker.encode("utf-8"), add_bos=False)
@@ -786,8 +792,15 @@ class GGUFClient:
                         marker_tokens = []
 
                     available = max(32, max_prompt_tokens - len(marker_tokens))
-                    head = max(16, int(available * 0.65))
+                    
+                    # smarter split: if we have priority markers, try to keep more of the tail
+                    # where the data usually resides in PGFX workflows.
+                    has_priority = any(m in safe_prompt for m in priority_markers)
+                    tail_ratio = 0.55 if has_priority else 0.35
+                    
+                    head = max(16, int(available * (1.0 - tail_ratio)))
                     tail = max(16, available - head)
+                    
                     if head + tail > len(token_ids):
                         head = min(head, len(token_ids))
                         tail = max(0, len(token_ids) - head)
@@ -815,6 +828,9 @@ class GGUFClient:
                 if original_token_count is None:
                     original_token_count = max(1, len(safe_prompt) // 4)
 
+                if original_token_count > max_prompt_tokens:
+                    print(f"\033[93m[PromptCrafter] WARNING: Prompt too long (approx {original_token_count} tokens). Trimming to {max_prompt_tokens} tokens.\033[0m")
+
                 ratio = min(0.95, float(max_prompt_tokens) / float(max(1, original_token_count)))
                 keep_chars = max(256, int(len(safe_prompt) * ratio))
                 if keep_chars >= len(safe_prompt):
@@ -822,7 +838,11 @@ class GGUFClient:
                 if keep_chars <= 0:
                     return safe_prompt, int(original_token_count), int(original_token_count), False
 
-                head_chars = max(64, int(keep_chars * 0.7))
+                # Apply similar priority-based logic to char-based trimming
+                has_priority = any(m in safe_prompt for m in priority_markers)
+                tail_ratio = 0.55 if has_priority else 0.30
+                
+                head_chars = max(64, int(keep_chars * (1.0 - tail_ratio)))
                 tail_chars = max(64, keep_chars - head_chars)
                 if head_chars + tail_chars >= len(safe_prompt):
                     trimmed_text = safe_prompt[:keep_chars]

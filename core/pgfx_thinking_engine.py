@@ -291,6 +291,54 @@ class ThoughtProcess:
             final_lyrics_text, final_timed_segments, spectrogram_preview = self._align_and_correct_lyrics(
                 whisper_transcript, initial_timed_segments, user_lyrics, audio_path
             )
+
+            segment_entries = self._extract_segment_entries_from_text(self.user_text)
+            if self._lyrics_request_expects_segment_json(segment_entries):
+                schedule_out = self._lyrics_agent_write_segment_json(segment_entries, final_lyrics_text)
+                prompt_out = ""
+                image_context_out = self.state.get("image_context") or ""
+
+                print(
+                    f"\033[94m[PromptCrafter-MusicVideo] Segment-locked output selected: "
+                    f"prompt_len={len(str(prompt_out or ''))}, "
+                    f"schedule_len={len(str(schedule_out or ''))}, "
+                    f"segment_count={len(segment_entries)}\033[0m"
+                )
+
+                print("\033[95m[MusicVideo-PostProd] Finalizing assets...\033[0m")
+                final_srt_string, audio_meta = self._lyrics_agent_finalize_assets(
+                    final_timed_segments, spectrogram_preview, audio_info
+                )
+
+                negative_prompt_out = utils._generate_negative_prompt(
+                    schedule_out,
+                    self.run_config,
+                    user_negative_prompt=self.negative_prompt,
+                )
+                print("\033[95m[PromptCrafter-MusicVideo] Production complete.\033[0m")
+
+                return {
+                    "prompt": prompt_out,
+                    "schedule": schedule_out,
+                    "image_context": image_context_out,
+                    "negative_prompt": negative_prompt_out,
+                    "clean_lyrics_txt": final_lyrics_text,
+                    "lyrics_srt": final_srt_string,
+                    "model_out": self.run_config.model,
+                    "seed_out": str(self.run_config.seed),
+                    "audio_meta": audio_meta,
+                    "spectrogram_preview": spectrogram_preview,
+                    "signal": self.kwargs.get('signal'),
+                    "auto_character": "",
+                    "auto_theme": "",
+                    "auto_environment": "",
+                    "auto_lighting": "",
+                    "auto_interaction": "",
+                    "auto_expression": "",
+                    "auto_shots": "",
+                    "auto_outfit": "",
+                    "auto_visibility": "",
+                }
             
             print("\033[95m[MusicVideo-CreativeDept] Starting creative development...\033[0m")
             global_theme, image_context_out = self._lyrics_agent_develop_concept(final_lyrics_text)
@@ -337,6 +385,12 @@ class ThoughtProcess:
             else:
                 prompt_out = " | ".join(filter(None, all_prompts))
                 schedule_out = ""
+            print(
+                f"\033[94m[PromptCrafter-MusicVideo] Consolidated section outputs: "
+                f"count={len(all_prompts)}, "
+                f"prompt_len={len(str(prompt_out or ''))}, "
+                f"schedule_len={len(str(schedule_out or ''))}\033[0m"
+            )
             
             # Consolidate auto_vrg_vars for output
             final_auto_vrg_vars = all_auto_vrg_vars[-1] if all_auto_vrg_vars else {}
@@ -437,6 +491,175 @@ class ThoughtProcess:
                 continue
         return json.dumps(collections.OrderedDict(sorted(merged_schedule.items())), indent=4)
 
+    @staticmethod
+    def _normalize_segment_key(key):
+        """Normalizes segment identifiers to the canonical segmentN format."""
+        if key is None:
+            return None
+        match = re.search(r"(?:lyric)?segment\s*(\d+)", str(key), re.IGNORECASE)
+        if not match:
+            return None
+        return f"segment{int(match.group(1))}"
+
+    def _extract_segment_entries_from_text(self, text):
+        """
+        Extracts the largest contiguous block of segment lines from an instruction.
+        This lets us ignore short example blocks and preserve the real numbered input.
+        """
+        if not text:
+            return collections.OrderedDict()
+
+        segment_line = re.compile(r'^\s*["\']?((?:lyric)?segment\s*\d+)["\']?\s*:\s*(.+?)\s*$', re.IGNORECASE)
+        blocks = []
+        current_block = []
+
+        for raw_line in text.splitlines():
+            match = segment_line.match(raw_line.strip())
+            if match:
+                key = self._normalize_segment_key(match.group(1))
+                value = match.group(2).rstrip(",").strip()
+                if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                    value = value[1:-1]
+                current_block.append((key, value))
+                continue
+
+            if current_block:
+                blocks.append(current_block)
+                current_block = []
+
+        if current_block:
+            blocks.append(current_block)
+
+        if not blocks:
+            return collections.OrderedDict()
+
+        best_block = max(blocks, key=len)
+        normalized = collections.OrderedDict()
+        for key, value in best_block:
+            if key:
+                normalized[key] = str(value).strip()
+        return normalized
+
+    def _lyrics_request_expects_segment_json(self, segment_entries=None):
+        """Detects segment-locked JSON correction tasks from the instruction text."""
+        if segment_entries is None:
+            segment_entries = self._extract_segment_entries_from_text(self.user_text)
+        if len(segment_entries) < 2:
+            return False
+
+        cues = (
+            r"return exactly \[?n\]? corrected segments",
+            r"do not put lyricsegment",
+            r"output clean,\s*valid json only",
+            r"segment\d+",
+        )
+        return any(re.search(pattern, self.user_text or "", re.IGNORECASE) for pattern in cues)
+
+    def _normalize_segment_json_response(self, raw_response, expected_segments):
+        """
+        Normalizes a model response into exactly the expected segment keys.
+        Missing keys fall back to the original segment text so downstream nodes
+        always receive a complete segment set instead of a reduced scene list.
+        """
+        parsed = None
+        candidate_items = []
+
+        if isinstance(raw_response, dict):
+            parsed = raw_response
+        elif isinstance(raw_response, str):
+            try:
+                parsed = json_utils.extract_and_parse_json(raw_response)
+            except Exception:
+                parsed = None
+
+        if isinstance(parsed, dict):
+            candidate_items = list(parsed.items())
+        elif isinstance(raw_response, str):
+            segment_line = re.compile(r'^\s*["\']?((?:lyric)?segment\s*\d+)["\']?\s*:\s*(.+?)\s*,?\s*$', re.IGNORECASE)
+            for raw_line in raw_response.splitlines():
+                match = segment_line.match(raw_line.strip())
+                if not match:
+                    continue
+                candidate_items.append((match.group(1), match.group(2)))
+
+        normalized_candidates = {}
+        for raw_key, raw_value in candidate_items:
+            key = self._normalize_segment_key(raw_key)
+            if not key:
+                continue
+
+            value = raw_value
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value, ensure_ascii=False)
+            value = str(value).rstrip(",").strip()
+            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                value = value[1:-1]
+            normalized_candidates[key] = value
+
+        normalized = collections.OrderedDict()
+        for key, fallback_value in expected_segments.items():
+            normalized[key] = str(normalized_candidates.get(key, fallback_value)).strip()
+        return normalized
+
+    def _lyrics_agent_write_segment_json(self, expected_segments, final_lyrics_text):
+        """
+        Generates one JSON entry per locked lyric segment without regrouping the
+        input into larger storyboard scenes.
+        """
+        print(
+            f"\033[94m[MusicVideo-CreativeDept] Segment-locked JSON mode detected. "
+            f"Preserving {len(expected_segments)} lyric segments.\033[0m"
+        )
+
+        expected_keys = list(expected_segments.keys())
+        segment_block = "\n".join(
+            f'"{key}": {json.dumps(value, ensure_ascii=False)}'
+            for key, value in expected_segments.items()
+        )
+        reference_lyrics = final_lyrics_text.strip() if isinstance(final_lyrics_text, str) else ""
+        reference_section = f"\nREFERENCE LYRICS:\n{reference_lyrics}\n" if reference_lyrics else ""
+
+        prompt = textwrap.dedent(
+            f"""
+            You are completing a segment-locked lyrics JSON task.
+
+            STRICT OUTPUT RULES:
+            - Return ONLY a JSON object.
+            - Output exactly {len(expected_keys)} keys in this exact order:
+              {", ".join(expected_keys)}
+            - Never merge, split, skip, reorder, or rename segments.
+            - Normalize any lyricsegment keys to segment keys.
+            - Each value must be a JSON string.
+            - If a segment is short, expand it naturally, but only within that same segment.
+
+            LOCKED INPUT SEGMENTS:
+            {segment_block}
+            {reference_section}
+            ORIGINAL INSTRUCTION TO FOLLOW:
+            {self.user_text}
+            """
+        ).strip()
+
+        ok, raw_response = self._query_model(
+            self.run_config.model,
+            prompt,
+            prefer_chat=True,
+            temperature=0.0,
+            seed=self.run_config.seed,
+            debug_mode=self.run_config.debug_mode,
+            debug_title="Generate Segment-Locked Lyrics JSON",
+            timeout=self.run_config.timeout,
+        )
+        if not ok:
+            raise Exception(f"Failed to generate segment-locked lyrics JSON: {raw_response}")
+
+        normalized = self._normalize_segment_json_response(raw_response, expected_segments)
+        print(
+            f"\033[94m[PromptCrafter-MusicVideo] Segment JSON output: "
+            f"expected={len(expected_segments)}, actual={len(normalized)}\033[0m"
+        )
+        return json.dumps(normalized, indent=4, ensure_ascii=False)
+
     def _process_lyric_chunk(self, chunk, image_context_out, global_theme):
         """
         Processes a single lyric chunk to generate prompts and VRG variables.
@@ -452,13 +675,16 @@ class ThoughtProcess:
 
         if self.lyrics_use_vrg_prompt_builder:
             # VRG builder operates on the text of the chunk
-            prompt_or_schedule, _ = self._lyrics_agent_write_vrg_prompts(chunk_timed_segments, chunk_text, vrg_kwargs)
+            prompt_out, schedule_out = self._lyrics_agent_write_vrg_prompts(
+                chunk_timed_segments, chunk_text, vrg_kwargs
+            )
         else:
             # Storyboard operates on the text of the chunk
-            prompt_or_schedule, _ = self._lyrics_agent_write_storyboard_prompts(
+            prompt_out, schedule_out = self._lyrics_agent_write_storyboard_prompts(
                 chunk_text, chunk_timed_segments, global_theme, image_context_out
             )
-        
+
+        prompt_or_schedule = schedule_out if self.lyrics_generate_schedule else prompt_out
         return prompt_or_schedule, auto_vrg_vars
 
     def _generate_vrg_variables(self, lyrics, image_context):
@@ -1620,7 +1846,17 @@ Return ONLY the final, refined prompt.
         print("\033[94m[MusicVideo-AudioDept] Agent A3: Aligning and Finalizing Lyrics...\033[0m")
     
         # Generate spectrogram regardless of other steps
-        spectrogram_preview = utils.audio_to_spectrogram(audio_path) if audio_path else None
+        spectrogram_preview = None
+        if audio_path:
+            try:
+                import torchaudio
+
+                waveform, sample_rate = torchaudio.load(audio_path)
+                audio_np = waveform.mean(dim=0).cpu().numpy() if waveform.ndim > 1 else waveform.cpu().numpy()
+                spectrogram_preview = utils.audio_to_spectrogram(audio_np, sample_rate)
+            except Exception as e:
+                print(f"\033[93m[MusicVideo-AudioDept] Warning: Could not generate spectrogram preview: {e}\033[0m")
+                spectrogram_preview = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
     
         # Determine the definitive text to be used for alignment.
         # Priority: User-provided lyrics > Whisper transcript.
@@ -1659,6 +1895,9 @@ Return ONLY the final, refined prompt.
 
         except Exception as e:
             print(f"\033[91m[MusicVideo-AudioDept] CRITICAL: Direct audio alignment with whisperx failed: {e}\033[0m")
+            if initial_timed_segments:
+                print("\033[93m[MusicVideo-AudioDept] Falling back to transcription segment timings instead of text-only mode.\033[0m")
+                return text_to_align, initial_timed_segments, spectrogram_preview
             print("\033[93m[MusicVideo-AudioDept] This can be due to VRAM issues or a mismatch between lyrics and audio. Falling back to text-only mode.\033[0m")
             return text_to_align, None, spectrogram_preview
     

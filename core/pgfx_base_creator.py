@@ -978,6 +978,8 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             schedule_data = json_utils.extract_and_parse_json(schedule_json)
             if not isinstance(schedule_data, dict):
                 return schedule_json
+            if any(not str(frame).strip().isdigit() for frame in schedule_data.keys()):
+                return schedule_json
             enhanced_schedule = {}
             
             if timed_segments is None:

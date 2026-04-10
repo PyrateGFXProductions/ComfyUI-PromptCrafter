@@ -11,8 +11,14 @@ const DYNAMIC_CREATOR_NODE_CONFIG = {
     PromptCrafter_BaseCreator: { numStandardOutputs: 6 },
     PromptCrafter_VisualCreator: { numStandardOutputs: 6 },
     PromptCrafter_VisualCreatorEasy: { numStandardOutputs: 6 },
-    PromptCrafter_LyricsCreator: { numStandardOutputs: 20 },
-    PromptCrafter_LyricsCreatorEasy: { numStandardOutputs: 20 },
+    PromptCrafter_LyricsCreator: {
+        numStandardOutputs: 20,
+        trailingFixedOutputs: [{ name: "schedule_json", type: "STRING" }],
+    },
+    PromptCrafter_LyricsCreatorEasy: {
+        numStandardOutputs: 20,
+        trailingFixedOutputs: [{ name: "schedule_json", type: "STRING" }],
+    },
 };
 
 const DYNAMIC_CREATOR_NODE_CLASSES = Object.keys(DYNAMIC_CREATOR_NODE_CONFIG);
@@ -117,7 +123,9 @@ app.registerExtension({
 
         // --- Handler for Creator Nodes (Original Logic) ---
         if (DYNAMIC_CREATOR_NODE_CLASSES.includes(nodeType.comfyClass)) {
-            const numStandardOutputs = DYNAMIC_CREATOR_NODE_CONFIG[nodeType.comfyClass]?.numStandardOutputs ?? 6;
+            const creatorConfig = DYNAMIC_CREATOR_NODE_CONFIG[nodeType.comfyClass] ?? {};
+            const numStandardOutputs = creatorConfig.numStandardOutputs ?? 6;
+            const trailingFixedOutputs = creatorConfig.trailingFixedOutputs ?? [];
             const updateWeightsJSON = function(node) {
                 const weights = {};
                 for (const w of node.widgets) {
@@ -137,6 +145,17 @@ app.registerExtension({
                 const inputPrefix = "image_";
                 const weightPrefix = "image_weight_";
                 const outputPrefix = "reference_image_";
+                const dynamicOutputRegex = /^reference_image_\d+$/;
+
+                // Preserve fixed trailing outputs like schedule_json before
+                // adjusting the dynamic reference image outputs.
+                const preservedTrailingOutputs = trailingFixedOutputs.map((def) => {
+                    const outputIndex = this.outputs.findIndex(output => output.name === def.name);
+                    if (outputIndex !== -1) {
+                        return this.outputs.splice(outputIndex, 1)[0];
+                    }
+                    return { name: def.name, type: def.type, links: null };
+                });
 
                 // Count existing image inputs (excluding other inputs)
                 const currentInputs = this.inputs?.filter(input => /^image_\d+$/.test(input.name)) || [];
@@ -183,10 +202,9 @@ app.registerExtension({
                 updateWeightsJSON(this);
 
                 // Handle dynamic outputs (reference images)
-                // We calculate base outputs based on the node class logic defined earlier
-                const currentDynamicOutputs = this.outputs.length - numStandardOutputs;
-                // Ensure we don't have negative dynamic outputs (if standard outputs changed)
-                const validDynamicOutputs = Math.max(0, currentDynamicOutputs);
+                const validDynamicOutputs = this.outputs.filter(
+                    output => dynamicOutputRegex.test(output.name)
+                ).length;
 
 
                 if (targetCount < validDynamicOutputs) {
@@ -210,6 +228,17 @@ app.registerExtension({
                             this.addOutput(name, "IMAGE");
                         }
                     }
+                }
+
+                // Re-append any preserved fixed trailing outputs in a stable order.
+                for (const def of trailingFixedOutputs) {
+                    const existingIndex = this.outputs.findIndex(output => output.name === def.name);
+                    if (existingIndex !== -1) {
+                        this.outputs.splice(existingIndex, 1);
+                    }
+                }
+                for (const output of preservedTrailingOutputs) {
+                    this.outputs.push(output);
                 }
 
                 this.computeSize();

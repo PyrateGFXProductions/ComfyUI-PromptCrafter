@@ -3523,6 +3523,7 @@ class PGFX_Studio_StoreText:
     RETURN_NAMES = ("stored_path",)
     FUNCTION = "store"
     CATEGORY = "☠️PGFX🏴‍☠️ /Studio/IO"
+    OUTPUT_NODE = True
 
     def store(self, PROJECT_CONFIG, text_to_store, filename):
         if text_to_store is None or not str(text_to_store).strip():

@@ -8,7 +8,9 @@ Compatibility note: many internal node IDs still use the `PromptCrafter_` prefix
 
 ## ✨ Highlights
 
+- **PGFX Film Production**: Complete film production workflow with Project Controller, Character Registry, Shot Architect, Video Assembly, and Render Orchestration. (formerly AI-FilmStudio, now merged)
 - **PGFX Studio Pipeline**: A multi‑stage, role‑based workflow for music‑video and narrative content (Producer → Sound Engineer → Screenwriter → Director → Cinematographer → Editor → PostMaster).
+- **LTX 2.3 Image-First Workflow**: A local Z-Image still stage feeding an LTX 2.3 GGUF video branch, with artifact exports for schedule/SRT/word timing and 12GB-friendly defaults.
 - **Creator Nodes**: High‑quality prompt generation for images, videos, and lyrics with style profiles and dual‑model workflows.
 - **Audio & Timing**: Audio splitters, transcription, and SRT generation to drive consistent scene timing.
 - **Video Tools**: Subtitle burning for frame sequences and video pipelines.
@@ -30,6 +32,7 @@ Functional, end-to-end workflow examples are included in `workflows/`. See `work
 - `PGFX_LTX2_TransformerOnly_T2V_MusicVideo_Starter.json`
 - `PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json`
 - `PGFX_Studio_LTX2_TransformerOnly_Local_EndToEnd.json`
+- `PGFX_Studio_LTX23_ImageFirst_Local_EndToEnd.json`
 - `PGFX_QnA_To_Text.json`
 - `PGFX_Captioner_Single_Image.json`
 - `PGFX_SRT_Subtitle_Burn.json`
@@ -54,6 +57,8 @@ The nodes are organized under the PGFX menu in ComfyUI:
 - `☠️PGFX🏴‍☠️ /Text/Instruct`
 - `☠️PGFX🏴‍☠️ /Utils`
 - `☠️PGFX🏴‍☠️ /Utils/Security`
+- `☠️PGFX🏴‍☠️ /Film/Core`
+- `☠️PGFX🏴‍☠️ /Film/Assembly`
 
 ---
 
@@ -120,6 +125,18 @@ Creator nodes also include a `local_only_models` switch (enabled by default) to 
 - `🎬 Producer`, `🔊 Sound Engineer`, `✍️ Screenwriter`, `🧠 Creative Director`, `🎥 Director`, `📹 Cinematographer`, `🎞️ Editor`, `🏗️ PostMaster`
 - `💾 Store Text`, `📂 Load Text`, `🧭 Project Context`
 - `🔌 Studio Adapters` (PROJECT_CONFIG, TIMING_MAP, SHOT_LIST, etc.)
+
+**PGFX Film** (AI-FilmStudio merged)
+- `🎬 Film Project Controller` — deterministic project initializer with VRAM modes
+- `👤 Film Character Registry` — ensemble character management with deterministic seeds
+- `🎥 Film Shot Architect` — structured cinema shot generator with camera/lighting/motion blocks
+- `💾 Film Save Shot Video` — saves IMAGE frames to mp4 via ffmpeg
+- `🔊 Film Audio Loader` — loads audio files into ComfyUI AUDIO format
+- `🎞️ Film Assembler` — stitches shots into final video with audio merging
+- `📁 Film Render Project` — incremental file persistence and render progress tracking
+- `⚙️ Film Shot Config Extractor` — unified shot config extraction with reference frame handling
+- `🎵 Film Audio Segmenter` — extracts audio segments for specific shots
+- `🔢 Film Auto Shot Index` — synchronized shot index for queue management
 
 ---
 
