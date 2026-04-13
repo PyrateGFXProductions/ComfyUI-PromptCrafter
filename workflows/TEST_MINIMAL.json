@@ -1,0 +1,37 @@
+{
+  "id": "pgfx_ltx23_minimal",
+  "revision": 1,
+  "last_node_id": 20,
+  "last_link_id": 50,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [0, 0],
+      "size": [240, 320],
+      "flags": {},
+      "inputs": [],
+      "outputs": [
+        {"name": "IMAGE", "type": "IMAGE", "links": [10]},
+        {"name": "MASK", "type": "MASK", "links": []}
+      ],
+      "widgets_values": ["test.png", "image"]
+    },
+    {
+      "id": 10,
+      "type": "ImageScale",
+      "pos": [300, 0],
+      "size": [280, 106],
+      "flags": {},
+      "inputs": [
+        {"name": "image", "type": "IMAGE", "link": 10}
+      ],
+      "outputs": [
+        {"name": "IMAGE", "type": "IMAGE", "links": []}
+      ],
+      "widgets_values": ["nearest-exact", 1024, 576, true]
+    }
+  ],
+  "groups": [],
+  "version": 0.4
+}

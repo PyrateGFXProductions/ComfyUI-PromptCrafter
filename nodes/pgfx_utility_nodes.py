@@ -106,12 +106,14 @@ def _json_only_requested(text: str) -> bool:
     if "```json" in lower:
         return True
     triggers = (
+        "clean json",
         "return only valid json",
         "return only json",
         "return only a json",
         "return only a raw json",
         "return only a raw json object",
         "return only the json",
+        "do not add anything before or after the {}",
         "output only json",
         "json only",
         "return a single json object",
@@ -119,8 +121,21 @@ def _json_only_requested(text: str) -> bool:
     )
     return any(t in lower for t in triggers)
 
+def _is_lyric_correction_task(text: str) -> bool:
+    if not text:
+        return False
+    lower = str(text).lower()
+    markers = (
+        "whisper transcription correction guidelines",
+        "lyrics to fix:",
+        "do not put lyricsegment must just be segment",
+    )
+    return any(marker in lower for marker in markers)
+
 def _extract_expected_json_keys(text: str):
     if not text:
+        return []
+    if not _is_lyric_correction_task(text):
         return []
     # 1) Explicit count line wins (real task, not example)
     lyrics_count = re.search(r"lyrics to fix:\s*\((\d+)\s*segments?\)", text, re.IGNORECASE)
@@ -242,6 +257,113 @@ def _rekey_by_order(parsed, expected_keys=None):
     if all(n is not None for n in nums):
         items = sorted(items, key=lambda kv: _key_num(kv[0]))
     return {expected_keys[i]: items[i][1] for i in range(len(expected_keys))}
+
+def _detect_expected_storygroup_count(text: str) -> int:
+    if not text:
+        return 0
+
+    raw = str(text)
+    lowered = raw.lower()
+    story_markers = (
+        "story group",
+        '"groups"',
+        '"story_summary"',
+        "generate one story group per lyric segment",
+        "maintain strict alignment: lyric segment n",
+    )
+    if not any(marker in lowered for marker in story_markers):
+        return 0
+
+    direct = re.search(r"lyrics to fix:\s*\((\d+)\s*segments?\)", raw, re.I)
+    if direct:
+        try:
+            return max(0, int(direct.group(1)))
+        except Exception:
+            return 0
+
+    # Story-group prompts commonly embed beat-aligned lyric JSON like:
+    # "segment12_Duration_3.170": "..."
+    duration_keys = re.findall(r"\bsegment(\d+)_duration_", raw, re.I)
+    if duration_keys:
+        try:
+            return max(int(x) for x in duration_keys)
+        except Exception:
+            return 0
+
+    return 0
+
+def _normalize_and_validate_storygroup_payload(parsed, expected_count: int):
+    if expected_count <= 0:
+        return parsed, ""
+    if not isinstance(parsed, dict):
+        return None, f"Expected a JSON object with story groups, got {type(parsed).__name__}."
+
+    groups = parsed.get("groups")
+    if not isinstance(groups, list):
+        return None, "Expected a top-level 'groups' list."
+    if len(groups) != expected_count:
+        return None, f"Expected exactly {expected_count} groups, got {len(groups)}."
+
+    normalized_groups = []
+    seen_indices = []
+    required_group_fields = ("subject", "camera", "scene_and_lighting", "frame")
+    for position, group in enumerate(groups, start=1):
+        if not isinstance(group, dict):
+            return None, f"Group {position} is not an object."
+        if "index" not in group:
+            return None, f"Group {position} is missing the 'index' field."
+        try:
+            group_index = int(group.get("index"))
+        except Exception:
+            return None, f"Group {position} has a non-integer 'index' value: {group.get('index')!r}."
+
+        normalized_group = dict(group)
+        normalized_group["index"] = group_index
+        for field_name in required_group_fields:
+            if field_name not in normalized_group:
+                return None, f"Group {position} is missing the '{field_name}' field."
+            field_value = normalized_group.get(field_name)
+            if field_value is None or not str(field_value).strip():
+                return None, f"Group {position} has an empty '{field_name}' value."
+        normalized_groups.append(normalized_group)
+        seen_indices.append(group_index)
+
+    sorted_groups = sorted(normalized_groups, key=lambda item: item.get("index", 0))
+    sorted_indices = [item["index"] for item in sorted_groups]
+    expected_indices = list(range(1, expected_count + 1))
+    if sorted_indices != expected_indices:
+        return None, (
+            f"Expected group indices {expected_indices[0]}..{expected_indices[-1]} exactly once, "
+            f"got {sorted_indices}."
+        )
+
+    normalized_payload = dict(parsed)
+    normalized_payload["groups"] = sorted_groups
+
+    summary = normalized_payload.get("story_summary")
+    if summary is None or not str(summary).strip():
+        return None, "Expected a non-empty top-level 'story_summary' value."
+
+    return normalized_payload, ""
+
+def _normalize_and_validate_expected_key_payload(parsed, expected_keys):
+    if not expected_keys:
+        return parsed, ""
+    if not isinstance(parsed, dict):
+        return None, f"Expected a JSON object with keys {expected_keys[0]}..{expected_keys[-1]}, got {type(parsed).__name__}."
+
+    normalized = _force_lyricsegment_keys(parsed)
+    normalized = _rekey_by_order(normalized, expected_keys)
+    missing, extra = _diff_expected_keys(normalized.keys(), expected_keys)
+    if missing or extra:
+        parts = []
+        if missing:
+            parts.append(f"missing keys: {missing}")
+        if extra:
+            parts.append(f"unexpected keys: {extra}")
+        return None, "Expected exact lyric segment keys; " + ", ".join(parts) + "."
+
+    return normalized, ""
 
 
 # ------------------------------------------------------------------------------------
@@ -1128,29 +1250,264 @@ class PromptCrafter_QnAInstruct:
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
     def execute(self, qna_think_output, format_instruction, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
-        if not qna_think_output or not str(qna_think_output).strip():
+        raw_content = "" if qna_think_output is None else str(qna_think_output)
+        raw_instruction = "" if format_instruction is None else str(format_instruction)
+
+        if not raw_content.strip():
             return ("[ERROR] QnAThink output is empty.",)
-        if not format_instruction or not str(format_instruction).strip():
-            return ("[ERROR] Format instruction is empty.",)
 
-        prompt = textwrap.dedent(f"""
-            Format the content according to the instruction. No new content. No reasoning.
-            Return ONLY the formatted output.
+        # Some shipped workflows already construct a full instruction prompt upstream
+        # and leave format_instruction blank. Preserve that path instead of hard failing.
+        has_explicit_instruction = bool(raw_instruction.strip())
+        if has_explicit_instruction:
+            prompt = textwrap.dedent(f"""
+                Format the content according to the instruction. No new content. No reasoning.
+                Return ONLY the formatted output.
 
-            FORMAT INSTRUCTION:
-            {format_instruction}
+                FORMAT INSTRUCTION:
+                {raw_instruction}
 
-            CONTENT:
-            {qna_think_output}
-        """).strip()
+                CONTENT:
+                {raw_content}
+            """).strip()
+            request_text = f"{raw_instruction}\n\n{raw_content}"
+        else:
+            prompt = raw_content.strip()
+            request_text = prompt
+
+        # Long JSON formatting tasks can easily exceed small provider defaults.
+        default_max_tokens = int(getattr(config, "DEFAULT_MAX_TOKENS", 4096))
+        expected_keys = _extract_expected_json_keys(request_text)
+        expected_storygroup_count = _detect_expected_storygroup_count(request_text)
+        validate_storygroups = expected_storygroup_count > 0 and not expected_keys
+        provider_key = ""
+        try:
+            provider_key = str(model).split("/", 1)[0].strip().lower()
+        except Exception:
+            provider_key = ""
+        provider_timeout_cfg = config.LOCAL_SERVER_CONFIG.get(provider_key, {}) if provider_key else {}
+        dynamic_timeout = int(provider_timeout_cfg.get("timeout", 120))
+        dynamic_max_tokens = max(default_max_tokens, min(16384, 2048 + (len(prompt) // 3)))
+        if expected_keys:
+            dynamic_max_tokens = max(dynamic_max_tokens, min(16384, 3072 + (len(expected_keys) * 80)))
+            dynamic_timeout = max(dynamic_timeout, min(480, 120 + (len(expected_keys) * 4)))
+        if validate_storygroups:
+            dynamic_max_tokens = max(dynamic_max_tokens, min(16384, 4096 + (expected_storygroup_count * 120)))
+            dynamic_timeout = max(
+                dynamic_timeout,
+                min(900, 240 + (expected_storygroup_count * 10)),
+            )
+        force_json = _json_only_requested(request_text) or bool(expected_keys) or validate_storygroups
+        strict_json_prompt = prompt
+        if force_json:
+            json_requirements = [
+                "Return one complete JSON object only.",
+                "Do not return markdown, commentary, or partial output.",
+            ]
+            if expected_keys:
+                json_requirements.extend(
+                    [
+                        f'The JSON object must contain exactly {len(expected_keys)} keys.',
+                        f'The keys must be {expected_keys[0]} through {expected_keys[-1]}, exactly once.',
+                        "Do not omit, merge, or rename any lyric segment keys.",
+                    ]
+                )
+            if validate_storygroups:
+                json_requirements.extend(
+                    [
+                        'The top-level object must contain a non-empty "story_summary".',
+                        f'The top-level object must contain a "groups" array with exactly {expected_storygroup_count} items.',
+                        f'The "index" fields inside "groups" must be every integer from 1 through {expected_storygroup_count}, exactly once.',
+                        'Every group object must include non-empty "subject", "camera", "scene_and_lighting", and "frame" string fields.',
+                        'Do not use placeholder objects like {"index": 1, "name": "Group 1"}.',
+                        "Do not stop early. Do not omit trailing groups. Do not return a partial object.",
+                    ]
+                )
+            strict_json_prompt = textwrap.dedent(f"""
+                CRITICAL OUTPUT REQUIREMENTS:
+                - {'\n                - '.join(json_requirements)}
+
+                ORIGINAL TASK:
+                {prompt}
+            """).strip()
+
+        def _validate_json_payload(candidate):
+            if candidate is None:
+                return None, ""
+            if expected_keys:
+                return _normalize_and_validate_expected_key_payload(candidate, expected_keys)
+            if validate_storygroups:
+                return _normalize_and_validate_storygroup_payload(candidate, expected_storygroup_count)
+            return candidate, ""
+
+        def _normalize_json_response(response_text):
+            raw = "" if response_text is None else str(response_text)
+            stripped = json_utils.strip_markdown_code_fences(raw)
+            if not stripped:
+                return None, "", "Model returned empty output."
+
+            parsed = json_utils.extract_and_parse_json(stripped)
+            if parsed is not None:
+                normalized_parsed, validation_error = _validate_json_payload(parsed)
+                if normalized_parsed is not None:
+                    return (
+                        normalized_parsed,
+                        json.dumps(normalized_parsed, indent=2, ensure_ascii=False),
+                        "",
+                    )
+
+            repaired = json_utils.repair_truncated_json(stripped)
+            if repaired:
+                parsed = json_utils.extract_and_parse_json(repaired)
+                if parsed is not None:
+                    normalized_parsed, validation_error = _validate_json_payload(parsed)
+                    if normalized_parsed is not None:
+                        return (
+                            normalized_parsed,
+                            json.dumps(normalized_parsed, indent=2, ensure_ascii=False),
+                            "",
+                        )
+
+            fallback_text = repaired or stripped
+            validation_error = ""
+            if expected_keys and parsed is not None:
+                _, validation_error = _validate_json_payload(parsed)
+            if not validation_error and validate_storygroups and parsed is not None:
+                _, validation_error = _validate_json_payload(parsed)
+            if not validation_error:
+                if expected_keys:
+                    validation_error = (
+                        f"Lyric-segment JSON is incomplete or malformed. It must contain exactly "
+                        f"{len(expected_keys)} keys from {expected_keys[0]} through {expected_keys[-1]}."
+                    )
+                elif validate_storygroups:
+                    validation_error = (
+                        f"Story-group JSON is incomplete or malformed. It must contain exactly "
+                        f"{expected_storygroup_count} groups with indices 1..{expected_storygroup_count}."
+                    )
+                else:
+                    validation_error = "JSON is malformed or truncated."
+            return None, fallback_text, validation_error
+
+        def _query_json(prompt_text, debug_title):
+            attempts = [
+                {
+                    "prefer_chat": False,
+                    "temperature": 0.0,
+                    "seed": 0,
+                    "max_tokens": dynamic_max_tokens,
+                    "no_chat_fallback": True,
+                    "template": "{{ .Prompt }}",
+                    "format": "json",
+                    "debug_title": debug_title,
+                },
+                {
+                    "prefer_chat": True,
+                    "temperature": 0.0,
+                    "seed": 0,
+                    "max_tokens": dynamic_max_tokens,
+                    "debug_title": f"{debug_title} Fallback",
+                },
+            ]
+
+            last_problem = ""
+            for call_kwargs in attempts:
+                ok, response = api_clients.query_model_auto(
+                    model,
+                    prompt=prompt_text,
+                    llm_device=llm_device,
+                    reset_context=reset_context,
+                    timeout=dynamic_timeout,
+                    **call_kwargs,
+                )
+                if not ok:
+                    last_problem = str(response)
+                    continue
+
+                parsed, normalized, validation_error = _normalize_json_response(response)
+                if parsed is not None:
+                    return True, normalized
+                if validation_error:
+                    last_problem = f"{validation_error}\n\n{normalized}".strip()
+                else:
+                    last_problem = normalized or "Model returned empty output."
+
+            if last_problem:
+                extra_rules = ""
+                if expected_keys:
+                    extra_rules += textwrap.dedent(f"""
+                        VALIDATION REQUIREMENTS:
+                        - The JSON object must contain exactly {len(expected_keys)} keys.
+                        - The keys must be {expected_keys[0]} through {expected_keys[-1]}.
+                        - If the prior response ended early, regenerate the full object from the beginning.
+                    """).strip()
+                if validate_storygroups:
+                    if extra_rules:
+                        extra_rules += "\n"
+                    extra_rules = textwrap.dedent(f"""
+                        {extra_rules}
+                        VALIDATION REQUIREMENTS:
+                        - The top-level object must include a non-empty "story_summary" string.
+                        - "groups" length must be exactly {expected_storygroup_count}.
+                        - Group indices must be 1 through {expected_storygroup_count}, in full.
+                        - Every group must include non-empty "subject", "camera", "scene_and_lighting", and "frame" string fields.
+                        - Do not return placeholder entries like {{"index": 1, "name": "Group 1"}}.
+                        - If the prior response ended early, regenerate the full object from the beginning.
+                    """).strip()
+                repair_prompt = textwrap.dedent(f"""
+                    The previous response was intended to be a single JSON object but it was truncated or malformed.
+                    Return ONLY one complete valid JSON object with no markdown, no commentary, and no omitted closing braces.
+                    {extra_rules}
+
+                    ORIGINAL TASK:
+                    {prompt_text}
+
+                    PREVIOUS RESPONSE:
+                    {last_problem}
+                """).strip()
+
+                ok, response = api_clients.query_model_auto(
+                    model,
+                    prompt=repair_prompt,
+                    prefer_chat=False,
+                    temperature=0.0,
+                    seed=0,
+                    max_tokens=dynamic_max_tokens,
+                    no_chat_fallback=True,
+                    template="{{ .Prompt }}",
+                    format="json",
+                    debug_title=f"{debug_title} Repair",
+                    llm_device=llm_device,
+                    reset_context=reset_context,
+                    timeout=dynamic_timeout,
+                )
+                if ok:
+                    parsed, normalized, validation_error = _normalize_json_response(response)
+                    if parsed is not None:
+                        return True, normalized
+                    if validation_error:
+                        last_problem = f"{validation_error}\n\n{normalized}".strip()
+                    else:
+                        last_problem = normalized or last_problem
+
+            return False, last_problem
+
+        if force_json:
+            ok, normalized = _query_json(strict_json_prompt, "QnA Instruct JSON")
+            if ok:
+                return (normalized,)
+            error_detail = normalized or "Model returned empty output."
+            raise ValueError(f"PromptCrafter_QnAInstruct failed to produce complete valid JSON.\n{error_detail}")
 
         ok, response = api_clients.query_model_auto(
             model,
             prompt=prompt,
             temperature=0.0,
             seed=0,
+            max_tokens=dynamic_max_tokens,
             llm_device=llm_device,
             reset_context=reset_context,
+            timeout=dynamic_timeout,
         )
         if not ok:
             return (f"[ERROR] Model call failed: {response}",)
