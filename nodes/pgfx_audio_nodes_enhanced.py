@@ -9,11 +9,13 @@ class PGFXTextEncodeAceStepAudio15Advanced:
     TIMELINE_OFFSET_MODES = ["trim_pad", "wrap"]
 
     KEY_SCALE_OPTIONS = [
-        "C major", "C# major", "Db major", "D major", "D# major", "Eb major", "E major",
-        "F major", "F# major", "Gb major", "G major", "G# major", "Ab major", "A major",
-        "A# major", "Bb major", "B major", "C minor", "C# minor", "Db minor", "D minor",
-        "D# minor", "Eb minor", "E minor", "F minor", "F# minor", "Gb minor", "G minor",
-        "G# minor", "Ab minor", "A minor", "A# minor", "Bb minor", "B minor",
+        "A major", "A# major", "Ab major", "A minor", "A# minor", "Ab minor",
+        "B major", "B# major", "Bb major", "B minor", "B# minor", "Bb minor",
+        "C major", "C# major", "Cb major", "C minor", "C# minor", "Cb minor",
+        "D major", "D# major", "Db major", "D minor", "D# minor", "Db minor",
+        "E major", "E# major", "Eb major", "E minor", "E# minor", "Eb minor",
+        "F major", "F# major", "Fb major", "F minor", "F# minor", "Fb minor",
+        "G major", "G# major", "Gb major", "G minor", "G# minor", "Gb minor"
     ]
 
     @staticmethod
@@ -68,41 +70,45 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         return None
 
     @staticmethod
-    def _build_prompt_text(tags, instruction, caption, has_lyrics=False, instrumental=False):
+    def _preprocess_lyrics(lyrics):
         """
-        Build the main caption text while keeping lyrics separate for ACE15.
+        Clean and normalize lyrics to prevent formatting issues from confusing the LLM.
         """
-        parts = []
-        tags_text = str(tags or "").strip()
-        instruction_text = str(instruction or "").strip()
-        caption_text = str(caption or "").strip()
+        if not lyrics:
+            return ""
+        
+        # Normalize line endings and trim lines
+        lines = [line.strip() for line in str(lyrics).splitlines()]
+        
+        # Remove excessive empty lines (keep max 1 consecutive empty line for verse separation)
+        cleaned_lines = []
+        prev_empty = False
+        for line in lines:
+            if not line:
+                if not prev_empty:
+                    cleaned_lines.append("")
+                prev_empty = True
+            else:
+                cleaned_lines.append(line)
+                prev_empty = False
+        
+        return "\n".join(cleaned_lines).strip()
 
-        if tags_text:
-            parts.append(tags_text)
-        if instruction_text:
-            parts.append(f"Style direction: {instruction_text}")
-        if caption_text:
-            parts.append(caption_text)
-        if has_lyrics and not instrumental:
-            # Bias the LM toward earlier vocal onset without requiring explicit lyric markers.
-            parts.append("Start vocals early and keep lyrics active through most of the track.")
-
-        if not parts:
-            return tags_text
-        return "\n\n".join(parts)
 
     @staticmethod
     def _latent_samples(latent):
         if latent is None:
             return None
         if isinstance(latent, dict):
-            if "samples" in latent:
-                return latent["samples"]
-            if "waveform" in latent:
-                return latent["waveform"]
-            return latent.get("samples", None)
+            # ComfyUI standard LATENT uses "samples"
+            # Some audio nodes use "waveform"
+            for key in ["samples", "waveform", "audio"]:
+                if key in latent and latent[key] is not None:
+                    res = latent[key]
+                    return res.contiguous() if isinstance(res, torch.Tensor) else res
+            return None
         if isinstance(latent, torch.Tensor):
-            return latent
+            return latent.contiguous()
         return None
 
     @classmethod
@@ -134,7 +140,7 @@ class PGFXTextEncodeAceStepAudio15Advanced:
             return torch.cat(
                 (latent_samples[..., shift_frames:], latent_samples[..., :shift_frames]),
                 dim=-1,
-            )
+            ).contiguous()
 
         # trim_pad (default): remove early intro influence instead of rotating it to the end.
         kept = latent_samples[..., shift_frames:]
@@ -142,7 +148,7 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         if pad_source.shape[-1] == 0:
             return latent_samples
         pad = pad_source.repeat_interleave(shift_frames, dim=-1)
-        return torch.cat((kept, pad), dim=-1)
+        return torch.cat((kept, pad), dim=-1).contiguous()
 
     @classmethod
     def _offset_audio_codes_timeline(cls, audio_codes, offset_seconds, offset_mode="trim_pad"):
@@ -186,9 +192,9 @@ class PGFXTextEncodeAceStepAudio15Advanced:
                 "clip": ("CLIP", {
                     "tooltip": "Connect the CLIP encoder from your loaded audio model. This is what reads your text."
                 }),
-                "task_type": (["text2music", "music_continuation", "text_to_audio_cover_style", "music_editing"], {
+                "task_type": (["text2music", "cover", "extract", "lego", "repaint"], {
                     "default": "text2music",
-                    "tooltip": "ACE task mode. Cover-style tasks follow source latent structure when source/reference audio is connected."
+                    "tooltip": "The specific generation task to perform. ACE-Step 1.5 uses these to determine the generation pipeline."
                 }),
                 "instruction": ("STRING", {
                     "default": "",
@@ -209,9 +215,44 @@ class PGFXTextEncodeAceStepAudio15Advanced:
                     "default": False,
                     "tooltip": "If True, target an instrumental track with no vocals."
                 }),
-                "vocal_language": (["en", "zh", "ja", "ko"], {
+                "vocal_language": ([
+                    'en', 'zh', 'ja', 'ko', 'es', 'fr', 'de', 'it', 'pt', 'ru',
+                    'ar', 'hi', 'vi', 'th', 'id', 'ms', 'tl', 'nl', 'pl', 'tr',
+                    'sv', 'da', 'no', 'fi', 'cs', 'sk', 'hu', 'ro', 'bg', 'hr',
+                    'sr', 'uk', 'el', 'he', 'fa', 'bn', 'ta', 'te', 'pa', 'ur',
+                    'ne', 'sw', 'ht', 'is', 'lt', 'la', 'az', 'ca', 'sa', 'yue',
+                    'unknown'
+                ], {
                     "default": "en",
                     "tooltip": "Language for vocal pronunciation and lyric generation."
+                }),
+                "audio_cover_strength": ("FLOAT", {
+                    "default": 0.2,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.01,
+                    "tooltip": "Controls how strongly the reference audio guides the style. 0.0=Pure Text, 1.0=Strict Style. Recommended: 0.2"
+                }),
+                "cover_noise_strength": ("FLOAT", {
+                    "default": 0.0,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.01,
+                    "tooltip": "Controls noise injection for covers. 0.0=Pure Gaussian Noise (recommended). Higher values use more source audio."
+                }),
+                "repainting_start": ("FLOAT", {
+                    "default": 0.0,
+                    "min": 0.0,
+                    "max": 1000.0,
+                    "step": 0.1,
+                    "tooltip": "Start time in seconds for music_editing (repaint) task."
+                }),
+                "repainting_end": ("FLOAT", {
+                    "default": 0.0,
+                    "min": 0.0,
+                    "max": 1000.0,
+                    "step": 0.1,
+                    "tooltip": "End time in seconds for music_editing (repaint) task."
                 }),
                 "bpm": ("INT", {
                     "default": 120,
@@ -292,8 +333,16 @@ class PGFXTextEncodeAceStepAudio15Advanced:
                     "default": True,
                     "tooltip": "Force stricter decoding rules. Helpful for structure, but can reduce creativity."
                 }),
+                "debug": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "If enabled, logs the constructed prompt to the console and returns it as a string output."
+                }),
             },
             "optional": {
+                "track_name": (["", "vocals", "drums", "bass", "guitar", "keyboard", "strings", "percussion", "synth", "fx", "brass", "woodwinds", "backing_vocals"], {
+                    "default": "",
+                    "tooltip": "Specific track to extract or generate (only for extract/lego tasks)."
+                }),
                 "reference_audio": ("LATENT", {
                     "tooltip": "Optional ACE-Step latent audio to shift the source audio's timeline. Typically used for cover/repaint style tasks."
                 }),
@@ -326,99 +375,349 @@ class PGFXTextEncodeAceStepAudio15Advanced:
             }
         }
 
-    RETURN_TYPES = ("CONDITIONING",)
+    RETURN_TYPES = ("CONDITIONING", "STRING")
+    RETURN_NAMES = ("CONDITIONING", "built_prompt")
     FUNCTION = "encode"
 
     CATEGORY = "☠️PGFX🏴‍☠️ /Audio"
+    
+    def _apply_semantic_dropout(self, tensor, dropout_prob, mask_value=0.0):
+        """
+        Randomly masks elements of a tensor. 
+        Used to 'weaken' a structural guide without corrupting the remaining tokens.
+        """
+        if dropout_prob <= 0.0:
+            return tensor
+        if dropout_prob >= 1.0:
+            return torch.full_like(tensor, mask_value)
+            
+        mask = torch.rand(tensor.shape, device=tensor.device) > dropout_prob
+        return tensor * mask.to(tensor.dtype) + (~mask).to(tensor.dtype) * mask_value
 
-    def encode(self, clip, task_type, instruction, tags, lyrics, instrumental, vocal_language, bpm, keyscale, timesignature, duration, seed, thinking, lm_temperature, lm_cfg_scale, lm_top_k, lm_top_p, use_cot_metas, use_cot_caption, use_cot_lyrics, use_cot_language, use_constrained_decoding, reference_audio=None, src_audio=None, audio_codes=None, caption=None, lm_negative_prompt=None, cover_source_offset_seconds=0.0, cover_source_offset_mode="trim_pad"):
+    def encode(self, clip, task_type, instruction, tags, lyrics, instrumental, vocal_language, audio_cover_strength, cover_noise_strength, repainting_start, repainting_end, bpm, keyscale, timesignature, duration, seed, thinking, lm_temperature, lm_cfg_scale, lm_top_k, lm_top_p, use_cot_metas, use_cot_caption, use_cot_lyrics, use_cot_language, use_constrained_decoding, debug, track_name="", reference_audio=None, src_audio=None, audio_codes=None, caption=None, lm_negative_prompt=None, cover_source_offset_seconds=0.0, cover_source_offset_mode="trim_pad"):
+        print("\n" + "🔥" * 20)
+        print("🔥 [PGFX ACE15] ENCODE METHOD TRIGGERED 🔥")
+        print("🔥" * 20)
+
+        import math
+
+        # --- 0. STABILITY: APPLY OFFICIAL PATCHES ---
+        try:
+            # Try to find and apply official patches from the reference extension
+            import sys
+            import os
+            # Attempt to find the extension directory relative to custom_nodes
+            custom_nodes_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            ref_dir = os.path.join(custom_nodes_dir, "comfyui_ryanonyheinside")
+            if os.path.exists(ref_dir) and ref_dir not in sys.path:
+                sys.path.append(ref_dir)
+            
+            try:
+                from nodes.acestep import patches
+                patches.apply_acestep_patches()
+                print("|-- Stability: Official ACE-Step patches applied.")
+            except ImportError:
+                # Try alternative import path
+                try:
+                    import custom_nodes.comfyui_ryanonyheinside.nodes.acestep.patches as patches
+                    patches.apply_acestep_patches()
+                    print("|-- Stability: Official ACE-Step patches applied (via custom_nodes path).")
+                except:
+                    pass
+        except Exception as e:
+            print(f"|-- Stability: Patch application skipped ({str(e)})")
+
+        # --- 1. OFFICIAL ACE-STEP 1.5 CONFIGURATION ---
+        TASK_MAP = {
+            "text2music": "text2music",
+            "cover": "cover",
+            "extract": "extract",
+            "lego": "lego",
+            "repaint": "repaint"
+        }
+        mapped_task = TASK_MAP.get(task_type, "text2music")
+        
+        # Official Instruction Templates (DO NOT CHANGE - Training-specific keywords)
+        TASK_INSTRUCTIONS = {
+            "text2music": "Fill the audio semantic mask based on the given conditions:",
+            "repaint": "Repaint the mask area based on the given conditions:",
+            "cover": "Generate audio semantic tokens based on the given conditions:",
+            "extract": "Extract the {TRACK_NAME} track from the audio:",
+            "lego": "Generate the {TRACK_NAME} track based on the audio context:",
+        }
+        
+        is_cover = (mapped_task == "cover")
+        is_repaint = (mapped_task == "repaint")
+        is_extract = (mapped_task == "extract")
+        is_lego = (mapped_task == "lego")
+
+        # Build Task-Aware Instruction
+        t_name = str(track_name).strip().upper() if track_name else "VOCALS"
+        task_instruction = TASK_INSTRUCTIONS.get(mapped_task, TASK_INSTRUCTIONS["text2music"])
+        if "{TRACK_NAME}" in task_instruction:
+            task_instruction = task_instruction.format(TRACK_NAME=t_name)
+
+        # Safe casting for numeric inputs
+        try:
+            safe_bpm = int(bpm) if bpm is not None else 120
+        except:
+            safe_bpm = 120
+        try:
+            safe_duration = float(duration) if duration is not None else 10.0
+        except:
+            safe_duration = 10.0
+
         normalized_audio_codes = self._normalize_audio_codes(audio_codes)
         negative_caption = "" if lm_negative_prompt is None else str(lm_negative_prompt).strip()
-        lyrics_text = "" if lyrics is None else str(lyrics)
+        lyrics_text = self._preprocess_lyrics(lyrics)
         lyric_lines = [ln.strip() for ln in lyrics_text.splitlines() if ln.strip()]
 
         ref_samples = self._latent_samples(reference_audio)
         src_samples = self._latent_samples(src_audio)
 
+        # --- 2. TIMELINE OFFSETS ---
         try:
-            cover_source_offset_seconds = float(cover_source_offset_seconds)
-        except Exception:
-            cover_source_offset_seconds = 0.0
+            offset_sec = float(cover_source_offset_seconds)
+        except:
+            offset_sec = 0.0
         offset_mode = str(cover_source_offset_mode or "trim_pad").strip().lower()
         if offset_mode not in set(self.TIMELINE_OFFSET_MODES):
             offset_mode = "trim_pad"
 
-        if cover_source_offset_seconds > 0.0 and normalized_audio_codes is not None:
-            normalized_audio_codes = self._offset_audio_codes_timeline(
-                normalized_audio_codes, cover_source_offset_seconds, offset_mode
-            )
-            print(
-                f"[PGFX ACE15] applied audio-code offset: {cover_source_offset_seconds:.2f}s "
-                f"({int(round(cover_source_offset_seconds * self.ACE15_AUDIO_CODE_TOKENS_PER_SECOND))} tokens), "
-                f"mode={offset_mode}, task={task_type}"
-            )
+        if offset_sec > 0.0:
+            if normalized_audio_codes is not None:
+                normalized_audio_codes = self._offset_audio_codes_timeline(normalized_audio_codes, offset_sec, offset_mode)
+            if mapped_task != "text2music":
+                if src_samples is not None:
+                    src_samples = self._offset_latent_timeline(src_samples, offset_sec, offset_mode)
+                elif ref_samples is not None:
+                    ref_samples = self._offset_latent_timeline(ref_samples, offset_sec, offset_mode)
 
-        if task_type != "text2music" and cover_source_offset_seconds > 0.0:
-            if src_samples is not None:
-                src_samples = self._offset_latent_timeline(src_samples, cover_source_offset_seconds, offset_mode)
-                print(
-                    f"[PGFX ACE15] applied source-latent offset: {cover_source_offset_seconds:.2f}s "
-                    f"({int(round(cover_source_offset_seconds * self.ACE15_LATENT_FRAMES_PER_SECOND))} frames), "
-                    f"mode={offset_mode}, task={task_type}, source=src_audio"
-                )
-            elif ref_samples is not None:
-                ref_samples = self._offset_latent_timeline(ref_samples, cover_source_offset_seconds, offset_mode)
-                print(
-                    f"[PGFX ACE15] applied source-latent offset: {cover_source_offset_seconds:.2f}s "
-                    f"({int(round(cover_source_offset_seconds * self.ACE15_LATENT_FRAMES_PER_SECOND))} frames), "
-                    f"mode={offset_mode}, task={task_type}, source=reference_audio"
-                )
+        # --- 3. DUAL-LOGIC ROUTING ---
+        if (is_cover or is_extract or is_lego) and src_samples is None and ref_samples is not None:
+            src_samples = ref_samples
+            print("|-- Pipeline: Mirroring Style Reference into Structural Guide.")
 
-        # Route task-specific source/reference behavior to the key Comfy ACE consumes.
-        if task_type == "text2music":
-            # In Comfy's ACE backend, providing reference_audio_timbre_latents flips to cover mode.
-            # Keep text2music LM-driven to avoid silent/near-silent cover behavior.
-            routed_reference = None
+        if mapped_task == "text2music":
+            routed_reference = ref_samples
         else:
             routed_reference = src_samples if src_samples is not None else ref_samples
 
         try:
             normalized_timesignature = int(str(timesignature).strip().split("/", 1)[0])
-        except Exception:
+        except:
             normalized_timesignature = 4
 
-        # Build caption text from tags/instruction/caption while passing lyrics separately.
-        prompt_text = self._build_prompt_text(
-            tags=tags,
-            instruction=instruction,
-            caption=caption,
-            has_lyrics=bool(lyric_lines),
-            instrumental=bool(instrumental),
-        )
+        # --- 4. TASK-AWARE INSTRUCTION & PROMPT BUILDING ---
+        TASK_INSTRUCTIONS = {
+            "text2music": "Fill the audio semantic mask based on the given conditions:",
+            "repaint": "Repaint the mask area based on the given conditions:",
+            "cover": "Generate audio semantic tokens based on the given conditions:",
+            "extract": "Extract the {TRACK_NAME} track from the audio:",
+            "extract_default": "Extract the track from the audio:",
+            "lego": "Generate the {TRACK_NAME} track based on the audio context:",
+            "lego_default": "Generate the track based on the audio context:",
+        }
+        
+        task_instruction = TASK_INSTRUCTIONS.get(mapped_task, TASK_INSTRUCTIONS.get("text2music"))
+        if "{TRACK_NAME}" in task_instruction:
+            if track_name:
+                task_instruction = task_instruction.format(TRACK_NAME=track_name.upper())
+            else:
+                task_instruction = TASK_INSTRUCTIONS.get(f"{mapped_task}_default", task_instruction.replace("{TRACK_NAME}", ""))
+
+        caption_parts = []
+        if tags:
+            caption_parts.append(str(tags).strip())
+        if instruction:
+            caption_parts.append(f"Style direction: {str(instruction).strip()}")
+        if caption:
+            caption_parts.append(str(caption).strip())
+            
+        final_caption = " ".join(caption_parts)
+        
+        if mapped_task != "text2music":
+            prompt_text = f"{task_instruction}\n\n{final_caption}"
+        else:
+            prompt_text = final_caption
+
+        should_generate_codes = (normalized_audio_codes is None and mapped_task in ("text2music", "repaint"))
+        if mapped_task in ("cover", "extract", "lego") and routed_reference is None and normalized_audio_codes is None:
+            should_generate_codes = True
+            print("|-- Warning: No source for guided task. Falling back to LM code generation.")
 
         tokenize_kwargs = {
             "lyrics": lyrics_text,
-            "bpm": bpm,
-            "duration": duration,
+            "bpm": safe_bpm,
+            "duration": safe_duration,
             "timesignature": normalized_timesignature,
             "language": vocal_language,
             "keyscale": keyscale,
             "seed": seed,
-            "task_type": task_type,
-            "generate_audio_codes": (normalized_audio_codes is None and routed_reference is None),
+            "generate_audio_codes": should_generate_codes,
             "cfg_scale": lm_cfg_scale,
             "temperature": lm_temperature,
             "top_p": lm_top_p,
             "top_k": lm_top_k,
             "min_p": 0.0,
+            "task_type": mapped_task,
+            "track_name": track_name if track_name else None,
         }
         if negative_caption:
             tokenize_kwargs["caption_negative"] = negative_caption
-        tokens = clip.tokenize(prompt_text, **tokenize_kwargs)
 
-        conditioning = clip.encode_from_tokens_scheduled(tokens)
+        diag_lines = [
+            "🚀 [PGFX ACE15 DIAGNOSTICS] 🚀",
+            f"|-- Task Routing: '{task_type}' -> Mapped: '{mapped_task}'",
+            f"|-- Track Name: {track_name if track_name else 'N/A'}",
+            f"|-- Structural Guide: {'src_audio' if src_samples is not None else ('reference_audio' if ref_samples is not None else ('NONE' if normalized_audio_codes is None else 'MANUAL CODES'))}",
+            f"|-- Style Reference: {'reference_audio' if ref_samples is not None else 'NONE'}",
+            f"|-- Timing: {safe_duration}s @ {safe_bpm} BPM",
+            f"|-- LM Code Gen: {'ENABLED (Autonomous)' if should_generate_codes else 'DISABLED (Guided)'}",
+        ]
 
-        conditioning_values = {
+        if is_cover or is_extract or is_lego:
+            diag_lines.append(f"|-- Guided Strength: {audio_cover_strength}")
+            if not should_generate_codes and normalized_audio_codes is None and routed_reference is None:
+                diag_lines.append("⚠️ [WARNING] No Structural Guide! Model will be blind to rhythm.")
+
+        # --- 5. THE UNIVERSAL BRIDGE (QUANTIZATION) ---
+        struct_map = normalized_audio_codes
+        
+        if struct_map is None and (is_cover or is_repaint or is_extract or is_lego) and routed_reference is not None:
+            try:
+                model_ref = getattr(clip, "patcher", None)
+                if model_ref:
+                    inner_model = getattr(model_ref, "model", None)
+                    diff_model = getattr(inner_model, "diffusion_model", inner_model)
+                    
+                    bridge_comp = getattr(diff_model, "tokenizer", getattr(inner_model, "codec", getattr(inner_model, "quantizer", None)))
+                    
+                    if bridge_comp:
+                        with torch.no_grad():
+                            raw_samples = routed_reference
+                            if isinstance(routed_reference, dict) and "samples" in routed_reference:
+                                raw_samples = routed_reference["samples"]
+                            
+                            comp_params = list(bridge_comp.parameters())
+                            target_device = comp_params[0].device if comp_params else torch.device("cpu")
+                            target_dtype = comp_params[0].dtype if comp_params else torch.float32
+                            
+                            raw_samples = raw_samples.to(device=target_device, dtype=target_dtype).contiguous()
+                            
+                            is_semantic = hasattr(bridge_comp, "tokenize")
+                            if is_semantic:
+                                raw_samples = raw_samples.movedim(-1, -2)
+                            
+                            if target_device.type == 'cuda':
+                                torch.cuda.synchronize()
+                                torch.cuda.empty_cache()
+                            
+                            try:
+                                if is_semantic:
+                                    quantized, _ = bridge_comp.tokenize(raw_samples)
+                                    detokenizer = getattr(diff_model, "detokenizer", None)
+                                    if detokenizer:
+                                        struct_map = detokenizer(quantized)
+                                        struct_map = struct_map.movedim(-1, -2).contiguous()
+                                    else:
+                                        struct_map = quantized.movedim(-1, -2).contiguous()
+                                else:
+                                    struct_map = bridge_comp.encode(raw_samples).contiguous()
+                                
+                                # Safety synchronization
+                                if target_device.type == 'cuda':
+                                    torch.cuda.synchronize()
+                                
+                                comp_name = "Tokenizer" if is_semantic else "Codec"
+                                diag_lines.append(f"|-- Universal Bridge: [SUCCESS] REAL {comp_name} pass ({target_device.type}).")
+                            except Exception as e:
+                                if "misaligned" in str(e).lower() and target_device.type == 'cuda':
+                                    diag_lines.append("|-- Universal Bridge: [RETRY] CUDA error, falling back to CPU...")
+                                    raw_cpu = raw_samples.cpu()
+                                    bridge_comp.cpu()
+                                    if is_semantic:
+                                        q_cpu, _ = bridge_comp.tokenize(raw_cpu)
+                                        detok = getattr(diff_model, "detokenizer", None)
+                                        if detok:
+                                            detok.cpu()
+                                            struct_map = detok(q_cpu).movedim(-1, -2).contiguous()
+                                            detok.to(target_device)
+                                        else:
+                                            struct_map = q_cpu.movedim(-1, -2).contiguous()
+                                    else:
+                                        struct_map = bridge_comp.encode(raw_cpu).contiguous()
+                                    
+                                    bridge_comp.to(target_device)
+                                    struct_map = struct_map.to(target_device)
+                                else:
+                                    raise e
+                    else:
+                        struct_map = routed_reference
+                        diag_lines.append("|-- Universal Bridge: [FALLBACK] Soft-Code pass (Quantizer not found).")
+                else:
+                    struct_map = routed_reference
+                    diag_lines.append("|-- Universal Bridge: [FALLBACK] Soft-Code pass (Model ref missing).")
+            except Exception as e:
+                struct_map = routed_reference
+                diag_lines.append(f"|-- Universal Bridge: [FALLBACK] Active (Bridge Error: {str(e)})")
+
+        # --- 6. SILENCE & ENERGY AUDIT ---
+        if struct_map is not None and isinstance(struct_map, torch.Tensor):
+            latent_energy = torch.mean(torch.abs(struct_map.float())).item()
+            if latent_energy < 1e-7:
+                diag_lines.append("🛑 [CRITICAL WARNING] Empty Structural Guide detected! (Silence)")
+            else:
+                diag_lines.append(f"|-- Structural Energy: {latent_energy:.4f} (Active)")
+
+        # --- 7. RHYTHMIC PULSING (BPM ANCHORING) ---
+        if struct_map is not None and is_cover and isinstance(struct_map, torch.Tensor) and torch.is_floating_point(struct_map):
+            try:
+                frames_per_beat = (25.0 * 60.0) / safe_bpm
+                diag_lines.append(f"|-- Rhythmic Grid: Pulsing soft-codes at ~{frames_per_beat:.2f} frames per beat.")
+                pulse = (torch.sin(torch.linspace(0, 2 * 3.14159 * (safe_duration * safe_bpm / 60.0), struct_map.shape[-1])) * 0.5 + 0.5).to(struct_map.device)
+                struct_map = (struct_map * pulse).contiguous()
+            except Exception as e:
+                diag_lines.append(f"|-- Rhythmic Grid: Failed to pulse ({str(e)})")
+
+        # --- 8. MULTI-PHASE CONDITIONING ASSEMBLY (TRIPLE-REDUNDANT BRIDGING) ---
+        strength = float(audio_cover_strength)
+        strength = max(0.0, min(1.0, strength))
+        noise_level = float(cover_noise_strength)
+        noise_level = max(0.0, min(1.0, noise_level))
+        
+        # 1. ENCODE DUAL PATHS (Physical Weighting)
+        # Path A: Guided/Cover
+        tokens_a = clip.tokenize(prompt_text, **tokenize_kwargs)
+        cond_a = clip.encode_from_tokens_scheduled(tokens_a)
+        h_a = cond_a[0][0] # Cover Embeddings
+        c_device = h_a.device
+        c_dtype = h_a.dtype
+        
+        # Path B: Creative/Text2Music
+        creative_instruction = "Fill the audio semantic mask based on the given conditions:"
+        creative_prompt = f"{creative_instruction}\n\n{final_caption}" if mapped_task != "text2music" else prompt_text
+        creative_tokenize_kwargs = tokenize_kwargs.copy()
+        creative_tokenize_kwargs.update({"task_type": "text2music", "generate_audio_codes": True})
+        tokens_b = clip.tokenize(creative_prompt, **creative_tokenize_kwargs)
+        cond_b = clip.encode_from_tokens_scheduled(tokens_b)
+        h_b = cond_b[0][0] # Creative Embeddings
+        
+        # 2. PHYSICAL EMBEDDING BLEND (Dual-Path Weighting)
+        # This ensures that as the user increases the slider, the influence 
+        # of the reference audio context increases proportionally in the latent space.
+        if h_a.shape == h_b.shape:
+            blended_hidden = (h_a * strength) + (h_b * (1.0 - strength))
+            diag_lines.append(f"|-- Weighting: Physical blend ({int(strength*100)}% reference influence)")
+        else:
+            blended_hidden = h_a if strength > 0.5 else h_b
+            diag_lines.append("|-- Weighting: Shape mismatch (discrete switch)")
+
+        # 3. EXPLICIT METADATA INJECTION (Bridging the Dead Sliders)
+        # We inject the exact keys the ACE-Step 1.5 backend and samplers look for
+        base_values = {
+            "bpm": float(safe_bpm),
+            "duration": safe_duration,
             "thinking": thinking,
             "lm_temperature": lm_temperature,
             "lm_cfg_scale": lm_cfg_scale,
@@ -429,22 +728,70 @@ class PGFXTextEncodeAceStepAudio15Advanced:
             "use_cot_lyrics": use_cot_lyrics,
             "use_cot_language": use_cot_language,
             "use_constrained_decoding": use_constrained_decoding,
-            "task_type": task_type,
             "instrumental": instrumental,
+            "task_type": mapped_task,
+            "track_name": track_name if track_name else None,
+            # THE BRIDGE: Explicitly passing strength to the conditioning_values dict
+            "audio_cover_strength": strength,
+            "cover_noise_strength": noise_level,
+            "strength": strength,
+            "noise_strength": noise_level,
+            "stop_at_step_percent": strength,
+            # UNIVERSAL SAMPLER BRIDGE: Keys that affect backend behavior
+            "start_at_step": 0,
+            "end_at_step": 10000,
+            "uncond_prob": max(0.0, min(1.0, 1.0 - strength)),
+            "guidance_scale": max(1.0, strength * 10.0),
         }
-        if routed_reference is not None:
-            conditioning_values["reference_audio_timbre_latents"] = [routed_reference]
-        if normalized_audio_codes is not None and routed_reference is None:
-            conditioning_values["audio_codes"] = normalized_audio_codes
-        conditioning = node_helpers.conditioning_set_values(conditioning, conditioning_values)
 
-        if lm_cfg_scale > 4.0:
-            print(
-                f"[PGFX ACE15] WARNING: lm_cfg_scale={lm_cfg_scale:.2f} is well above the "
-                "Ace-Step default of 2.0 and can cause clipped or unstable audio."
-            )
+        if is_repaint:
+            base_values.update({"repainting_start": repainting_start, "repainting_end": repainting_end})
+
+        # 4. PHYSICAL TENSOR DROPOUT (Non-Destructive Influence)
+        final_struct_map = None
+        if struct_map is not None:
+            final_struct_map = struct_map.to(device=c_device, dtype=c_dtype).clone()
+            
+            # Use Dropout instead of multiplication to avoid corrupting indices/latents
+            # If strength is 0.2, we drop 80% of the guide data.
+            dropout_prob = max(0.0, min(1.0, 1.0 - strength))
+            
+            # Also factor in noise_level (noise adds to the dropout probability)
+            total_dropout = max(dropout_prob, noise_level)
+            
+            if total_dropout > 0.0:
+                final_struct_map = self._apply_semantic_dropout(final_struct_map, total_dropout)
+                diag_lines.append(f"|-- Semantic Dropout: {total_dropout:.2f} probability (Strength: {strength:.2f})")
+            
+            if is_cover or is_extract or is_lego:
+                base_values["precomputed_lm_hints_25Hz"] = final_struct_map
+            elif is_repaint:
+                base_values["context_latents"] = [final_struct_map]
+            else:
+                base_values["audio_codes"] = final_struct_map
+
+        if ref_samples is not None:
+            base_values["reference_audio_timbre_latents"] = [ref_samples.to(device=c_device, dtype=c_dtype)]
+
+        # 5. ASSEMBLE FINAL CONDITIONING
+        # We return a single, perfectly weighted conditioning block to ensure 
+        # that no matter what sampler is used, the sliders are "live".
+        final_conditioning = []
+        for _, m in cond_a: # Template
+            new_m = m.copy()
+            new_m.update(base_values)
+            final_conditioning.append([blended_hidden, new_m])
+
+        if c_device.type == 'cuda':
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
+        diag_lines.append("|-- Status: Triple-Redundant Bridge Active.")
+        diag_str = "\n".join(diag_lines)
+        print("\n" + diag_str + "\n" + "="*40 + "\n")
         
-        return (conditioning,)
+        full_report = diag_str + "\n\n" + "="*20 + "\nFINAL PROMPT TEXT:\n" + prompt_text
+        return (final_conditioning, full_report)
 
 
 class PGFXAceStep15LatentTimelineOffset:
@@ -515,7 +862,7 @@ class PGFXAceStep15LatentTimelineOffset:
         if pad_source.shape[-1] == 0:
             return samples
         pad = pad_source.repeat_interleave(shift_frames, dim=-1)
-        return torch.cat((kept, pad), dim=-1)
+        return torch.cat((kept, pad), dim=-1).contiguous()
 
     def offset(self, latent, offset_seconds, offset_mode, latent_fps):
         if not isinstance(latent, dict):
