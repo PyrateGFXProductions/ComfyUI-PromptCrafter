@@ -10,12 +10,20 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+venv/
+env/
+.venv/
 
 # IDE / Editor
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# OS Junk
+.DS_Store
+Thumbs.db
+desktop.ini
 
 # Local History/Backup files
 .history/
@@ -58,3 +66,8 @@ ComfyGuard/requirements_rollback_test.txt
 # Specific Workflow Overrides (if intended to be local only)
 workflows/PGFX_AI_FilmStudio_Master_Skeletal.json
 workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json
+
+# Web / Node
+node_modules/
+.npm
+package-lock.json.bak
