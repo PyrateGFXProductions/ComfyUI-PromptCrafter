@@ -1,4 +1,7 @@
 # Python
+.agent/
+.cursor/
+.codex
 __pycache__/
 *.pyc
 *.pyo
@@ -17,34 +20,40 @@ build/
 # Local History/Backup files
 .history/
 
-<<<<<<< HEAD
-# Logs and Temporary Files
+# Logs and Development Files
 debug.log
-js/debug.log 
+js/debug.log
 ComfyGuard/.venv/
 ComfyGuard/backups/
 ComfyGuard/test_conflict.txt
-ARCHITECTURE.md
-=======
-# Logs and Temporary Files
-debug.log
-js/debug.log 
-ComfyGuard/.venv/
-ComfyGuard/backups/
-ComfyGuard/test_conflict.txt
-agent.context.md
 agent.md
+agent.context.md
 agent.rules.md
+skill.md
+conversation_log.txt
+qna_run_log
+debug_paths.py
 ARCHITECTURE.md
->>>>>>> origin/main
+
+# Testing Workflows and Files
+workflows/TEST_MINIMAL.json
+workflows/TEST_ZIMAGE.json
+workflows/*.bak
+workflows/*.bak_proper
+workflows/*.pre_black_fix
+ComfyGuard/requirements_install_test.txt
+ComfyGuard/requirements_rollback_test.txt
 
 # VibeCheck
 .vibecheck/screenshots/
 .vibecheck/scan-results.json
 .vibecheck/context-engine-ledger.json
 .vibecheck/firewall.json
+
+# Development Agents
+.ollama-agent/project-index.json
+.ollama-agent/verification-cache.json
+
+# Specific Workflow Overrides (if intended to be local only)
 workflows/PGFX_AI_FilmStudio_Master_Skeletal.json
 workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json
-workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json.bak
-workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json.bak_proper
-workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json.pre_black_fix
