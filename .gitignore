@@ -34,6 +34,7 @@ conversation_log.txt
 qna_run_log
 debug_paths.py
 ARCHITECTURE.md
+core/## Chat Customization Diagnostics.md
 
 # Testing Workflows and Files
 workflows/TEST_MINIMAL.json
