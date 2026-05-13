@@ -3,6 +3,7 @@ langdetect
 python-dotenv
 llama-cpp-python
 # Optional but recommended for full functionality
+vtracer
 duckduckgo-search
 pypdf
 librosa

@@ -834,6 +834,7 @@ class PromptCrafter_QnA_Simple:
             "hidden": {"workflow_prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
             "optional": {
                 "image": ("IMAGE", {"tooltip": "Optional reference image (requires a vision model)."}),
+                "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
             },
         }
@@ -843,7 +844,7 @@ class PromptCrafter_QnA_Simple:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
 
-    def execute(self, prompt, model, image=None, **kwargs):
+    def execute(self, prompt, model, image=None, timeout=120, **kwargs):
         try:
             llm_runtime_kwargs = _resolve_llm_runtime_kwargs(kwargs)
             user_text = "" if prompt is None else str(prompt)
@@ -880,7 +881,7 @@ class PromptCrafter_QnA_Simple:
                 prefer_chat=False,
                 temperature=0.0,
                 seed=0,
-                timeout=120,
+                timeout=timeout,
                 max_tokens=safe_max_tokens,
                 no_chat_fallback=True,
                 template="{{ .Prompt }}",
@@ -931,6 +932,7 @@ class PromptCrafter_LyricsThink:
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
             },
             "optional": {
+                "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
             },
         }
@@ -940,7 +942,7 @@ class PromptCrafter_LyricsThink:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
-    def execute(self, input_text, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
+    def execute(self, input_text, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         raw_text = "" if input_text is None else str(input_text)
         if not raw_text.strip():
             return ("[ERROR] Input text is empty.",)
@@ -1002,6 +1004,7 @@ class PromptCrafter_LyricsThink:
             prompt=prompt,
             temperature=0.2,
             seed=0,
+            timeout=timeout,
             llm_device=llm_device,
             reset_context=reset_context,
         )
@@ -1025,6 +1028,7 @@ class PromptCrafter_LyricsInstruct:
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
             },
             "optional": {
+                "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
             },
         }
@@ -1034,7 +1038,7 @@ class PromptCrafter_LyricsInstruct:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
-    def execute(self, lyrics_think_output, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
+    def execute(self, lyrics_think_output, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not lyrics_think_output or not str(lyrics_think_output).strip():
             return ("[ERROR] LyricsThink output is empty.",)
 
@@ -1057,7 +1061,7 @@ class PromptCrafter_LyricsInstruct:
             model,
             prompt=prompt,
             temperature=0.0,
-            seed=0,
+            seed=0, timeout=timeout,
             llm_device=llm_device,
             reset_context=reset_context,
         )
@@ -1081,6 +1085,7 @@ class PromptCrafter_VisualThink:
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
             },
             "optional": {
+                "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
             },
         }
@@ -1090,7 +1095,7 @@ class PromptCrafter_VisualThink:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
-    def execute(self, input_text, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
+    def execute(self, input_text, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not input_text or not str(input_text).strip():
             return ("[ERROR] Input text is empty.",)
 
@@ -1114,6 +1119,7 @@ class PromptCrafter_VisualThink:
             prompt=prompt,
             temperature=0.2,
             seed=0,
+            timeout=timeout,
             llm_device=llm_device,
             reset_context=reset_context,
         )
@@ -1137,6 +1143,7 @@ class PromptCrafter_VisualInstruct:
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
             },
             "optional": {
+                "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
             },
         }
@@ -1146,7 +1153,7 @@ class PromptCrafter_VisualInstruct:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
-    def execute(self, visual_think_output, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
+    def execute(self, visual_think_output, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not visual_think_output or not str(visual_think_output).strip():
             return ("[ERROR] VisualThink output is empty.",)
 
@@ -1167,7 +1174,7 @@ class PromptCrafter_VisualInstruct:
             model,
             prompt=prompt,
             temperature=0.0,
-            seed=0,
+            seed=0, timeout=timeout,
             llm_device=llm_device,
             reset_context=reset_context,
         )
@@ -1191,6 +1198,7 @@ class PromptCrafter_QnAThink:
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
             },
             "optional": {
+                "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
             },
         }
@@ -1200,7 +1208,7 @@ class PromptCrafter_QnAThink:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
-    def execute(self, prompt, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
+    def execute(self, prompt, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not prompt or not str(prompt).strip():
             return ("[ERROR] Prompt is empty.",)
 
@@ -1216,6 +1224,7 @@ class PromptCrafter_QnAThink:
             prompt=full_prompt,
             temperature=0.2,
             seed=0,
+            timeout=timeout,
             llm_device=llm_device,
             reset_context=reset_context,
         )
@@ -1240,6 +1249,7 @@ class PromptCrafter_QnAInstruct:
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
             },
             "optional": {
+                "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
             },
         }
@@ -1249,7 +1259,7 @@ class PromptCrafter_QnAInstruct:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
-    def execute(self, qna_think_output, format_instruction, model, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
+    def execute(self, qna_think_output, format_instruction, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         raw_content = "" if qna_think_output is None else str(qna_think_output)
         raw_instruction = "" if format_instruction is None else str(format_instruction)
 
@@ -1286,7 +1296,7 @@ class PromptCrafter_QnAInstruct:
         except Exception:
             provider_key = ""
         provider_timeout_cfg = config.LOCAL_SERVER_CONFIG.get(provider_key, {}) if provider_key else {}
-        dynamic_timeout = int(provider_timeout_cfg.get("timeout", 120))
+        dynamic_timeout = max(timeout, int(provider_timeout_cfg.get("timeout", 120)))
         dynamic_max_tokens = max(default_max_tokens, min(16384, 2048 + (len(prompt) // 3)))
         if expected_keys:
             dynamic_max_tokens = max(dynamic_max_tokens, min(16384, 3072 + (len(expected_keys) * 80)))
@@ -1507,7 +1517,7 @@ class PromptCrafter_QnAInstruct:
             max_tokens=dynamic_max_tokens,
             llm_device=llm_device,
             reset_context=reset_context,
-            timeout=dynamic_timeout,
+            timeout=max(timeout, dynamic_timeout),
         )
         if not ok:
             return (f"[ERROR] Model call failed: {response}",)

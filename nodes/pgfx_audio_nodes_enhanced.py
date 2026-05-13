@@ -72,27 +72,24 @@ class PGFXTextEncodeAceStepAudio15Advanced:
     @staticmethod
     def _preprocess_lyrics(lyrics):
         """
-        Clean and normalize lyrics to prevent formatting issues from confusing the LLM.
+        Clean and normalize lyrics using Official ACE-Step 1.5 line-markers.
+        This forces the LM to process lyrics in a strict sequence.
         """
         if not lyrics:
             return ""
         
         # Normalize line endings and trim lines
-        lines = [line.strip() for line in str(lyrics).splitlines()]
+        lines = [line.strip() for line in str(lyrics).splitlines() if line.strip()]
+        if not lines:
+            return ""
+
+        # ACE-Step 1.5 Sequencer Fix: Add explicit L1:, L2: markers
+        formatted_lines = []
+        for i, line in enumerate(lines):
+            formatted_lines.append(f"L{i+1}: {line}")
         
-        # Remove excessive empty lines (keep max 1 consecutive empty line for verse separation)
-        cleaned_lines = []
-        prev_empty = False
-        for line in lines:
-            if not line:
-                if not prev_empty:
-                    cleaned_lines.append("")
-                prev_empty = True
-            else:
-                cleaned_lines.append(line)
-                prev_empty = False
-        
-        return "\n".join(cleaned_lines).strip()
+        # Wrap in official structural tokens
+        return "[LYRICS]\n" + "\n".join(formatted_lines) + "\n[END_LYRICS]"
 
 
     @staticmethod
@@ -437,25 +434,11 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         }
         mapped_task = TASK_MAP.get(task_type, "text2music")
         
-        # Official Instruction Templates (DO NOT CHANGE - Training-specific keywords)
-        TASK_INSTRUCTIONS = {
-            "text2music": "Fill the audio semantic mask based on the given conditions:",
-            "repaint": "Repaint the mask area based on the given conditions:",
-            "cover": "Generate audio semantic tokens based on the given conditions:",
-            "extract": "Extract the {TRACK_NAME} track from the audio:",
-            "lego": "Generate the {TRACK_NAME} track based on the audio context:",
-        }
-        
         is_cover = (mapped_task == "cover")
         is_repaint = (mapped_task == "repaint")
         is_extract = (mapped_task == "extract")
         is_lego = (mapped_task == "lego")
 
-        # Build Task-Aware Instruction
-        t_name = str(track_name).strip().upper() if track_name else "VOCALS"
-        task_instruction = TASK_INSTRUCTIONS.get(mapped_task, TASK_INSTRUCTIONS["text2music"])
-        if "{TRACK_NAME}" in task_instruction:
-            task_instruction = task_instruction.format(TRACK_NAME=t_name)
 
         # Safe casting for numeric inputs
         try:
@@ -526,20 +509,33 @@ class PGFXTextEncodeAceStepAudio15Advanced:
             else:
                 task_instruction = TASK_INSTRUCTIONS.get(f"{mapped_task}_default", task_instruction.replace("{TRACK_NAME}", ""))
 
-        caption_parts = []
-        if tags:
-            caption_parts.append(str(tags).strip())
-        if instruction:
-            caption_parts.append(f"Style direction: {str(instruction).strip()}")
-        if caption:
-            caption_parts.append(str(caption).strip())
-            
-        final_caption = " ".join(caption_parts)
+        # --- 4. STRUCTURAL ANCHORING (ACE-STEP 1.5 SEQUENCER FIX) ---
+        # We wrap the prompt in official structural tags to anchor the LM.
+        prompt_parts = [
+            f"[BPM]: {safe_bpm}",
+            f"[KEYS]: {keyscale}",
+            f"[TIME]: {normalized_timesignature}/4"
+        ]
         
+        if tags:
+            prompt_parts.append(f"[STYLE]: {str(tags).strip()}")
+        
+        if instruction:
+            prompt_parts.append(f"[INSTRUCTION]: {str(instruction).strip()}")
+            
+        if caption:
+            prompt_parts.append(f"[CONTEXT]: {str(caption).strip()}")
+            
+        if lyrics_text:
+            prompt_parts.append(lyrics_text) # This is already wrapped in [LYRICS] tags
+            
+        final_prompt = "\n".join(prompt_parts)
+        
+        # For non-t2m tasks, we add the task header
         if mapped_task != "text2music":
-            prompt_text = f"{task_instruction}\n\n{final_caption}"
+            prompt_text = f"{task_instruction}\n\n{final_prompt}"
         else:
-            prompt_text = final_caption
+            prompt_text = final_prompt
 
         should_generate_codes = (normalized_audio_codes is None and mapped_task in ("text2music", "repaint"))
         if mapped_task in ("cover", "extract", "lego") and routed_reference is None and normalized_audio_codes is None:
@@ -686,34 +682,14 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         noise_level = float(cover_noise_strength)
         noise_level = max(0.0, min(1.0, noise_level))
         
-        # 1. ENCODE DUAL PATHS (Physical Weighting)
-        # Path A: Guided/Cover
-        tokens_a = clip.tokenize(prompt_text, **tokenize_kwargs)
-        cond_a = clip.encode_from_tokens_scheduled(tokens_a)
-        h_a = cond_a[0][0] # Cover Embeddings
-        c_device = h_a.device
-        c_dtype = h_a.dtype
-        
-        # Path B: Creative/Text2Music
-        creative_instruction = "Fill the audio semantic mask based on the given conditions:"
-        creative_prompt = f"{creative_instruction}\n\n{final_caption}" if mapped_task != "text2music" else prompt_text
-        creative_tokenize_kwargs = tokenize_kwargs.copy()
-        creative_tokenize_kwargs.update({"task_type": "text2music", "generate_audio_codes": True})
-        tokens_b = clip.tokenize(creative_prompt, **creative_tokenize_kwargs)
-        cond_b = clip.encode_from_tokens_scheduled(tokens_b)
-        h_b = cond_b[0][0] # Creative Embeddings
-        
-        # 2. PHYSICAL EMBEDDING BLEND (Dual-Path Weighting)
-        # This ensures that as the user increases the slider, the influence 
-        # of the reference audio context increases proportionally in the latent space.
-        if h_a.shape == h_b.shape:
-            blended_hidden = (h_a * strength) + (h_b * (1.0 - strength))
-            diag_lines.append(f"|-- Weighting: Physical blend ({int(strength*100)}% reference influence)")
-        else:
-            blended_hidden = h_a if strength > 0.5 else h_b
-            diag_lines.append("|-- Weighting: Shape mismatch (discrete switch)")
+        # 1. ENCODE SINGLE PATH (Standard ACE-Step Execution)
+        tokens = clip.tokenize(prompt_text, **tokenize_kwargs)
+        cond = clip.encode_from_tokens_scheduled(tokens)
+        h = cond[0][0] # Prompt Embeddings
+        c_device = h.device
+        c_dtype = h.dtype
 
-        # 3. EXPLICIT METADATA INJECTION (Bridging the Dead Sliders)
+        # 2. EXPLICIT METADATA INJECTION (Bridging the Dead Sliders)
         # We inject the exact keys the ACE-Step 1.5 backend and samplers look for
         base_values = {
             "bpm": float(safe_bpm),
@@ -747,7 +723,7 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         if is_repaint:
             base_values.update({"repainting_start": repainting_start, "repainting_end": repainting_end})
 
-        # 4. PHYSICAL TENSOR DROPOUT (Non-Destructive Influence)
+        # 3. PHYSICAL TENSOR DROPOUT (Non-Destructive Influence)
         final_struct_map = None
         if struct_map is not None:
             final_struct_map = struct_map.to(device=c_device, dtype=c_dtype).clone()
@@ -773,14 +749,14 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         if ref_samples is not None:
             base_values["reference_audio_timbre_latents"] = [ref_samples.to(device=c_device, dtype=c_dtype)]
 
-        # 5. ASSEMBLE FINAL CONDITIONING
+        # 4. ASSEMBLE FINAL CONDITIONING
         # We return a single, perfectly weighted conditioning block to ensure 
         # that no matter what sampler is used, the sliders are "live".
         final_conditioning = []
-        for _, m in cond_a: # Template
+        for _, m in cond: # Template
             new_m = m.copy()
             new_m.update(base_values)
-            final_conditioning.append([blended_hidden, new_m])
+            final_conditioning.append([h, new_m])
 
         if c_device.type == 'cuda':
             torch.cuda.synchronize()

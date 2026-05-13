@@ -1,0 +1,10 @@
+# PGFX VRGDG slang glossary template
+# Format:
+# phrase => meaning | replacement | visual_hint | comma,separated,tags
+
+jammy => gun or pistol | gun | a handgun visible in the character's hand | weapon, slang
+pulled out the jammy => pulled out a gun or pistol | pulled out a handgun | the character draws a handgun during a hold-up | weapon, slang, narrative_action
+stick 'em up => raise your hands during a hold-up | put your hands up | hands raised in surrender during a robbery | command, slang
+let two fly => fired two shots upward as warning shots | fired two warning shots into the air | two muzzle flashes pointed toward the sky | gunfire, slang
+rolled up => arrived or pulled up at a location | arrived at the location | the character arrives on the scene with purpose | arrival, slang
+jack => rob, steal, or take by force | rob | an attempted robbery or forceful theft | crime, slang

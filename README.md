@@ -33,6 +33,8 @@ Functional, end-to-end workflow examples are included in `workflows/`. See `work
 - `PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json`
 - `PGFX_Studio_LTX2_TransformerOnly_Local_EndToEnd.json`
 - `PGFX_Studio_LTX23_ImageFirst_Local_EndToEnd.json`
+- `PGFX_VRGDG_Bridge_V1.md`
+- `PGFX_VRGDG_Slang_Glossary_Template_V1.txt`
 - `PGFX_QnA_To_Text.json`
 - `PGFX_Captioner_Single_Image.json`
 - `PGFX_SRT_Subtitle_Burn.json`
@@ -125,6 +127,7 @@ Creator nodes also include a `local_only_models` switch (enabled by default) to 
 - `🎬 Producer`, `🔊 Sound Engineer`, `✍️ Screenwriter`, `🧠 Creative Director`, `🎥 Director`, `📹 Cinematographer`, `🎞️ Editor`, `🏗️ PostMaster`
 - `💾 Store Text`, `📂 Load Text`, `🧭 Project Context`
 - `🔌 Studio Adapters` (PROJECT_CONFIG, TIMING_MAP, SHOT_LIST, etc.)
+- `🎼 VRGDG Bridge Adapters` — line-lock lyric timings, literalize slang, export VRGDG-ready segment/story JSON, and validate prompt bundles
 
 **PGFX Film** (AI-FilmStudio merged)
 - `🎬 Film Project Controller` — deterministic project initializer with VRAM modes

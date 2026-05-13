@@ -68,6 +68,10 @@ pgfx_audio_nodes_enhanced = _safe_import(
     ".nodes.pgfx_audio_nodes_enhanced", "pgfx_audio_nodes_enhanced"
 )
 pgfx_film_nodes = _safe_import(".nodes.pgfx_film_nodes", "pgfx_film_nodes")
+pgfx_vrgdg_bridge_nodes = _safe_import(
+    ".nodes.pgfx_vrgdg_bridge_nodes", "pgfx_vrgdg_bridge_nodes"
+)
+image_to_svg = _safe_import(".nodes.image_to_svg", "image_to_svg")
 
 # --- MERGE ALL MAPPINGS ---
 NODE_CLASS_MAPPINGS = {}
@@ -89,6 +93,8 @@ NODE_MODULES = [
     pgfx_llm_nodes,
     pgfx_audio_nodes_enhanced,
     pgfx_film_nodes,
+    pgfx_vrgdg_bridge_nodes,
+    image_to_svg,
 ]
 NODE_MODULES = [m for m in NODE_MODULES if m is not None]
 
