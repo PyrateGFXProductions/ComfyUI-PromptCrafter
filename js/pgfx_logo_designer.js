@@ -1364,28 +1364,31 @@ app.registerExtension({
         const postWidget = node.widgets.find(w => w.name === "posterize_levels");
         const noiseWidget = node.widgets.find(w => w.name === "noise_suppression");
         const pathWidget = node.widgets.find(w => w.name === "path_precision");
+        const ditherWidget = node.widgets.find(w => w.name === "dithering");
+        const layerWidget = node.widgets.find(w => w.name === "layering_mode");
+        const colorWidget = node.widgets.find(w => w.name === "color_matching");
 
         if (presetWidget) {
             const origCallback = presetWidget.callback;
             presetWidget.callback = function (v) {
                 if (origCallback) origCallback.call(this, v);
                 
-                let newPost, newNoise, newPath, newMode;
+                let newPost, newNoise, newPath, newMode, newDither, newLayer, newColor;
                 
                 if (v === "1-Color Silhouette (Ultra Fast)") {
-                    newPost = 2; newNoise = 32; newPath = 4; newMode = "polygon";
+                    newPost = 2; newNoise = 32; newPath = 4; newMode = "polygon"; newDither = false; newLayer = "cutout"; newColor = 2;
                 } else if (v === "2-Color Minimalist") {
-                    newPost = 3; newNoise = 24; newPath = 4; newMode = "spline";
+                    newPost = 3; newNoise = 24; newPath = 4; newMode = "spline"; newDither = false; newLayer = "cutout"; newColor = 4;
                 } else if (v === "4-Color Vinyl / Tattoo Decal") {
-                    newPost = 4; newNoise = 20; newPath = 4; newMode = "spline";
+                    newPost = 4; newNoise = 20; newPath = 4; newMode = "spline"; newDither = false; newLayer = "cutout"; newColor = 5;
                 } else if (v === "Clean Vector Logo (8 Colors)") {
-                    newPost = 8; newNoise = 16; newPath = 3; newMode = "spline";
+                    newPost = 8; newNoise = 16; newPath = 3; newMode = "spline"; newDither = false; newLayer = "stacked"; newColor = 6;
                 } else if (v === "Graphic Art (16 Colors)") {
-                    newPost = 16; newNoise = 12; newPath = 3; newMode = "polygon";
+                    newPost = 16; newNoise = 12; newPath = 3; newMode = "polygon"; newDither = false; newLayer = "stacked"; newColor = 7;
                 } else if (v === "Raster Optimization (32 Colors - Web Safe)") {
-                    newPost = 32; newNoise = 8; newPath = 4; newMode = "polygon";
+                    newPost = 32; newNoise = 8; newPath = 4; newMode = "polygon"; newDither = false; newLayer = "stacked"; newColor = 8;
                 } else if (v === "High Fidelity Raster (64 Colors - Heavy)") {
-                    newPost = 64; newNoise = 2; newPath = 8; newMode = "spline";
+                    newPost = 64; newNoise = 2; newPath = 8; newMode = "spline"; newDither = true; newLayer = "stacked"; newColor = 8;
                 }
 
                 if (newPost !== undefined) {
@@ -1393,6 +1396,9 @@ app.registerExtension({
                     if (noiseWidget) noiseWidget.value = newNoise;
                     if (pathWidget) pathWidget.value = newPath;
                     if (modeWidget) modeWidget.value = newMode;
+                    if (ditherWidget) ditherWidget.value = newDither;
+                    if (layerWidget) layerWidget.value = newLayer;
+                    if (colorWidget) colorWidget.value = newColor;
                     app.graph.setDirtyCanvas(true, true);
                 }
             };

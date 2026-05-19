@@ -896,6 +896,16 @@ def _build_logo_prompt(kwargs):
     if style_str:
         prompt += f" Apply {style_str}."
 
+    # 1.5 Strict Production Rules
+    if effective_style == "tattoo_art":
+        prompt += " Use high-contrast blackwork, clean isolated line art, no shading or 3D gradients. Keep it stencil-ready."
+    elif effective_style == "flat_vector":
+        prompt += " Use sharp geometric edges, flat solid colors, no noise, no photorealism, and no cinematic lighting."
+    elif effective_style == "sticker_decal":
+        prompt += " Enforce a clean die-cut sticker presentation with a distinct boundary outline and no cluttered background."
+    elif effective_intent == "vector":
+        prompt += " Ensure crisp vector-like SVG separation of colors without noisy textures or soft gradients."
+
     # 2. Environment / atmospheric effects
     if effect_descriptions and any(effect_descriptions):
         prompt += f" Add {_list_phrase(effect_descriptions)} around the design."
@@ -1096,6 +1106,15 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
         llm_images = [img for img, _ in images_with_weights if img is not None]
         if llm_images:
             run_config = self._setup_config("Image", user_prompt, thinking_model, **clean_kwargs)
+            
+            # Inject a context-aware persona based on the user's specific choices
+            intent_str = output_intent_override if output_intent_override != "AI DETERMINED" else "general graphic design"
+            style_str = style_mode_override.replace("_", " ") if style_mode_override != "AI DETERMINED" else "professional logo design"
+            
+            run_config.style_profile = {
+                "persona": f"You are an expert graphic designer and art director specializing in {style_str} and {intent_str} workflows."
+            }
+            
             describe_result = self._describe_images(images_with_weights, run_config)
             if describe_result:
                 image_context = describe_result[0] or ""
@@ -1479,6 +1498,9 @@ class PGFX_ImageVectorizer:
                 ], {"default": "Custom (Use Manual Sliders)", "tooltip": "Select a smart preset to automatically configure the vectorizer for specific scenarios."}),
                 "mode": (["polygon", "spline"], {"default": "polygon", "tooltip": "Vectorization mode. Spline creates smooth curves. Polygon creates sharp, angular vector paths."}),
                 "posterize_levels": ("INT", {"default": 32, "min": 2, "max": 256, "tooltip": "Number of colors to reduce the image to. Fewer colors mean a cleaner design and much faster processing."}),
+                "dithering": ("BOOLEAN", {"default": False, "tooltip": "Enable dithering during color reduction. Best left OFF for logos, vinyl, and stencils to prevent millions of tiny speckles. Turn ON only for high-fidelity raster photos."}),
+                "layering_mode": (["stacked", "cutout"], {"default": "stacked", "tooltip": "'stacked' layers shapes on top of each other. 'cutout' cuts shapes out of the background, ensuring no paths overlap (essential for CNC and Vinyl Plotters)."}),
+                "color_matching": ("INT", {"default": 8, "min": 1, "max": 8, "tooltip": "Color precision for matching similar gradient shades. 8 is high precision. Lower values group similar colors aggressively."}),
                 "noise_suppression": ("INT", {"default": 4, "min": 0, "max": 128, "tooltip": "Removes speckles and micro-details by dropping paths shorter than this value. Increase to 16+ for 8K images or vinyl stencils."}),
                 "path_precision": ("INT", {"default": 3, "min": 1, "max": 16, "tooltip": "Precision of the vector paths. Lower values create simpler, blockier geometry. Higher values hug the pixels tighter but create more SVG nodes."}),
             }
@@ -1490,52 +1512,74 @@ class PGFX_ImageVectorizer:
     OUTPUT_NODE = True
     CATEGORY = "☠️PGFX🏴‍☠️ /Design"
 
-    def vectorize(self, image, preset, mode, posterize_levels, noise_suppression, path_precision):
+    def vectorize(self, image, preset, mode, posterize_levels, dithering, layering_mode, color_matching, noise_suppression, path_precision):
         if preset != "Custom (Use Manual Sliders)":
             if preset == "1-Color Silhouette (Ultra Fast)":
                 posterize_levels = 2
                 noise_suppression = 32
                 path_precision = 4
                 mode = "polygon"
+                dithering = False
+                layering_mode = "cutout"
+                color_matching = 2
             elif preset == "2-Color Minimalist":
                 posterize_levels = 3
                 noise_suppression = 24
                 path_precision = 4
                 mode = "spline"
+                dithering = False
+                layering_mode = "cutout"
+                color_matching = 4
             elif preset == "4-Color Vinyl / Tattoo Decal":
                 posterize_levels = 4
                 noise_suppression = 20
                 path_precision = 4
                 mode = "spline"
+                dithering = False
+                layering_mode = "cutout"
+                color_matching = 5
             elif preset == "Clean Vector Logo (8 Colors)":
                 posterize_levels = 8
                 noise_suppression = 16
                 path_precision = 3
                 mode = "spline"
+                dithering = False
+                layering_mode = "stacked"
+                color_matching = 6
             elif preset == "Graphic Art (16 Colors)":
                 posterize_levels = 16
                 noise_suppression = 12
                 path_precision = 3
                 mode = "polygon"
+                dithering = False
+                layering_mode = "stacked"
+                color_matching = 7
             elif preset == "Raster Optimization (32 Colors - Web Safe)":
                 posterize_levels = 32
                 noise_suppression = 8
                 path_precision = 4
                 mode = "polygon"
+                dithering = False
+                layering_mode = "stacked"
+                color_matching = 8
             elif preset == "High Fidelity Raster (64 Colors - Heavy)":
                 posterize_levels = 64
                 noise_suppression = 2
                 path_precision = 8
                 mode = "spline"
+                dithering = True
+                layering_mode = "stacked"
+                color_matching = 8
 
         try:
             import vtracer
             import nodes
 
             i = 255.0 * image[0].cpu().numpy()
+            dither_flag = 1 if dithering else 0
             img = (
                 Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
-                .quantize(colors=posterize_levels)
+                .quantize(colors=posterize_levels, dither=dither_flag)
                 .convert("RGBA")
             )
         except Exception:
@@ -1546,11 +1590,11 @@ class PGFX_ImageVectorizer:
                 pixels,
                 size=img.size,
                 colormode="color",
-                hierarchical="stacked",
+                hierarchical=layering_mode,
                 mode=mode,
                 filter_speckle=noise_suppression,
                 path_precision=path_precision,
-                color_precision=8,
+                color_precision=color_matching,
             )
             preview = torch.from_numpy(np.array(img.convert("RGB")).astype(np.float32) / 255.0)[None,]
             return {"ui": nodes.PreviewImage().save_images(preview).get("ui"), "result": (svg, preview)}

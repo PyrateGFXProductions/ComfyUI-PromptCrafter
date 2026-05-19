@@ -2,7 +2,7 @@
   "materials": {
     "default": {
       "description": "clean professional surface",
-      "usage_count": 26
+      "usage_count": 29
     },
     "leather": {
       "description": "rich premium leather grain",
@@ -202,7 +202,7 @@
     },
     "floating": {
       "description": "defying gravity in a zero-G float",
-      "usage_count": 14
+      "usage_count": 17
     },
     "shattering": {
       "description": "broken into thousands of sharp glass shards",
@@ -436,7 +436,7 @@
     },
     "realistic": {
       "description": "ultra-realistic photorealistic 8k textures",
-      "usage_count": 11
+      "usage_count": 14
     },
     "3d_render": {
       "description": "full physically-based 3D octane render with depth",
