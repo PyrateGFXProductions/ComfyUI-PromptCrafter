@@ -1,0 +1,1572 @@
+import base64
+import io
+import json
+import os
+import re
+import textwrap
+import threading
+
+import numpy as np
+import torch
+from PIL import Image
+
+from ..core import pgfx_api_clients as api_clients
+from ..core import pgfx_config as config
+from ..core.pgfx_base_creator import PromptCrafter_BaseCreator
+from ..utils import pgfx_json_utils as json_utils
+
+try:
+    from . import pgfx_font_manager
+except Exception as e:
+    print(f"[PGFX Logo Studio] Could not load font manager: {e}")
+
+
+DEFAULT_LIBRARY = {
+    "materials": {
+        "default": {"description": "clean professional surface", "usage_count": 0},
+        "leather": {"description": "rich premium leather grain", "usage_count": 0},
+        "polished_gold": {"description": "highly reflective 24k polished gold", "usage_count": 0},
+        "weathered_wood": {"description": "textured weathered oak wood with visible grain", "usage_count": 0},
+        "ancient_stone": {"description": "chipped ancient mossy stone texture", "usage_count": 0},
+        "brushed_steel": {"description": "industrial cold brushed stainless steel", "usage_count": 0},
+        "frosted_glass": {"description": "translucent frosted glass with internal refraction", "usage_count": 0},
+        "obsidian": {"description": "smooth black volcanic obsidian glass", "usage_count": 0},
+        "illustrative_ink": {"description": "bold vibrant illustrative tattoo ink pigments", "usage_count": 0},
+        "iridescent_pearl": {"description": "shimmering iridescent pearlescent finish", "usage_count": 0},
+        "carbon_fiber": {"description": "modern black woven carbon fiber weave", "usage_count": 0},
+        "liquid_chrome": {"description": "molten liquid silver chrome", "usage_count": 0},
+        "rusty_iron": {"description": "corroded rusty oxidized iron", "usage_count": 0},
+        "neon_gas": {"description": "glowing neon gas-filled glass tubes", "usage_count": 0},
+        "matte_plastic": {"description": "minimalist clean matte plastic", "usage_count": 0},
+        "marble_white": {"description": "luxurious white carrara marble with grey veins", "usage_count": 0},
+        "lava_rock": {"description": "glowing molten lava rock with internal heat", "usage_count": 0},
+        "ivory_bone": {"description": "smooth aged ivory bone texture", "usage_count": 0},
+        "denim_fabric": {"description": "thick blue woven denim fabric texture", "usage_count": 0},
+        "velvet_red": {"description": "soft rich crimson red royal velvet", "usage_count": 0},
+        "holographic": {"description": "futuristic shimmering holographic foil", "usage_count": 0},
+        "ice": {"description": "clear frozen ice with frosted edges", "usage_count": 0},
+        "neon": {"description": "bright illuminated neon tubing", "usage_count": 0},
+        "crystal": {"description": "cut translucent crystal facets", "usage_count": 0},
+        "concrete": {"description": "cast concrete with gritty texture", "usage_count": 0},
+    },
+    "decorations": {
+        "none": {"description": "", "usage_count": 0},
+        "ornate_engraving": {"description": "ornate engraved detailing carved into the surface", "usage_count": 0},
+        "glowing_edges": {"description": "a subtle luminous edge glow around major forms", "usage_count": 0},
+        "overgrown_vines": {"description": "entwined with lush overgrown green vines", "usage_count": 0},
+        "cracked_porcelain": {"description": "intricate fine porcelain cracks", "usage_count": 0},
+        "gold_leaf": {"description": "flecked with 24k gold leaf gilding", "usage_count": 0},
+        "bullet_holes": {"description": "riddled with cinematic bullet holes and impact marks", "usage_count": 0},
+        "etched_runes": {"description": "covered in glowing ancient etched runes", "usage_count": 0},
+        "dripping_slime": {"description": "dripping with thick viscous neon slime", "usage_count": 0},
+        "electric_arcs": {"description": "surrounded by crackling electric arcs", "usage_count": 0},
+        "barbed_wire": {"description": "wrapped in sharp rusty barbed wire", "usage_count": 0},
+        "floral_accents": {"description": "decorated with vibrant blooming flowers", "usage_count": 0},
+        "rivets_bolts": {"description": "reinforced with heavy industrial rivets and bolts", "usage_count": 0},
+        "blood_splatter": {"description": "stained with dark dramatic blood splatters", "usage_count": 0},
+        "ink_splats": {"description": "decorated with artistic messy ink splats", "usage_count": 0},
+        "glowing_circuitry": {"description": "interwoven with glowing cyberpunk circuitry", "usage_count": 0},
+        "filigree_silver": {"description": "ornate delicate silver filigree work", "usage_count": 0},
+        "tattoo_style": {"description": "ornamental tattoo flourishes and flash-art accents", "usage_count": 0},
+    },
+    "actions": {
+        "none": {"description": "static design pose", "usage_count": 0},
+        "melting": {"description": "melting and liquefying from heat", "usage_count": 0},
+        "exploding": {"description": "shattering and exploding into debris", "usage_count": 0},
+        "burning": {"description": "engulfed in realistic cinematic flames", "usage_count": 0},
+        "frozen": {"description": "encased in thick transparent ice", "usage_count": 0},
+        "dissolving": {"description": "dissolving and crumbling into fine dust", "usage_count": 0},
+        "floating": {"description": "defying gravity in a zero-G float", "usage_count": 0},
+        "shattering": {"description": "broken into sharp glass-like shards", "usage_count": 0},
+        "warped": {"description": "distorted and warped by force", "usage_count": 0},
+        "glitching": {"description": "corrupted by digital glitch artifacts", "usage_count": 0},
+        "cracked": {"description": "fractured with visible structural cracking", "usage_count": 0},
+        "corroded": {"description": "eroded by corrosion and oxidation", "usage_count": 0},
+    },
+    "environments": {
+        "none": {"description": "a clean studio environment", "usage_count": 0},
+        "underwater_deep": {"description": "deep underwater ocean darkness with drifting particulate", "usage_count": 0},
+        "underwater_corals": {"description": "a vibrant coral reef background with marine life", "usage_count": 0},
+        "space_nebula": {"description": "a colorful cosmic nebula with deep-space atmosphere", "usage_count": 0},
+        "space_stars_field": {"description": "an endless star field in open space", "usage_count": 0},
+        "city_night_neon": {"description": "a rainy neon-lit city street at night", "usage_count": 0},
+        "city_day_busy": {"description": "a busy city scene in broad daylight", "usage_count": 0},
+        "forest_mystical": {"description": "a mystical forest with mist and fireflies", "usage_count": 0},
+        "forest_autumn": {"description": "an autumn forest with drifting leaves", "usage_count": 0},
+        "desert_sandstorm": {"description": "a desert blasted by wind and sand", "usage_count": 0},
+        "ice_cave": {"description": "inside a luminous frozen ice cave", "usage_count": 0},
+        "lava_cave": {"description": "inside a volcanic cave with molten lava glow", "usage_count": 0},
+        "abstract_vortex": {"description": "a swirling abstract vortex of color and motion", "usage_count": 0},
+        "grid_cyberpunk": {"description": "a cyberpunk digital grid landscape", "usage_count": 0},
+        "old_paper": {"description": "aged vintage paper texture with wear and stains", "usage_count": 0},
+        "concrete_wall": {"description": "a gritty urban concrete wall backdrop", "usage_count": 0},
+        "white_studio": {"description": "a pure white professional studio backdrop", "usage_count": 0},
+        "black_void": {"description": "an infinite black cinematic void", "usage_count": 0},
+    },
+    "atmospherics": {
+        "none": {"description": "", "usage_count": 0},
+        "particles": {"description": "subtle floating particles", "usage_count": 0},
+        "sparks": {"description": "small metallic sparks", "usage_count": 0},
+        "fire_sparks": {"description": "embers and fire sparks", "usage_count": 0},
+        "lightning": {"description": "electric lightning arcs", "usage_count": 0},
+        "snow": {"description": "falling snow", "usage_count": 0},
+        "rain": {"description": "rain streaks and droplets", "usage_count": 0},
+        "confetti": {"description": "celebratory confetti", "usage_count": 0},
+        "bubbles_env": {"description": "floating bubbles", "usage_count": 0},
+        "smoke": {"description": "rolling smoke", "usage_count": 0},
+        "fog": {"description": "soft atmospheric fog", "usage_count": 0},
+        "dust": {"description": "dust in the air", "usage_count": 0},
+        "haze": {"description": "a diffuse haze", "usage_count": 0},
+        "glow": {"description": "an ambient luminous glow", "usage_count": 0},
+        "neon_lights": {"description": "neon light spill and reflections", "usage_count": 0},
+        "spotlight": {"description": "a focused spotlight beam", "usage_count": 0},
+        "volumetric_lighting": {"description": "volumetric light shafts", "usage_count": 0},
+        "underwater": {"description": "underwater caustics and suspended particulate", "usage_count": 0},
+        "space_stars": {"description": "small surrounding stars", "usage_count": 0},
+        "galaxy": {"description": "galactic atmospheric color", "usage_count": 0},
+        "abstract_shapes": {"description": "abstract surrounding graphic shapes", "usage_count": 0},
+        "matrix_code": {"description": "falling digital code patterns", "usage_count": 0},
+    },
+    "styles": {
+        "flat_vector": {"description": "professional clean flat vector illustration", "usage_count": 0},
+        "creative": {"description": "cinematic professional creative direction", "usage_count": 0},
+        "realistic": {"description": "ultra-realistic photorealistic rendering", "usage_count": 0},
+        "3d_render": {"description": "physically based 3D render depth and lighting", "usage_count": 0},
+        "tattoo_art": {"description": "bold illustrative tattoo artistry with dark linework", "usage_count": 0},
+        "sticker_decal": {"description": "clean die-cut sticker with a white border", "usage_count": 0},
+    },
+}
+
+CATEGORY_ALIASES = {
+    "backgrounds": "environments",
+    "effects": "atmospherics",
+    "environment_effects": "atmospherics",
+    "environments_effects": "atmospherics",
+}
+
+LIBRARY_ALIASES = {
+    "materials": {
+        "gold": "polished_gold",
+        "metal": "brushed_steel",
+        "steel": "brushed_steel",
+        "wood": "weathered_wood",
+        "stone": "ancient_stone",
+        "marble": "marble_white",
+        "bone": "ivory_bone",
+        "denim": "denim_fabric",
+        "velvet": "velvet_red",
+        "chrome": "liquid_chrome",
+        "plastic": "matte_plastic",
+    },
+    "decorations": {
+        "ornate_engraving": "ornate_engraving",
+        "glowing_edges": "glowing_edges",
+        "electric_shock": "electric_arcs",
+        "ink_drips": "ink_splats",
+        "floral": "floral_accents",
+    },
+    "actions": {
+        "explode": "exploding",
+        "freeze": "frozen",
+        "glitch": "glitching",
+    },
+    "environments": {
+        "cyberpunk_city": "city_night_neon",
+        "deep_ocean": "underwater_deep",
+        "outer_space": "space_nebula",
+        "industrial_factory": "concrete_wall",
+        "volcanic_cave": "lava_cave",
+        "ancient_temple": "old_paper",
+        "desert_dunes": "desert_sandstorm",
+        "arctic_tundra": "ice_cave",
+    },
+    "styles": {
+        "vector": "flat_vector",
+        "vector_logo": "flat_vector",
+        "photo": "realistic",
+        "photoreal": "realistic",
+        "tattoo": "tattoo_art",
+        "decal": "sticker_decal",
+    },
+}
+
+STANDARD_NEGATIVES = [
+    "no extra text",
+    "no misspellings",
+    "no substituted letters",
+    "no additional symbols unless present in the source design",
+    "no humans",
+    "no skin",
+    "no body parts",
+    "no unrelated objects",
+]
+
+
+def _normalize_key(value):
+    val = str(value or "").strip().lower()
+    if val in ("null", "none"):
+        return ""
+    return re.sub(r"[^a-z0-9_]+", "_", val).strip("_")
+
+
+def _normalize_text(value):
+    text = str(value or "").replace("\r", "")
+    if text.strip().lower() in ("null", "none"):
+        return ""
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def _safe_float(value, default):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _safe_int(value, default):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _clamp(value, minimum, maximum):
+    return max(minimum, min(maximum, value))
+
+
+def _humanize_key(key):
+    return str(key or "").replace("_", " ").strip()
+
+
+def _entry_description(entry, fallback):
+    if isinstance(entry, dict):
+        desc = _normalize_text(entry.get("description", ""))
+        if desc:
+            return desc
+    return _humanize_key(fallback)
+
+
+def _dedupe_preserve(items):
+    seen = set()
+    out = []
+    for item in items:
+        value = str(item or "").strip()
+        if not value:
+            continue
+        token = value.lower()
+        if token in seen:
+            continue
+        seen.add(token)
+        out.append(value)
+    return out
+
+
+def _coalesce_non_empty(*values):
+    for value in values:
+        if str(value or "").strip():
+            return value
+    return ""
+
+
+def _list_phrase(items):
+    cleaned = [str(i).strip() for i in items if str(i).strip()]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    if len(cleaned) == 2:
+        return f"{cleaned[0]} and {cleaned[1]}"
+    return f"{', '.join(cleaned[:-1])}, and {cleaned[-1]}"
+
+
+def _extract_quoted_phrases(text):
+    return _dedupe_preserve(re.findall(r"['\"]([^'\"]+)['\"]", str(text or "")))
+
+
+def _extract_visible_text_hint(text):
+    source = str(text or "")
+    for pattern in (
+        r"(?:text|wording|words|letters|logo)\s*(?:reads|reading|says|saying|is|are)?\s*['\"]([^'\"]+)['\"]",
+        r"(?:spells?|spell out)\s*['\"]([^'\"]+)['\"]",
+        r"(?:the word|the words)\s*['\"]([^'\"]+)['\"]",
+    ):
+        matches = re.findall(pattern, source, flags=re.IGNORECASE)
+        if matches:
+            return "\n".join(_dedupe_preserve(matches))
+    quoted = _extract_quoted_phrases(source)
+    if quoted:
+        return "\n".join(quoted)
+    return ""
+
+
+def _extract_text_from_image_context(text):
+    if not text:
+        return ""
+    hints = []
+    for pattern in (
+        r"(?:text|wording|letters?)\s*(?:that reads|reading|reads|says|showing)?\s*['\"]([^'\"]+)['\"]",
+        r"(?:the words?|the text)\s+([A-Z0-9][A-Z0-9 \-]{1,80})",
+    ):
+        hints.extend(re.findall(pattern, str(text), flags=re.IGNORECASE))
+    return "\n".join(_dedupe_preserve(hints))
+
+
+def _relative_position(left, top, width, height):
+    x = _safe_float(left, width / 2 if width else 512)
+    y = _safe_float(top, height / 2 if height else 512)
+    width = max(1.0, _safe_float(width, 1024.0))
+    height = max(1.0, _safe_float(height, 1024.0))
+
+    if x < width * 0.33:
+        horizontal = "left"
+    elif x > width * 0.67:
+        horizontal = "right"
+    else:
+        horizontal = "center"
+
+    if y < height * 0.33:
+        vertical = "top"
+    elif y > height * 0.67:
+        vertical = "bottom"
+    else:
+        vertical = "middle"
+
+    if horizontal == "center" and vertical == "middle":
+        return "center"
+    if horizontal == "center":
+        return f"{vertical}-center"
+    if vertical == "middle":
+        return f"mid-{horizontal}"
+    return f"{vertical}-{horizontal}"
+
+
+def _shape_name(obj):
+    obj_type = str(obj.get("type", "object"))
+    if obj_type == "polygon":
+        points = obj.get("points") or []
+        count = len(points)
+        if count == 6:
+            return "hexagon"
+        if count == 10:
+            return "star"
+        if count == 3:
+            return "triangle"
+        return "polygon"
+    if obj_type == "group":
+        return "imported vector group"
+    if obj_type == "image":
+        return "image reference"
+    if obj_type == "path":
+        return "drawn path"
+    return obj_type.replace("-", " ")
+
+
+def _summarize_canvas_json(canvas_json_text):
+    summary = {
+        "text": "",
+        "background_color": "",
+        "layout_summary": "",
+        "object_count": 0,
+        "has_geometry": False,
+    }
+
+    raw = str(canvas_json_text or "").strip()
+    if not raw:
+        return summary
+
+    data = None
+    try:
+        data = json.loads(raw)
+    except Exception:
+        data = json_utils.extract_and_parse_json(raw)
+
+    if not isinstance(data, dict):
+        regex_texts = re.findall(r'"text"\s*:\s*"([^"]+)"', raw)
+        if regex_texts:
+            summary["text"] = "\n".join(_dedupe_preserve(t.replace("\\n", "\n") for t in regex_texts))
+        return summary
+
+    width = _safe_float(data.get("width"), 1024.0)
+    height = _safe_float(data.get("height"), 1024.0)
+    summary["background_color"] = _normalize_text(
+        data.get("backgroundColor") or data.get("background") or data.get("background_color") or ""
+    )
+
+    objects = data.get("objects") if isinstance(data.get("objects"), list) else []
+    summary["object_count"] = len(objects)
+    summary["has_geometry"] = bool(objects)
+
+    text_fragments = []
+    layout_bits = []
+
+    for obj in objects[:12]:
+        if not isinstance(obj, dict):
+            continue
+        obj_type = str(obj.get("type", "object"))
+        position = _relative_position(obj.get("left"), obj.get("top"), width, height)
+
+        if obj_type in {"i-text", "text", "textbox"}:
+            text_value = str(obj.get("text", "")).replace("\\n", "\n").strip()
+            if text_value:
+                text_fragments.append(text_value)
+            font_family = _normalize_text(obj.get("fontFamily", ""))
+            font_size = _safe_int(obj.get("fontSize"), 0)
+            font_weight = _normalize_text(obj.get("fontWeight", ""))
+            parts = [f'text "{text_value}"' if text_value else "text layer", f"at {position}"]
+            if font_family:
+                parts.append(f"font {font_family}")
+            if font_size > 0:
+                parts.append(f"approx {font_size}px")
+            if font_weight and font_weight not in {"normal", "400"}:
+                parts.append(font_weight)
+            layout_bits.append(", ".join(parts))
+            continue
+
+        shape = _shape_name(obj)
+        shape_bits = [shape, f"at {position}"]
+        fill = _normalize_text(obj.get("fill", ""))
+        if fill and fill not in {"", "transparent"}:
+            shape_bits.append(f"fill {fill}")
+        layout_bits.append(", ".join(shape_bits))
+
+    summary["text"] = "\n".join(_dedupe_preserve(text_fragments))
+    if layout_bits:
+        summary["layout_summary"] = "Source layout includes " + "; ".join(layout_bits[:8]) + "."
+    return summary
+
+
+def _build_keyword_map(category_data):
+    keyword_map = {}
+    for key, entry in category_data.items():
+        phrase = _humanize_key(key)
+        keyword_map[phrase] = key
+        description = _entry_description(entry, key)
+        keyword_map[description.lower()] = key
+    return keyword_map
+
+
+def _guess_choice_from_text(category, text_blob, choices, default):
+    if not text_blob:
+        return default
+
+    blob = " " + re.sub(r"[^a-z0-9]+", " ", str(text_blob).lower()) + " "
+    aliases = LIBRARY_ALIASES.get(category, {})
+
+    for alias, canonical in aliases.items():
+        phrase = re.sub(r"[^a-z0-9]+", " ", alias.replace("_", " ").lower()).strip()
+        if canonical in choices and f" {phrase} " in blob:
+            return canonical
+
+    for key in choices:
+        if key == "none":
+            continue
+        phrase = re.sub(r"[^a-z0-9]+", " ", key.replace("_", " ").lower()).strip()
+        if f" {phrase} " in blob:
+            return key
+
+    if category == "styles":
+        if "tattoo" in blob and "tattoo_art" in choices:
+            return "tattoo_art"
+        if "flat vector" in blob and "flat_vector" in choices:
+            return "flat_vector"
+        if "vector" in blob and "flat_vector" in choices:
+            return "flat_vector"
+        if "3d" in blob and "3d_render" in choices:
+            return "3d_render"
+        if ("realistic" in blob or "photoreal" in blob) and "realistic" in choices:
+            return "realistic"
+
+    return default
+
+
+def _normalize_negatives(value):
+    if isinstance(value, list):
+        return _dedupe_preserve(_normalize_text(v) for v in value)
+    if isinstance(value, str):
+        chunks = re.split(r"[,;\n]+", value)
+        return _dedupe_preserve(_normalize_text(chunk) for chunk in chunks)
+    return []
+
+
+def _format_library_for_prompt(library):
+    payload = {
+        "materials": sorted(library.get("materials", {}).keys()),
+        "decorations": sorted(library.get("decorations", {}).keys()),
+        "actions": sorted(library.get("actions", {}).keys()),
+        "background_presets": sorted(library.get("environments", {}).keys()),
+        "atmospherics": sorted(library.get("atmospherics", {}).keys()),
+        "styles": sorted(library.get("styles", {}).keys()),
+    }
+    return json.dumps(payload, indent=2)
+
+
+class DesignLibrary:
+    _lock = threading.RLock()
+    _path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "core", "design_library.json")
+    _data = None
+
+    @classmethod
+    def _canonical_category(cls, category):
+        key = _normalize_key(category)
+        return CATEGORY_ALIASES.get(key, key)
+
+    @classmethod
+    def _copy_defaults(cls):
+        return json.loads(json.dumps(DEFAULT_LIBRARY))
+
+    @classmethod
+    def _normalize_entry(cls, key, value):
+        norm_key = _normalize_key(key)
+        if not norm_key:
+            return None, None
+        if isinstance(value, dict):
+            normalized = dict(value)
+            normalized["description"] = _entry_description(value, norm_key)
+            normalized["usage_count"] = max(0, _safe_int(value.get("usage_count", 0), 0))
+            return norm_key, normalized
+        return norm_key, {"description": _humanize_key(norm_key), "usage_count": 0}
+
+    @classmethod
+    def _merge_with_defaults(cls, data):
+        merged = cls._copy_defaults()
+        if not isinstance(data, dict):
+            return merged, True
+
+        upgraded = False
+        for raw_category, entries in data.items():
+            category = cls._canonical_category(raw_category)
+            if category not in merged:
+                merged[category] = {}
+                upgraded = True
+            if not isinstance(entries, dict):
+                upgraded = True
+                continue
+            for raw_key, entry in entries.items():
+                norm_key, normalized_entry = cls._normalize_entry(raw_key, entry)
+                if not norm_key:
+                    upgraded = True
+                    continue
+                if raw_key != norm_key:
+                    upgraded = True
+                existing = merged[category].get(norm_key)
+                if existing != normalized_entry:
+                    merged[category][norm_key] = normalized_entry
+                    if existing is None or existing != normalized_entry:
+                        upgraded = True
+
+        return merged, upgraded
+
+    @classmethod
+    def load(cls):
+        with cls._lock:
+            if cls._data is not None:
+                return cls._data
+
+            raw_data = {}
+            if os.path.exists(cls._path):
+                try:
+                    with open(cls._path, "r", encoding="utf-8") as f:
+                        raw_data = json.load(f)
+                except Exception:
+                    raw_data = {}
+
+            cls._data, upgraded = cls._merge_with_defaults(raw_data)
+            if upgraded:
+                cls.save()
+            return cls._data
+
+    @classmethod
+    def save(cls):
+        with cls._lock:
+            if cls._data is None:
+                return
+            try:
+                with open(cls._path, "w", encoding="utf-8") as f:
+                    json.dump(cls._data, f, indent=2, ensure_ascii=True)
+            except Exception:
+                pass
+
+    @classmethod
+    def description(cls, category, key):
+        category_key = cls._canonical_category(category)
+        value_key = _normalize_key(key)
+        data = cls.load()
+        entry = data.get(category_key, {}).get(value_key)
+        return _entry_description(entry, value_key)
+
+    @classmethod
+    def increment_usage(cls, category, key):
+        category_key = cls._canonical_category(category)
+        value_key = _normalize_key(key)
+        data = cls.load()
+        if category_key not in data:
+            return
+        if value_key not in data[category_key]:
+            data[category_key][value_key] = {"description": _humanize_key(value_key), "usage_count": 0}
+        data[category_key][value_key]["usage_count"] = max(
+            0, _safe_int(data[category_key][value_key].get("usage_count", 0), 0)
+        ) + 1
+
+    @classmethod
+    def add_setting(cls, category, key, description):
+        category_key = cls._canonical_category(category)
+        value_key = _normalize_key(key)
+        if not value_key:
+            return None
+        data = cls.load()
+        if category_key not in data:
+            data[category_key] = {}
+        if value_key not in data[category_key]:
+            data[category_key][value_key] = {
+                "description": _normalize_text(description) or _humanize_key(value_key),
+                "usage_count": 0,
+            }
+        return value_key
+
+    @classmethod
+    def absorb_discoveries(cls, discovered_settings):
+        if not isinstance(discovered_settings, dict):
+            return
+        for raw_category, values in discovered_settings.items():
+            category = cls._canonical_category(raw_category)
+            if isinstance(values, dict):
+                values = [values]
+            if not isinstance(values, list):
+                values = [values]
+            for item in values:
+                if isinstance(item, dict):
+                    key = item.get("key") or item.get("name") or item.get("value")
+                    description = item.get("description", "")
+                else:
+                    key = item
+                    description = _humanize_key(item)
+                added_key = cls.add_setting(category, key, description)
+                if added_key:
+                    cls.increment_usage(category, added_key)
+
+
+_LIB = DesignLibrary.load()
+SHARED_MATS = list(_LIB["materials"].keys())
+SHARED_DECOR = list(_LIB["decorations"].keys())
+SHARED_ACTS = list(_LIB["actions"].keys())
+SHARED_ENVS = list(_LIB["environments"].keys())
+SHARED_ATMOS = list(_LIB["atmospherics"].keys())
+SHARED_STYLES = list(_LIB["styles"].keys())
+SHARED_INTENTS = ["vector", "raster"]
+SHARED_BG_MODES = ["simple", "preset", "custom", "none"]
+
+
+def _resolve_choice(category, raw_value, choices, default, allow_add, custom_notes, custom_note_key):
+    normalized = _normalize_key(raw_value)
+    
+    current_library = DesignLibrary.load()
+    cat_key = DesignLibrary._canonical_category(category)
+    current_keys = current_library.get(cat_key, {})
+
+    if normalized in choices or normalized in current_keys:
+        return normalized
+
+    alias = LIBRARY_ALIASES.get(category, {}).get(normalized)
+    if alias in choices or alias in current_keys:
+        return alias
+
+    if allow_add and normalized:
+        desc = _humanize_key(raw_value)
+        added_key = DesignLibrary.add_setting(category, normalized, desc)
+        if added_key:
+            DesignLibrary.increment_usage(category, added_key)
+            custom_notes[custom_note_key] = DesignLibrary.description(category, added_key)
+    return default
+
+
+def _fallback_agent_result(user_prompt, image_context, canvas_summary, creative_flair):
+    combined = "\n".join([str(user_prompt or ""), str(image_context or ""), canvas_summary.get("layout_summary", "")])
+    exact_text = _coalesce_non_empty(
+        canvas_summary.get("text", ""),
+        _extract_text_from_image_context(image_context),
+        _extract_visible_text_hint(user_prompt),
+    )
+
+    if "background" in combined.lower():
+        background_mode = "custom"
+    else:
+        background_mode = "none"
+
+    return {
+        "text_input": exact_text,
+        "output_intent": "vector" if "vector" in combined.lower() else "raster",
+        "background_mode": background_mode,
+        "background_preset": _guess_choice_from_text("environments", combined, SHARED_ENVS, "none"),
+        "background_custom_prompt": "",
+        "scene_interaction": "",
+        "material": _guess_choice_from_text("materials", combined, SHARED_MATS, "default"),
+        "decoration": _guess_choice_from_text("decorations", combined, SHARED_DECOR, "none"),
+        "action": _guess_choice_from_text("actions", combined, SHARED_ACTS, "none"),
+        "environment_1": _guess_choice_from_text("atmospherics", combined, SHARED_ATMOS, "none"),
+        "environment_2": "none",
+        "environment_3": "none",
+        "style_mode": _guess_choice_from_text("styles", combined, SHARED_STYLES, "creative"),
+        "intensity": _clamp(0.8 + (creative_flair * 0.8), 0.2, 2.0),
+        "subject": "logo design",
+        "style": "professional logo rendering",
+        "negatives": list(STANDARD_NEGATIVES),
+    }
+
+
+def _background_phrase(background_mode, background_preset, background_custom_prompt, canvas_summary):
+    if background_mode == "preset":
+        return DesignLibrary.description("environments", background_preset)
+    if background_mode == "custom":
+        return _normalize_text(background_custom_prompt)
+    if background_mode == "simple":
+        bg = _normalize_text(canvas_summary.get("background_color", ""))
+        return bg or "a clean solid backdrop"
+    return ""
+
+
+def _style_render_phrase(output_intent, style_mode):
+    intent = output_intent if output_intent in SHARED_INTENTS else "raster"
+    style_key = style_mode if style_mode in SHARED_STYLES else "creative"
+    style_map = {
+        "flat_vector": "crisp flat vector logo styling with clean edges and minimal shading",
+        "creative": "cinematic logo art direction with dramatic polish",
+        "realistic": "high-fidelity realistic surface rendering",
+        "3d_render": "physically based 3D logo rendering with dimensional depth",
+        "tattoo_art": "bold tattoo-flash inspired illustrative rendering (isolated graphic design, NOT on human skin)",
+        "sticker_decal": "clean sticker or decal presentation with strong silhouette separation",
+    }
+    base = style_map.get(style_key, DesignLibrary.description("styles", style_key))
+    if intent == "vector":
+        return f"{base}, optimized for logo readability and crisp separation"
+    return f"{base}, rendered as a polished raster image"
+
+
+def _geometry_instruction(geometry_adherence):
+    adherence = _clamp(_safe_float(geometry_adherence, 1.0), 0.0, 1.0)
+    if adherence >= 0.9:
+        return "Preserve the source composition, lettering, silhouette, and layer hierarchy with near-CAD precision."
+    if adherence >= 0.65:
+        return "Preserve the source composition and exact lettering very closely; only minor stylization is allowed."
+    if adherence >= 0.35:
+        return "Respect the source layout as a strong blueprint and keep the lettering exact."
+    return "Use the source layout as a guide, but still keep the exact lettering and core arrangement recognizable."
+
+
+def _flair_instruction(creative_flair):
+    flair = _clamp(_safe_float(creative_flair, 0.5), 0.0, 1.0)
+    if flair >= 0.8:
+        return "Push ornate stylistic embellishment, but only where it does not disturb the source geometry."
+    if flair >= 0.55:
+        return "Add tasteful stylization and production polish while staying loyal to the source design."
+    if flair >= 0.25:
+        return "Keep stylization restrained and professional."
+    return "Keep embellishment minimal and functional."
+
+
+def _parse_extra_instruction(extra_instruction):
+    extra_text = str(extra_instruction or "").strip()
+    if not extra_text:
+        return {}, ""
+    parsed = json_utils.extract_and_parse_json(extra_text) if extra_text.startswith("{") else None
+    if isinstance(parsed, dict):
+        freeform = _normalize_text(parsed.get("freeform_extra", ""))
+        return parsed, freeform
+    return {}, _normalize_text(extra_text)
+
+
+def _build_logo_prompt(kwargs):
+    canvas_json_raw = str(kwargs.get("canvas_json_data", "") or "")
+    canvas_summary = _summarize_canvas_json(canvas_json_raw)
+    extra_data, freeform_extra = _parse_extra_instruction(kwargs.get("extra_instruction", ""))
+
+    raw_text = _coalesce_non_empty(
+        canvas_summary.get("text", ""),
+        extra_data.get("exact_text", ""),
+        kwargs.get("text_input", ""),
+    )
+    # Collapse mid-word line breaks from SVG/canvas parsing (e.g. "P\nyrate" -> "Pyrate")
+    exact_text = " ".join(raw_text.split()) if raw_text else ""
+
+    custom_effects = _dedupe_preserve(
+        [
+            _normalize_text(extra_data.get("custom_environment_1", "")),
+            _normalize_text(extra_data.get("custom_environment_2", "")),
+            _normalize_text(extra_data.get("custom_environment_3", "")),
+        ]
+    )
+
+    effect_descriptions = _dedupe_preserve(
+        [
+            DesignLibrary.description("atmospherics", kwargs.get("environment_1")),
+            DesignLibrary.description("atmospherics", kwargs.get("environment_2")),
+            DesignLibrary.description("atmospherics", kwargs.get("environment_3")),
+            *custom_effects,
+        ]
+    )
+
+    material_bits = _dedupe_preserve(
+        [
+            DesignLibrary.description("materials", kwargs.get("material")),
+            _normalize_text(extra_data.get("custom_material", "")),
+        ]
+    )
+    decoration_bits = _dedupe_preserve(
+        [
+            DesignLibrary.description("decorations", kwargs.get("decoration"))
+            if kwargs.get("decoration") not in (None, "", "none")
+            else "",
+            _normalize_text(extra_data.get("custom_decoration", "")),
+        ]
+    )
+    action_bits = _dedupe_preserve(
+        [
+            DesignLibrary.description("actions", kwargs.get("action"))
+            if kwargs.get("action") not in (None, "", "none")
+            else "",
+            _normalize_text(extra_data.get("custom_action", "")),
+        ]
+    )
+
+    background_phrase = _coalesce_non_empty(
+        _normalize_text(extra_data.get("background_note", "")),
+        _background_phrase(
+            kwargs.get("background_mode", "none"),
+            kwargs.get("background_preset", "none"),
+            kwargs.get("background_custom_prompt", ""),
+            canvas_summary,
+        ),
+    )
+
+    subject = _normalize_text(extra_data.get("subject", "")) or "logo or wordmark design"
+    style_note = _style_render_phrase(
+        kwargs.get("output_intent", "raster"),
+        kwargs.get("style_mode", "creative"),
+    )
+    scene_interaction = _normalize_text(kwargs.get("scene_interaction", ""))
+    layout_summary = _coalesce_non_empty(canvas_summary.get("layout_summary", ""), extra_data.get("layout_summary", ""))
+
+    intensity = _clamp(_safe_float(kwargs.get("intensity"), 1.0), 0.2, 2.0)
+    intensity_phrase = (
+        "Keep surface detail subtle and controlled."
+        if intensity <= 0.55
+        else "Use normal production detail."
+        if intensity <= 1.2
+        else "Use high surface detail and finish without changing the design."
+    )
+
+    # --- STUDIO-SIDE PRESET ENFORCEMENT ---
+    # Read the Agent's enforced values from extra_data (travels via extra_instruction STRING wire).
+    # This is the reliable path — combo pin wiring may be absent.
+    enforced_style = extra_data.get("enforced_style_mode", "") or ""
+    enforced_intent = extra_data.get("enforced_intent", "") or ""
+    effective_style = enforced_style if enforced_style in SHARED_STYLES else kwargs.get("style_mode", "creative")
+    effective_intent = enforced_intent if enforced_intent in SHARED_INTENTS else kwargs.get("output_intent", "raster")
+
+    # Override style_note to use the Agent's enforced values
+    style_note = _style_render_phrase(effective_intent, effective_style)
+
+    if effective_style in ("flat_vector", "tattoo_art", "sticker_decal"):
+        material_bits = []
+        decoration_bits = []
+        action_bits = []
+        effect_descriptions = []
+
+    # Content-level guard: strip tattoo-related descriptions unless style IS tattoo_art.
+    # The LLM Agent keeps choosing tattoo materials/decorations for any skull-like design.
+    if effective_style != "tattoo_art":
+        material_bits = [m for m in material_bits if "tattoo" not in m.lower()]
+        decoration_bits = [d for d in decoration_bits if "tattoo" not in d.lower() and "flash-art" not in d.lower()]
+
+    # --- PROMPT ASSEMBLY (SmartTextStyler philosophy) ---
+    # The prompt describes HOW to modify the design, never WHAT the design is.
+    # The source image IS the design — describing it causes dual-image hallucination.
+
+    # 1. Style transformation
+    style_parts = []
+    if material_bits:
+        style_parts.append(_list_phrase(material_bits))
+    if decoration_bits and any(decoration_bits):
+        style_parts.append(_list_phrase(decoration_bits))
+    if action_bits and any(action_bits):
+        style_parts.append(_list_phrase(action_bits))
+
+    style_str = " ".join(style_parts).strip() if style_parts else ""
+
+    prompt = f"Change the design style to {style_note}."
+    if style_str:
+        prompt += f" Apply {style_str}."
+
+    # 2. Environment / atmospheric effects
+    if effect_descriptions and any(effect_descriptions):
+        prompt += f" Add {_list_phrase(effect_descriptions)} around the design."
+
+    # 3. Scene interaction
+    if scene_interaction:
+        prompt += f" {scene_interaction}."
+
+    # 4. Background — only transformation instructions, never describe existing content
+    bg_mode = kwargs.get("background_mode", "none")
+    if bg_mode == "custom" and background_phrase:
+        prompt += f" Set the background to: {background_phrase}."
+    elif bg_mode == "preset" and background_phrase:
+        prompt += f" Set the background to: {background_phrase}."
+    elif bg_mode == "simple":
+        prompt += " Keep a clean solid background."
+    # bg_mode == "none" -> say nothing about background, let the source image's background pass through
+
+    # 5. Freeform extra instructions
+    if freeform_extra:
+        prompt += f" {freeform_extra}."
+
+    # 6. Geometry / flair directives
+    prompt += f" {_geometry_instruction(kwargs.get('geometry_adherence', 1.0))}"
+    prompt += f" {_flair_instruction(kwargs.get('creative_flair', 0.5))}"
+
+    # 7. Intensity and quality
+    prompt += f" {intensity_phrase}"
+    prompt += " Preserve the original position, layout, and text exactly."
+
+    return prompt
+
+
+class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
+    _pgfx_llm_controls_promoted = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        all_models = api_clients.get_all_models()
+        thinking_default = (
+            config.FALLBACK_VISION_MODEL
+            if hasattr(config, "FALLBACK_VISION_MODEL") and config.FALLBACK_VISION_MODEL in all_models
+            else all_models[0]
+        )
+        instruct_default = (
+            config.FALLBACK_TEXT_MODEL
+            if hasattr(config, "FALLBACK_TEXT_MODEL") and config.FALLBACK_TEXT_MODEL in all_models
+            else all_models[0]
+        )
+        return {
+            "required": {
+                "user_prompt": ("STRING", {"multiline": True, "placeholder": "Describe your vision..."}),
+                "thinking_model": (all_models, {"default": thinking_default}),
+                "instruct_model": (all_models, {"default": instruct_default}),
+                "image_count": ("INT", {"default": 1, "min": 1, "max": 8}),
+                "output_intent_override": (["AI DETERMINED"] + SHARED_INTENTS, {"default": "AI DETERMINED"}),
+                "style_mode_override": (["AI DETERMINED"] + SHARED_STYLES, {"default": "AI DETERMINED"}),
+            },
+            "optional": {
+                "geometry_adherence": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "creative_flair": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "seed": ("INT", {"default": 0, "min": -1, "max": 0xffffffffffffffff}),
+                "timeout": ("INT", {"default": 120, "min": 30, "max": 600}),
+                "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.1}),
+                "max_length_words": ("INT", {"default": 0, "min": 0, "max": 1000}),
+                "debug_mode": ("BOOLEAN", {"default": False}),
+                "llm_device": (config.LLM_DEVICE_OPTIONS, {"default": config.DEFAULT_LLM_DEVICE}),
+                "reset_context": ("BOOLEAN", {"default": True}),
+                "image_weights_json": ("STRING", {"multiline": True, "default": "{}"}),
+                "max_retries": ("INT", {"default": 3, "min": 0, "max": 10}),
+                "safe_mode": ("BOOLEAN", {"default": True}),
+                "critique_strength": (["None", "Low", "Medium", "High"], {"default": "None"}),
+                "simplify_for_diffusion": ("BOOLEAN", {"default": True}),
+            },
+        }
+
+    RETURN_TYPES = (
+        "STRING",
+        "STRING",
+        SHARED_INTENTS,
+        SHARED_BG_MODES,
+        SHARED_ENVS,
+        "STRING",
+        "STRING",
+        SHARED_MATS,
+        SHARED_DECOR,
+        SHARED_ACTS,
+        SHARED_ATMOS,
+        SHARED_ATMOS,
+        SHARED_ATMOS,
+        SHARED_STYLES,
+        "FLOAT",
+        "STRING",
+        "INT",
+        "FLOAT",
+        "FLOAT",
+    ) + ("IMAGE",) * 8
+
+    RETURN_NAMES = (
+        "base64_image_data",
+        "text_input",
+        "output_intent",
+        "background_mode",
+        "background_preset",
+        "background_custom_prompt",
+        "scene_interaction",
+        "material",
+        "decoration",
+        "action",
+        "environment_1",
+        "environment_2",
+        "environment_3",
+        "style_mode",
+        "intensity",
+        "extra_instruction",
+        "seed",
+        "geometry_adherence",
+        "creative_flair",
+    ) + tuple(f"reference_image_{i}" for i in range(1, 9))
+
+    FUNCTION = "think"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Design"
+
+    def think(
+        self,
+        user_prompt,
+        thinking_model,
+        instruct_model,
+        image_count,
+        output_intent_override,
+        style_mode_override,
+        geometry_adherence=1.0,
+        creative_flair=0.5,
+        seed=0,
+        timeout=120,
+        temperature=0.7,
+        max_length_words=0,
+        debug_mode=False,
+        llm_device="Default (GPU)",
+        reset_context=True,
+        image_weights_json="{}",
+        max_retries=3,
+        safe_mode=True,
+        critique_strength="None",
+        simplify_for_diffusion=True,
+        **kwargs,
+    ):
+        def _heal(value, default, caster):
+            if value is None or value == "" or value == "None" or isinstance(value, bool):
+                return default
+            try:
+                return caster(value)
+            except Exception:
+                return default
+
+        _image_c = _heal(image_count, 1, int)
+        _seed = _heal(seed, 0, int)
+        _timeout = max(30, _heal(timeout, 120, int))
+        _temp = min(2.0, _heal(temperature, 0.7, float))
+        _geo = _clamp(_heal(geometry_adherence, 1.0, float), 0.0, 1.0)
+        _flair = _clamp(_heal(creative_flair, 0.5, float), 0.0, 1.0)
+        _max_l = _heal(max_length_words, 0, int)
+        _retr = _heal(max_retries, 3, int)
+        _dev = str(llm_device) if llm_device in config.LLM_DEVICE_OPTIONS else config.DEFAULT_LLM_DEVICE
+        _crit = str(critique_strength) if critique_strength in ["None", "Low", "Medium", "High"] else "None"
+
+        clean_kwargs = {
+            "seed": _seed,
+            "timeout": _timeout,
+            "temperature": _temp,
+            "debug_mode": bool(debug_mode),
+            "llm_device": _dev,
+            "reset_context": bool(reset_context),
+            "image_count": _image_c,
+            "safe_mode": bool(safe_mode),
+            "max_retries": _retr,
+            "simplify_for_diffusion": bool(simplify_for_diffusion),
+            "max_length_words": _max_l,
+            "style_override": "None",
+            "critique_strength": _crit,
+            "language": "English",
+            "image_weights_json": image_weights_json,
+        }
+
+        for i in range(1, _image_c + 1):
+            if f"image_{i}" in kwargs:
+                clean_kwargs[f"image_{i}"] = kwargs[f"image_{i}"]
+
+        library = DesignLibrary.load()
+        allow_discovery = (
+            output_intent_override == "AI DETERMINED" or style_mode_override == "AI DETERMINED"
+        )
+
+        canvas_summary = _summarize_canvas_json("")
+
+        images_with_weights = self._collect_images_with_weights(**clean_kwargs)
+        image_context = ""
+        llm_images = [img for img, _ in images_with_weights if img is not None]
+        if llm_images:
+            run_config = self._setup_config("Image", user_prompt, thinking_model, **clean_kwargs)
+            describe_result = self._describe_images(images_with_weights, run_config)
+            if describe_result:
+                image_context = describe_result[0] or ""
+
+        fallback = _fallback_agent_result(user_prompt, image_context, canvas_summary, _flair)
+        library_snapshot = _format_library_for_prompt(library)
+        reference_text = _coalesce_non_empty(
+            canvas_summary.get("text", ""),
+            _extract_text_from_image_context(image_context),
+            _extract_visible_text_hint(user_prompt),
+        )
+
+        system_prompt = textwrap.dedent(
+            f"""
+            You are PGFX Logo Designer Agent.
+
+            Your job is to convert the user's request plus any reference design imagery into structured PGFX Logo Designer Studio settings.
+
+            Source-of-truth priority:
+            1. Exact readable text and geometry visible in the supplied design reference.
+            2. Explicit user instructions.
+            3. Existing design library keys.
+
+            Hard rules:
+            - Never invent words, letters, slogans, or symbols.
+            - If readable text exists in the design, copy it into `text_input` exactly, preserving line breaks when obvious.
+            - Respect the user's composition. Higher geometry_adherence means stricter layout preservation.
+            - Use the design library as the first-choice vocabulary.
+            - `background_preset` must come from `background_presets`.
+            - `environment_1/2/3` should be set to `none` for logo designs unless the user explicitly requests atmospheric effects. Spotlights and volumetric lighting cause visual artifacts on logos.
+            - If a useful style term is missing from the library, add it under `discovered_settings` in snake_case, but still choose the closest existing runtime-safe key for the main field outputs.
+            - For `tattoo_art`, `sticker_decal`, or `flat_vector` styles, default `background_mode` to `none` (isolated blank background) unless the user specifically requests a scene.
+            - `tattoo_art` means an isolated flash-art graphic design. DO NOT describe it as being on a person, arm, or skin. The subject should just be the design itself.
+            - `subject`: Describe ONLY the primary graphic element (e.g. "pirate skull with tricorn hat and crossed bones"). NEVER include background elements, flag descriptions, color schemes, or scene context in this field. Those belong in `background_custom_prompt` or `scene_interaction`.
+            - `spatial_layout`: Briefly describe the visual composition (e.g. "skull on the right, large text on the left"). If layout is unknown, output "center".
+            - NEVER choose `illustrative_ink` material or `tattoo_style` decoration unless the style_mode is explicitly `tattoo_art`. For non-tattoo styles, use `default` material and `none` decoration unless the user specifically requests something else.
+            - `material` and `decoration` should match the chosen style_mode. For `3d_render` use materials like `polished_gold`, `brushed_steel`, `marble_white`. For `flat_vector` use `default`. For `creative` use contextually appropriate materials.
+
+            Runtime-safe keys:
+            {library_snapshot}
+
+            Geometry adherence: {_geo:.2f}
+            Creative flair: {_flair:.2f}
+            Intent override: {output_intent_override}
+            Style override: {style_mode_override}
+
+            Return JSON only with this schema:
+            {{
+              "text_input": "",
+              "output_intent": "vector|raster",
+              "background_mode": "simple|preset|custom|none",
+              "background_preset": "",
+              "background_custom_prompt": "",
+              "scene_interaction": "",
+              "material": "",
+              "decoration": "",
+              "action": "",
+              "environment_1": "",
+              "environment_2": "",
+              "environment_3": "",
+              "style_mode": "",
+              "intensity": 1.0,
+              "subject": "",
+              "spatial_layout": "center",
+              "negatives": [],
+              "discovered_settings": {{}}
+            }}
+            """
+        ).strip()
+
+        user_payload = textwrap.dedent(
+            f"""
+            User request:
+            {user_prompt}
+
+            Reference image notes:
+            {image_context or "None"}
+
+            Reference canvas summary:
+            {canvas_summary.get("layout_summary", "") or "None"}
+
+            Exact text hint:
+            {reference_text or "None"}
+
+            Keep the answer grounded in the visible logo design and do not improvise unrelated elements.
+            """
+        ).strip()
+
+        agent_temperature = _clamp((_temp * 0.5) + (_flair * 0.35), 0.1, 1.1)
+        ok, raw_response = api_clients.query_model_auto(
+            instruct_model,
+            prompt=user_payload,
+            system=system_prompt + "\nJSON ONLY.",
+            images=llm_images or None,
+            temperature=agent_temperature,
+            seed=_seed,
+            timeout=_timeout,
+            llm_device=_dev,
+            reset_context=clean_kwargs["reset_context"],
+        )
+
+        parsed = json_utils.extract_and_parse_json(raw_response) if ok else None
+        result = dict(fallback)
+        if isinstance(parsed, dict):
+            for key, value in parsed.items():
+                if value not in (None, "", []):
+                    result[key] = value
+
+        discovered = result.get("discovered_settings", {})
+        DesignLibrary.absorb_discoveries(discovered)
+
+        custom_notes = {}
+
+        intent = (
+            output_intent_override
+            if output_intent_override != "AI DETERMINED"
+            else (result.get("output_intent") if result.get("output_intent") in SHARED_INTENTS else fallback["output_intent"])
+        )
+        style_mode = (
+            style_mode_override
+            if style_mode_override != "AI DETERMINED"
+            else _resolve_choice(
+                "styles",
+                result.get("style_mode"),
+                SHARED_STYLES,
+                fallback["style_mode"],
+                allow_discovery,
+                custom_notes,
+                "custom_style",
+            )
+        )
+
+        background_mode = str(result.get("background_mode", fallback["background_mode"])).strip().lower()
+        if background_mode not in SHARED_BG_MODES:
+            background_mode = "custom" if _normalize_text(result.get("background_custom_prompt", "")) else "none"
+
+        background_preset = _resolve_choice(
+            "environments",
+            result.get("background_preset"),
+            SHARED_ENVS,
+            fallback["background_preset"],
+            allow_discovery,
+            custom_notes,
+            "background_note",
+        )
+
+        # Force isolated styles to have no background unless explicitly customized
+        if style_mode in ["tattoo_art", "sticker_decal", "flat_vector"]:
+            if not _normalize_text(result.get("scene_interaction", "")) and not _normalize_text(result.get("background_custom_prompt", "")):
+                background_mode = "none"
+                background_preset = "none"
+                if "background_note" in custom_notes:
+                    del custom_notes["background_note"]
+
+        material = _resolve_choice(
+            "materials",
+            result.get("material"),
+            SHARED_MATS,
+            fallback["material"],
+            allow_discovery,
+            custom_notes,
+            "custom_material",
+        )
+        decoration = _resolve_choice(
+            "decorations",
+            result.get("decoration"),
+            SHARED_DECOR,
+            fallback["decoration"],
+            allow_discovery,
+            custom_notes,
+            "custom_decoration",
+        )
+        action = _resolve_choice(
+            "actions",
+            result.get("action"),
+            SHARED_ACTS,
+            fallback["action"],
+            allow_discovery,
+            custom_notes,
+            "custom_action",
+        )
+        env_1 = _resolve_choice(
+            "atmospherics",
+            result.get("environment_1"),
+            SHARED_ATMOS,
+            fallback["environment_1"],
+            allow_discovery,
+            custom_notes,
+            "custom_environment_1",
+        )
+        env_2 = _resolve_choice(
+            "atmospherics",
+            result.get("environment_2"),
+            SHARED_ATMOS,
+            fallback["environment_2"],
+            allow_discovery,
+            custom_notes,
+            "custom_environment_2",
+        )
+        env_3 = _resolve_choice(
+            "atmospherics",
+            result.get("environment_3"),
+            SHARED_ATMOS,
+            fallback["environment_3"],
+            allow_discovery,
+            custom_notes,
+            "custom_environment_3",
+        )
+
+        text_input = _coalesce_non_empty(
+            canvas_summary.get("text", ""),
+            _normalize_text(result.get("text_input", "")),
+            fallback["text_input"],
+        )
+        scene_interaction = _normalize_text(result.get("scene_interaction", ""))
+        background_custom_prompt = _normalize_text(result.get("background_custom_prompt", ""))
+        intensity = _clamp(_safe_float(result.get("intensity"), fallback["intensity"]), 0.2, 2.0)
+
+        # --- HARDCODED PRESET ENFORCEMENT ENGINE ---
+        added_negatives = []
+        if style_mode == "flat_vector":
+            intent = "vector"
+            if material not in ("default", "none"):
+                material = "none"
+                custom_notes.pop("custom_material", None)
+            if decoration not in ("default", "none"):
+                decoration = "none"
+                custom_notes.pop("custom_decoration", None)
+            env_1 = env_2 = env_3 = "none"
+            custom_notes.pop("custom_environment_1", None)
+            custom_notes.pop("custom_environment_2", None)
+            custom_notes.pop("custom_environment_3", None)
+            intensity = min(intensity, 0.5)
+            added_negatives = ["photoreal shading", "gradients", "3d elements", "realistic rendering"]
+
+        elif style_mode == "tattoo_art":
+            intent = "vector"
+            env_1 = env_2 = env_3 = "none"
+            custom_notes.pop("custom_environment_1", None)
+            custom_notes.pop("custom_environment_2", None)
+            custom_notes.pop("custom_environment_3", None)
+            added_negatives = ["photorealistic", "human skin", "body parts", "limbs", "flesh"]
+            
+        elif style_mode == "sticker_decal":
+            intent = "vector"
+            env_1 = env_2 = env_3 = "none"
+            custom_notes.pop("custom_environment_1", None)
+            custom_notes.pop("custom_environment_2", None)
+            custom_notes.pop("custom_environment_3", None)
+            added_negatives = ["cluttered background", "photorealistic"]
+
+        raw_negatives = _normalize_negatives(result.get("negatives", [])) + added_negatives + list(STANDARD_NEGATIVES)
+        negatives = _dedupe_preserve(raw_negatives)
+
+        subject_data = {
+            "subject": _normalize_text(result.get("subject", "")) or fallback["subject"],
+            "spatial_layout": _normalize_text(result.get("spatial_layout", "center")) or "center",
+            "enforced_style_mode": style_mode,
+            "enforced_intent": intent,
+            "negatives": negatives,
+            "exact_text": text_input,
+            "layout_summary": canvas_summary.get("layout_summary", ""),
+            **custom_notes,
+        }
+        final_extra = json.dumps(subject_data, ensure_ascii=True)
+
+        for category, value in (
+            ("environments", background_preset),
+            ("materials", material),
+            ("decorations", decoration),
+            ("actions", action),
+            ("atmospherics", env_1),
+            ("atmospherics", env_2),
+            ("atmospherics", env_3),
+            ("styles", style_mode),
+        ):
+            if value and value != "none":
+                DesignLibrary.increment_usage(category, value)
+
+        DesignLibrary.save()
+
+        passthrough_images = [img for img, _ in images_with_weights]
+        passthrough_images.extend([None] * (8 - len(passthrough_images)))
+
+        return (
+            "",
+            text_input,
+            str(intent),
+            background_mode,
+            str(background_preset),
+            background_custom_prompt,
+            scene_interaction,
+            str(material),
+            str(decoration),
+            str(action),
+            str(env_1),
+            str(env_2),
+            str(env_3),
+            str(style_mode),
+            float(intensity),
+            str(final_extra),
+            int(_seed),
+            float(_geo),
+            float(_flair),
+        ) + tuple(passthrough_images)
+
+
+class PGFX_LogoDesignerStudio:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "base64_image_data": ("STRING", {"multiline": True, "default": ""}),
+                "canvas_json_data": ("STRING", {"multiline": True, "default": ""}),
+                "text_input": ("STRING", {"multiline": True, "default": ""}),
+                "output_intent": (SHARED_INTENTS, {"default": "vector"}),
+                "background_mode": (SHARED_BG_MODES, {"default": "simple"}),
+                "background_preset": (SHARED_ENVS, {"default": "none"}),
+                "background_custom_prompt": ("STRING", {"default": "", "multiline": True}),
+                "scene_interaction": ("STRING", {"default": "", "multiline": True}),
+                "material": (SHARED_MATS, {"default": "default"}),
+                "decoration": (SHARED_DECOR, {"default": "none"}),
+                "action": (SHARED_ACTS, {"default": "none"}),
+                "environment_1": (SHARED_ATMOS, {"default": "none"}),
+                "environment_2": (SHARED_ATMOS, {"default": "none"}),
+                "environment_3": (SHARED_ATMOS, {"default": "none"}),
+                "style_mode": (SHARED_STYLES, {"default": "creative"}),
+                "intensity": ("FLOAT", {"default": 1.0, "min": 0.2, "max": 2.0}),
+                "extra_instruction": ("STRING", {"default": "", "multiline": True}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+            },
+            "optional": {
+                "geometry_adherence": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0}),
+                "creative_flair": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
+    RETURN_NAMES = ("image", "mask", "flux_prompt")
+    FUNCTION = "generate_data"
+    CATEGORY = "☠️PGFX🏴‍☠️ /Design"
+
+    def generate_data(self, **kwargs):
+        flux_prompt = _build_logo_prompt(kwargs)
+        b64 = str(kwargs.get("base64_image_data", "") or "")
+        if b64 and len(b64) > 100:
+            try:
+                encoded = b64.split(",", 1)[1] if "," in b64 else b64
+                img = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGBA")
+                arr = np.array(img).astype(np.float32) / 255.0
+                return (
+                    torch.from_numpy(arr[..., :3])[None,],
+                    torch.from_numpy(arr[..., 3])[None,],
+                    flux_prompt,
+                )
+            except Exception:
+                pass
+
+        return (
+            torch.zeros((1, 512, 512, 3)),
+            torch.zeros((1, 512, 512)),
+            flux_prompt,
+        )
+
+
+class PGFX_ImageVectorizer:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE", {"tooltip": "The source raster image to be vectorized."}),
+                "preset": ([
+                    "Custom (Use Manual Sliders)", 
+                    "1-Color Silhouette (Ultra Fast)", 
+                    "2-Color Minimalist", 
+                    "4-Color Vinyl / Tattoo Decal",
+                    "Clean Vector Logo (8 Colors)", 
+                    "Graphic Art (16 Colors)", 
+                    "Raster Optimization (32 Colors - Web Safe)", 
+                    "High Fidelity Raster (64 Colors - Heavy)"
+                ], {"default": "Custom (Use Manual Sliders)", "tooltip": "Select a smart preset to automatically configure the vectorizer for specific scenarios."}),
+                "mode": (["polygon", "spline"], {"default": "polygon", "tooltip": "Vectorization mode. Spline creates smooth curves. Polygon creates sharp, angular vector paths."}),
+                "posterize_levels": ("INT", {"default": 32, "min": 2, "max": 256, "tooltip": "Number of colors to reduce the image to. Fewer colors mean a cleaner design and much faster processing."}),
+                "noise_suppression": ("INT", {"default": 4, "min": 0, "max": 128, "tooltip": "Removes speckles and micro-details by dropping paths shorter than this value. Increase to 16+ for 8K images or vinyl stencils."}),
+                "path_precision": ("INT", {"default": 3, "min": 1, "max": 16, "tooltip": "Precision of the vector paths. Lower values create simpler, blockier geometry. Higher values hug the pixels tighter but create more SVG nodes."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "IMAGE")
+    RETURN_NAMES = ("svg_string", "image_preview")
+    FUNCTION = "vectorize"
+    OUTPUT_NODE = True
+    CATEGORY = "☠️PGFX🏴‍☠️ /Design"
+
+    def vectorize(self, image, preset, mode, posterize_levels, noise_suppression, path_precision):
+        if preset != "Custom (Use Manual Sliders)":
+            if preset == "1-Color Silhouette (Ultra Fast)":
+                posterize_levels = 2
+                noise_suppression = 32
+                path_precision = 4
+                mode = "polygon"
+            elif preset == "2-Color Minimalist":
+                posterize_levels = 3
+                noise_suppression = 24
+                path_precision = 4
+                mode = "spline"
+            elif preset == "4-Color Vinyl / Tattoo Decal":
+                posterize_levels = 4
+                noise_suppression = 20
+                path_precision = 4
+                mode = "spline"
+            elif preset == "Clean Vector Logo (8 Colors)":
+                posterize_levels = 8
+                noise_suppression = 16
+                path_precision = 3
+                mode = "spline"
+            elif preset == "Graphic Art (16 Colors)":
+                posterize_levels = 16
+                noise_suppression = 12
+                path_precision = 3
+                mode = "polygon"
+            elif preset == "Raster Optimization (32 Colors - Web Safe)":
+                posterize_levels = 32
+                noise_suppression = 8
+                path_precision = 4
+                mode = "polygon"
+            elif preset == "High Fidelity Raster (64 Colors - Heavy)":
+                posterize_levels = 64
+                noise_suppression = 2
+                path_precision = 8
+                mode = "spline"
+
+        try:
+            import vtracer
+            import nodes
+
+            i = 255.0 * image[0].cpu().numpy()
+            img = (
+                Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+                .quantize(colors=posterize_levels)
+                .convert("RGBA")
+            )
+        except Exception:
+            return ("Error", None)
+        try:
+            pixels = list(img.getdata())
+            svg = vtracer.convert_pixels_to_svg(
+                pixels,
+                size=img.size,
+                colormode="color",
+                hierarchical="stacked",
+                mode=mode,
+                filter_speckle=noise_suppression,
+                path_precision=path_precision,
+                color_precision=8,
+            )
+            preview = torch.from_numpy(np.array(img.convert("RGB")).astype(np.float32) / 255.0)[None,]
+            return {"ui": nodes.PreviewImage().save_images(preview).get("ui"), "result": (svg, preview)}
+        except Exception as e:
+            print(f"Error in PGFX_ImageVectorizer: {e}")
+            return ("<svg></svg>", None)
+
+
+NODE_CLASS_MAPPINGS = {
+    "PGFX_LogoDesignerStudio": PGFX_LogoDesignerStudio,
+    "PGFX_LogoDesignerAgent": PGFX_LogoDesignerAgent,
+    "PGFX_ImageVectorizer": PGFX_ImageVectorizer,
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "PGFX_LogoDesignerStudio": "PGFX Logo Designer Studio",
+    "PGFX_LogoDesignerAgent": "PGFX Logo Designer Agent",
+    "PGFX_ImageVectorizer": "📐 PGFX Image Vectorizer",
+}

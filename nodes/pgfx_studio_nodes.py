@@ -352,6 +352,7 @@ class PGFX_Studio_SoundEngineer:
                 "profile": (profile_options, {"default": profile_options[0]}),
             },
             "optional": {
+                "MEL_BAND_VOCALS": ("AUDIO", {"tooltip": "Optional: Use vocals separated by Mel-Band RoFormer for better VAD/Emotion detection."}),
                 "segment_duration": ("FLOAT", {"default": 4.0, "min": 0.1}),
                 "enable_vad": ("BOOLEAN", {"default": True}),
                 "vad_threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
@@ -364,9 +365,12 @@ class PGFX_Studio_SoundEngineer:
     FUNCTION = "process_audio"
     CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
 
-    def process_audio(self, audio, PROJECT_CONFIG, profile, segment_duration=4.0, enable_vad=True, vad_threshold=0.5, enable_emotion_detection=True):
+    def process_audio(self, audio, PROJECT_CONFIG, profile, MEL_BAND_VOCALS=None, segment_duration=4.0, enable_vad=True, vad_threshold=0.5, enable_emotion_detection=True):
         # Extract fps from PROJECT_CONFIG
         fps = PROJECT_CONFIG.get("fps", 24)
+
+        # Use clean vocals if provided for analysis, but keep original for output
+        analysis_audio = MEL_BAND_VOCALS if MEL_BAND_VOCALS is not None else audio
 
         # --- Profile Integration ---
         if profile != "None (Manual Input)":
@@ -526,6 +530,7 @@ class PGFX_Studio_Screenwriter:
                 "instruct_model": (all_llm_models, {"default": instruct_default}),
             },
             "optional": {
+                "MEL_BAND_VOCALS": ("AUDIO", {"tooltip": "Optional: Use vocals separated by Mel-Band RoFormer for superior transcription accuracy."}),
                 "whisper_model": (whisper_models, {"default": whisper_default}),
                 "raw_lyrics_override": ("STRING", {"multiline": True, "tooltip": "Optional: Provide a perfect script to force-align, overriding the internal transcription."}),
                 "debug_mode": ("BOOLEAN", {"default": False}),
@@ -662,6 +667,7 @@ class PGFX_Studio_Screenwriter:
         profile,
         thinking_model,
         instruct_model,
+        MEL_BAND_VOCALS=None,
         whisper_model="large-v3",
         raw_lyrics_override="",
         debug_mode=False,
@@ -680,7 +686,8 @@ class PGFX_Studio_Screenwriter:
                 print("[Screenwriter] Whisper model is disabled. Relying solely on 'raw_lyrics_override'.")
 
         # 1. Run transcription and alignment once on the full audio clip.
-        # This is far more accurate and efficient than transcribing each small chunk.
+        # Use MEL_BAND_VOCALS if provided for cleaner transcription.
+        transcription_audio = MEL_BAND_VOCALS if MEL_BAND_VOCALS is not None else audio
         srt_node = PromptCrafter_SRTCreator.PromptCrafter_SRTCreator()
 
         # Use AI correction if a ground truth script is provided.
@@ -693,7 +700,7 @@ class PGFX_Studio_Screenwriter:
 
         cache_payload = {
             "timing": self._timing_signature(timing_data),
-            "audio": self._audio_signature(audio),
+            "audio": self._audio_signature(transcription_audio),
             "profile": str(profile),
             "thinking_model": str(thinking_model),
             "instruct_model": str(instruct_model),
@@ -713,7 +720,7 @@ class PGFX_Studio_Screenwriter:
         if whisper_model != "disabled":
             try:
                 srt_result = srt_node.execute(
-                    audio=audio,
+                    audio=transcription_audio,
                     whisper_model=whisper_model,
                     language="en",
                     vad_method="silero",

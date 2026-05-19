@@ -72,6 +72,7 @@ pgfx_vrgdg_bridge_nodes = _safe_import(
     ".nodes.pgfx_vrgdg_bridge_nodes", "pgfx_vrgdg_bridge_nodes"
 )
 image_to_svg = _safe_import(".nodes.image_to_svg", "image_to_svg")
+pgfx_logo_designer = _safe_import(".nodes.pgfx_logo_designer", "pgfx_logo_designer")
 
 # --- MERGE ALL MAPPINGS ---
 NODE_CLASS_MAPPINGS = {}
@@ -95,6 +96,7 @@ NODE_MODULES = [
     pgfx_film_nodes,
     pgfx_vrgdg_bridge_nodes,
     image_to_svg,
+    pgfx_logo_designer,
 ]
 NODE_MODULES = [m for m in NODE_MODULES if m is not None]
 

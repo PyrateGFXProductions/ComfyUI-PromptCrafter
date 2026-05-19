@@ -11,6 +11,8 @@ const DYNAMIC_CREATOR_NODE_CONFIG = {
     PromptCrafter_BaseCreator: { numStandardOutputs: 6 },
     PromptCrafter_VisualCreator: { numStandardOutputs: 6 },
     PromptCrafter_VisualCreatorEasy: { numStandardOutputs: 6 },
+    PGFX_LogoDesignerAgent: { numStandardOutputs: 16 },
+    PGFX_MultiImagePreview: { numStandardOutputs: 0 },
     PromptCrafter_LyricsCreator: {
         numStandardOutputs: 20,
         trailingFixedOutputs: [{ name: "schedule_json", type: "STRING" }],
@@ -30,9 +32,10 @@ const DYNAMIC_SWITCHER_NODE_CLASSES = [
 app.registerExtension({
     name: "PromptCrafter.DynamicInputs",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
+        const className = nodeData.name;
 
         // --- Handler for Switcher Nodes ---
-        if (DYNAMIC_SWITCHER_NODE_CLASSES.includes(nodeType.comfyClass)) {
+        if (DYNAMIC_SWITCHER_NODE_CLASSES.includes(className)) {
             
             const updateImageSwitcherInputs = function(targetCount) {
                 const count = parseInt(targetCount, 10);
@@ -122,8 +125,9 @@ app.registerExtension({
 
 
         // --- Handler for Creator Nodes (Original Logic) ---
-        if (DYNAMIC_CREATOR_NODE_CLASSES.includes(nodeType.comfyClass)) {
-            const creatorConfig = DYNAMIC_CREATOR_NODE_CONFIG[nodeType.comfyClass] ?? {};
+        if (DYNAMIC_CREATOR_NODE_CLASSES.includes(className)) {
+            console.log(`[PromptCrafter] Attaching dynamic inputs to ${className}`);
+            const creatorConfig = DYNAMIC_CREATOR_NODE_CONFIG[className] ?? {};
             const numStandardOutputs = creatorConfig.numStandardOutputs ?? 6;
             const trailingFixedOutputs = creatorConfig.trailingFixedOutputs ?? [];
             const updateWeightsJSON = function(node) {
@@ -210,10 +214,6 @@ app.registerExtension({
                 if (targetCount < validDynamicOutputs) {
                     // Remove excess dynamic outputs from the end
                     for (let i = validDynamicOutputs; i > targetCount; i--) {
-                        // We assume dynamic outputs are appended at the end. 
-                        // To be safe, look for specifically named outputs if possible, 
-                        // otherwise pop from end if confirmed to be dynamic.
-                        // Ideally, we search by name:
                          const slotToRemove = this.outputs.findIndex(output => output.name === `${outputPrefix}${i}`);
                          if (slotToRemove !== -1) {
                              this.removeOutput(slotToRemove);
@@ -267,12 +267,6 @@ app.registerExtension({
                      jsonWidget.inputEl.style.display = "none";
                  }
                  
-                 // Hook into the callback
-                 // We wrap the callback to ensure it triggers our logic
-                 // Remove old callback wrapper if we are re-running to avoid stack overflow? 
-                 // Difficult to detect, so we assume standard Comfy behavior of replacing or chaining.
-                 // We will overwrite and call original if it exists and isn't ours.
-                 
                  if (!imageCountWidget.pgfx_hooked) {
                      const originalCallback = imageCountWidget.callback;
                      imageCountWidget.callback = (value) => {
@@ -306,6 +300,23 @@ app.registerExtension({
 
 
             nodeType.prototype.numStandardOutputs = numStandardOutputs;
+
+            // --- Multi-Image Preview Specialization ---
+            if (className === "PGFX_MultiImagePreview") {
+                const onExecuted = nodeType.prototype.onExecuted;
+                nodeType.prototype.onExecuted = function (message) {
+                    onExecuted?.apply(this, arguments);
+                    if (message?.images) {
+                        this.imgs = message.images.map(img => {
+                            const url = `./view?filename=${encodeURIComponent(img.filename)}&type=${img.type}&subfolder=${encodeURIComponent(img.subfolder)}&t=${+new Date()}`;
+                            const i = new Image();
+                            i.src = url;
+                            return i;
+                        });
+                        this.setDirtyCanvas(true);
+                    }
+                };
+            }
         }
     },
 });

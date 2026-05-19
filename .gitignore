@@ -71,3 +71,4 @@ workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json
 node_modules/
 .npm
 package-lock.json.bak
+STUDIO_AUDIT_REPORT.md

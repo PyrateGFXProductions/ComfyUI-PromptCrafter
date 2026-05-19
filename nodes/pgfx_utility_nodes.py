@@ -4208,7 +4208,70 @@ class PromptCrafter_PromptChunker:
         
         return tuple(output_prompts)
 
+# ------------------------------------------------------------------------------------
+# PGFX_MultiImagePreview (Dynamic Compare/Viewer)
+# ------------------------------------------------------------------------------------
+class PGFX_MultiImagePreview:
+    DESCRIPTION = "A professional multi-image comparison and preview node with dynamic inputs and passthrough outputs."
+    
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image_count": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1, "tooltip": "The number of image comparison slots."}),
+            },
+            "optional": {
+                "image_weights_json": ("STRING", {"multiline": True, "default": "{}"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",) * 16
+    RETURN_NAMES = tuple(f"reference_image_{i}" for i in range(1, 17))
+    FUNCTION = "preview_images"
+    OUTPUT_NODE = True
+    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+
+    def preview_images(self, image_count, **kwargs):
+        from nodes import PreviewImage
+        
+        # 1. Collect all connected images and handle passthrough
+        images_to_preview = []
+        passthrough = [None] * 16
+        
+        for i in range(1, 17):
+            key = f"image_{i}"
+            if key in kwargs and kwargs[key] is not None:
+                img = kwargs[key]
+                passthrough[i-1] = img
+                if i <= image_count:
+                    images_to_preview.append(img)
+        
+        # 2. Generate Preview UI (Save each image individually to avoid torch.cat size mismatch)
+        ui_images = []
+        preview_node = PreviewImage()
+        
+        for img in images_to_preview:
+            try:
+                # Save each image (handles batches internally)
+                res = preview_node.save_images(img)
+                if "ui" in res and "images" in res["ui"]:
+                    ui_images.extend(res["ui"]["images"])
+            except Exception as e:
+                print(f"[PGFX] Preview save error for image slot: {e}")
+
+        # 3. Return both UI metadata and passthrough results
+        # Returning a dictionary with 'ui' and 'result' is the official ComfyUI standard 
+        # for nodes that have both UI outputs (previews) and return pins.
+        return {"ui": {"images": ui_images}, "result": tuple(passthrough)}
+
+    # Overwrite the default execute to handle the extra UI return
+    # Standard ComfyUI nodes return (outputs, ui) if they have UI
+    # But since we defined RETURN_TYPES as 16 images, we need to be careful.
+    # Actually, ComfyUI handles the 'ui' key in the return dictionary automatically if FUNCTION returns a dict or if we append it.
+    # The most robust way is to just return the tuple and let the system handle the OUTPUT_NODE aspect.
+
 NODE_CLASS_MAPPINGS = {
+    "PGFX_MultiImagePreview": PGFX_MultiImagePreview,
     "PromptCrafter_QnA": PromptCrafter_QnA_Simple,
     "PromptCrafter_QnA_Advanced": PromptCrafter_QnA,
     "PromptCrafter_QnA_Simple": PromptCrafter_QnA_Simple,
@@ -4232,6 +4295,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "PGFX_MultiImagePreview": "🖼️ Multi-Image Preview",
     "PromptCrafter_QnA": "💬 QnA",
     "PromptCrafter_QnA_Advanced": "💬 QnA (Advanced)",
     "PromptCrafter_QnA_Simple": "💬 QnA (Simple)",

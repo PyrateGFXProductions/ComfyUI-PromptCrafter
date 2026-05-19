@@ -1,0 +1,586 @@
+{
+  "materials": {
+    "default": {
+      "description": "clean professional surface",
+      "usage_count": 26
+    },
+    "leather": {
+      "description": "rich premium leather grain",
+      "usage_count": 4
+    },
+    "polished_gold": {
+      "description": "highly reflective 24k polished gold",
+      "usage_count": 0
+    },
+    "weathered_wood": {
+      "description": "textured weathered oak wood with visible grain",
+      "usage_count": 11
+    },
+    "ancient_stone": {
+      "description": "chipped ancient mossy stone texture",
+      "usage_count": 0
+    },
+    "brushed_steel": {
+      "description": "industrial cold brushed stainless steel",
+      "usage_count": 0
+    },
+    "frosted_glass": {
+      "description": "translucent frosted glass with internal refraction",
+      "usage_count": 0
+    },
+    "obsidian": {
+      "description": "smooth black volcanic obsidian glass",
+      "usage_count": 0
+    },
+    "illustrative_ink": {
+      "description": "bold vibrant illustrative tattoo ink pigments",
+      "usage_count": 8
+    },
+    "iridescent_pearl": {
+      "description": "shimmering iridescent pearlescent finish",
+      "usage_count": 0
+    },
+    "carbon_fiber": {
+      "description": "modern black woven carbon fiber weave",
+      "usage_count": 0
+    },
+    "liquid_chrome": {
+      "description": "molten liquid silver chrome",
+      "usage_count": 0
+    },
+    "rusty_iron": {
+      "description": "corroded rusty oxidised iron",
+      "usage_count": 0
+    },
+    "neon_gas": {
+      "description": "glowing neon gas-filled glass tubes",
+      "usage_count": 0
+    },
+    "matte_plastic": {
+      "description": "minimalist clean matte plastic",
+      "usage_count": 1
+    },
+    "marble_white": {
+      "description": "luxurious white carrara marble with grey veins",
+      "usage_count": 0
+    },
+    "lava_rock": {
+      "description": "glowing molten lava rock with internal heat",
+      "usage_count": 0
+    },
+    "ivory_bone": {
+      "description": "smooth aged ivory bone texture",
+      "usage_count": 2
+    },
+    "denim_fabric": {
+      "description": "thick blue woven denim fabric texture",
+      "usage_count": 0
+    },
+    "velvet_red": {
+      "description": "soft rich crimson red royal velvet",
+      "usage_count": 0
+    },
+    "holographic": {
+      "description": "futuristic shimmering holographic foil",
+      "usage_count": 0
+    },
+    "ice": {
+      "description": "clear frozen ice with frosted edges",
+      "usage_count": 0
+    },
+    "neon": {
+      "description": "bright illuminated neon tubing",
+      "usage_count": 0
+    },
+    "crystal": {
+      "description": "cut translucent crystal facets",
+      "usage_count": 0
+    },
+    "concrete": {
+      "description": "cast concrete with gritty texture",
+      "usage_count": 0
+    }
+  },
+  "decorations": {
+    "none": {
+      "description": "",
+      "usage_count": 0
+    },
+    "ornate_engraving": {
+      "description": "ornate engraved detailing carved into the surface",
+      "usage_count": 0
+    },
+    "glowing_edges": {
+      "description": "a subtle luminous edge glow around major forms",
+      "usage_count": 0
+    },
+    "overgrown_vines": {
+      "description": "entwined with lush overgrown green vines",
+      "usage_count": 0
+    },
+    "cracked_porcelain": {
+      "description": "intricate fine porcelain cracks",
+      "usage_count": 0
+    },
+    "gold_leaf": {
+      "description": "flecked with 24k gold leaf gilding",
+      "usage_count": 2
+    },
+    "bullet_holes": {
+      "description": "riddled with cinematic bullet holes and impact marks",
+      "usage_count": 0
+    },
+    "etched_runes": {
+      "description": "covered in glowing ancient etched runes",
+      "usage_count": 0
+    },
+    "dripping_slime": {
+      "description": "dripping with thick viscous neon slime",
+      "usage_count": 0
+    },
+    "electric_arcs": {
+      "description": "surrounded by crackling blue electric arcs",
+      "usage_count": 0
+    },
+    "barbed_wire": {
+      "description": "wrapped in sharp rusty barbed wire",
+      "usage_count": 0
+    },
+    "floral_accents": {
+      "description": "decorated with vibrant blooming flowers",
+      "usage_count": 0
+    },
+    "rivets_bolts": {
+      "description": "reinforced with heavy industrial rivets and bolts",
+      "usage_count": 3
+    },
+    "blood_splatter": {
+      "description": "stained with dark dramatic blood splatters",
+      "usage_count": 0
+    },
+    "ink_splats": {
+      "description": "decorated with artistic messy ink splats",
+      "usage_count": 0
+    },
+    "glowing_circuitry": {
+      "description": "interwoven with glowing cyberpunk circuitry",
+      "usage_count": 0
+    },
+    "filigree_silver": {
+      "description": "ornate delicate silver filigree work",
+      "usage_count": 0
+    },
+    "tattoo_style": {
+      "description": "ornamental tattoo flourishes and flash-art accents",
+      "usage_count": 28
+    }
+  },
+  "actions": {
+    "none": {
+      "description": "static design pose",
+      "usage_count": 0
+    },
+    "melting": {
+      "description": "melting and liquefying from heat",
+      "usage_count": 0
+    },
+    "exploding": {
+      "description": "shattering and exploding into debris",
+      "usage_count": 0
+    },
+    "burning": {
+      "description": "engulfed in realistic cinematic flames",
+      "usage_count": 0
+    },
+    "frozen": {
+      "description": "completely encased in thick transparent ice",
+      "usage_count": 0
+    },
+    "dissolving": {
+      "description": "dissolving and crumbling into fine dust",
+      "usage_count": 0
+    },
+    "floating": {
+      "description": "defying gravity in a zero-G float",
+      "usage_count": 14
+    },
+    "shattering": {
+      "description": "broken into thousands of sharp glass shards",
+      "usage_count": 0
+    },
+    "warped": {
+      "description": "distorted and warped by gravitational forces",
+      "usage_count": 0
+    },
+    "glitching": {
+      "description": "corrupted by digital glitch artifacts",
+      "usage_count": 0
+    },
+    "cracked": {
+      "description": "fractured with visible structural cracking",
+      "usage_count": 0
+    },
+    "corroded": {
+      "description": "eroded by corrosion and oxidation",
+      "usage_count": 0
+    }
+  },
+  "environments": {
+    "none": {
+      "description": "a clean studio environment",
+      "usage_count": 0
+    },
+    "underwater_deep": {
+      "description": "deep underwater ocean darkness with drifting particulate",
+      "usage_count": 0
+    },
+    "underwater_corals": {
+      "description": "a vibrant coral reef background with marine life",
+      "usage_count": 0
+    },
+    "space_nebula": {
+      "description": "a colorful cosmic nebula with deep-space atmosphere",
+      "usage_count": 0
+    },
+    "space_stars_field": {
+      "description": "an endless star field in open space",
+      "usage_count": 0
+    },
+    "city_night_neon": {
+      "description": "a rainy neon-lit city street at night",
+      "usage_count": 0
+    },
+    "city_day_busy": {
+      "description": "a busy city scene in broad daylight",
+      "usage_count": 0
+    },
+    "forest_mystical": {
+      "description": "a mystical forest with mist and fireflies",
+      "usage_count": 0
+    },
+    "forest_autumn": {
+      "description": "an autumn forest with drifting leaves",
+      "usage_count": 0
+    },
+    "desert_sandstorm": {
+      "description": "a desert blasted by wind and sand",
+      "usage_count": 0
+    },
+    "ice_cave": {
+      "description": "inside a luminous frozen ice cave",
+      "usage_count": 0
+    },
+    "lava_cave": {
+      "description": "inside a volcanic cave with molten lava glow",
+      "usage_count": 0
+    },
+    "abstract_vortex": {
+      "description": "a swirling abstract vortex of color and motion",
+      "usage_count": 0
+    },
+    "grid_cyberpunk": {
+      "description": "a cyberpunk digital grid landscape",
+      "usage_count": 0
+    },
+    "old_paper": {
+      "description": "aged vintage paper texture with wear and stains",
+      "usage_count": 0
+    },
+    "concrete_wall": {
+      "description": "a gritty urban concrete wall backdrop",
+      "usage_count": 0
+    },
+    "white_studio": {
+      "description": "a high-contrast pure solid white professional studio backdrop",
+      "usage_count": 16
+    },
+    "black_void": {
+      "description": "infinite pitch black empty cinematic void",
+      "usage_count": 0
+    },
+    "mystical_forest": {
+      "description": "a deep mystical forest with morning mist and fireflies",
+      "usage_count": 0
+    },
+    "cyberpunk_city": {
+      "description": "a rainy neon-lit cyberpunk street at night",
+      "usage_count": 0
+    },
+    "deep_ocean": {
+      "description": "deep underwater in the dark blue abyss with bubbles",
+      "usage_count": 0
+    },
+    "outer_space": {
+      "description": "floating in the cosmic void against a colorful nebula",
+      "usage_count": 0
+    },
+    "industrial_factory": {
+      "description": "a gritty cold industrial factory with sparks",
+      "usage_count": 0
+    },
+    "volcanic_cave": {
+      "description": "inside a dangerous cavern filled with molten lava",
+      "usage_count": 0
+    },
+    "ancient_temple": {
+      "description": "dusty shafts of light inside an abandoned ancient temple",
+      "usage_count": 7
+    },
+    "desert_dunes": {
+      "description": "harsh sunlight over vast golden sand dunes",
+      "usage_count": 0
+    },
+    "arctic_tundra": {
+      "description": "frozen arctic wasteland with falling snow",
+      "usage_count": 0
+    }
+  },
+  "atmospherics": {
+    "none": {
+      "description": "",
+      "usage_count": 0
+    },
+    "particles": {
+      "description": "subtle floating particles",
+      "usage_count": 1
+    },
+    "sparks": {
+      "description": "small metallic sparks",
+      "usage_count": 11
+    },
+    "fire_sparks": {
+      "description": "embers and fire sparks",
+      "usage_count": 0
+    },
+    "lightning": {
+      "description": "electric lightning arcs",
+      "usage_count": 1
+    },
+    "snow": {
+      "description": "falling snow",
+      "usage_count": 0
+    },
+    "rain": {
+      "description": "rain streaks and droplets",
+      "usage_count": 0
+    },
+    "confetti": {
+      "description": "celebratory confetti",
+      "usage_count": 0
+    },
+    "bubbles_env": {
+      "description": "floating bubbles",
+      "usage_count": 0
+    },
+    "smoke": {
+      "description": "rolling smoke",
+      "usage_count": 0
+    },
+    "fog": {
+      "description": "soft atmospheric fog",
+      "usage_count": 12
+    },
+    "dust": {
+      "description": "dust in the air",
+      "usage_count": 0
+    },
+    "haze": {
+      "description": "a diffuse haze",
+      "usage_count": 0
+    },
+    "glow": {
+      "description": "an ambient luminous glow",
+      "usage_count": 2
+    },
+    "neon_lights": {
+      "description": "neon light spill and reflections",
+      "usage_count": 2
+    },
+    "spotlight": {
+      "description": "a focused spotlight beam",
+      "usage_count": 3
+    },
+    "volumetric_lighting": {
+      "description": "volumetric light shafts",
+      "usage_count": 6
+    },
+    "underwater": {
+      "description": "underwater caustics and suspended particulate",
+      "usage_count": 0
+    },
+    "space_stars": {
+      "description": "small surrounding stars",
+      "usage_count": 0
+    },
+    "galaxy": {
+      "description": "galactic atmospheric color",
+      "usage_count": 0
+    },
+    "abstract_shapes": {
+      "description": "abstract surrounding graphic shapes",
+      "usage_count": 0
+    },
+    "matrix_code": {
+      "description": "falling digital code patterns",
+      "usage_count": 0
+    }
+  },
+  "styles": {
+    "flat_vector": {
+      "description": "professional clean flat vector illustration",
+      "usage_count": 12
+    },
+    "creative": {
+      "description": "cinematic professional creative direction",
+      "usage_count": 12
+    },
+    "realistic": {
+      "description": "ultra-realistic photorealistic 8k textures",
+      "usage_count": 11
+    },
+    "3d_render": {
+      "description": "full physically-based 3D octane render with depth",
+      "usage_count": 4
+    },
+    "tattoo_art": {
+      "description": "bold illustrative tattoo artistry with dark linework",
+      "usage_count": 8
+    },
+    "sticker_decal": {
+      "description": "clean die-cut sticker with a white border",
+      "usage_count": 5
+    }
+  },
+  "materials_piraty": {
+    "mahogany": {
+      "description": "mahogany",
+      "usage_count": 1
+    },
+    "bronze": {
+      "description": "bronze",
+      "usage_count": 1
+    },
+    "leather": {
+      "description": "leather",
+      "usage_count": 1
+    },
+    "bone": {
+      "description": "bone",
+      "usage_count": 1
+    }
+  },
+  "material_combo": {
+    "mahogany_bronze_leather_bone": {
+      "description": "mahogany bronze leather bone",
+      "usage_count": 4
+    }
+  },
+  "secondary_materials": {
+    "mahogany": {
+      "description": "mahogany",
+      "usage_count": 1
+    },
+    "bronze": {
+      "description": "bronze",
+      "usage_count": 1
+    },
+    "bone": {
+      "description": "bone",
+      "usage_count": 1
+    }
+  },
+  "custom_material_combo": {
+    "mahogany_bronze_leather_bone": {
+      "description": "mahogany bronze leather bone",
+      "usage_count": 2
+    }
+  },
+  "pirate_theme": {
+    "true": {
+      "description": "True",
+      "usage_count": 1
+    }
+  },
+  "epic_composition": {
+    "true": {
+      "description": "True",
+      "usage_count": 1
+    }
+  },
+  "mahogany_material": {
+    "weathered_wood": {
+      "description": "weathered wood",
+      "usage_count": 1
+    }
+  },
+  "bronze_material": {
+    "polished_gold": {
+      "description": "polished gold",
+      "usage_count": 1
+    }
+  },
+  "leather_material": {
+    "leather": {
+      "description": "leather",
+      "usage_count": 1
+    }
+  },
+  "bone_material": {
+    "ivory_bone": {
+      "description": "ivory bone",
+      "usage_count": 1
+    }
+  },
+  "theme": {
+    "epic_piraty": {
+      "description": "epic piraty",
+      "usage_count": 1
+    },
+    "epic_pirate": {
+      "description": "epic pirate",
+      "usage_count": 1
+    }
+  },
+  "material_override": {
+    "mahogany_bronze_leather_bone": {
+      "description": "mahogany bronze leather bone",
+      "usage_count": 1
+    }
+  },
+  "custom_materials": {
+    "mahogany": {
+      "description": "mahogany",
+      "usage_count": 1
+    },
+    "bronze": {
+      "description": "bronze",
+      "usage_count": 1
+    },
+    "leather": {
+      "description": "leather",
+      "usage_count": 1
+    },
+    "bone": {
+      "description": "bone",
+      "usage_count": 1
+    }
+  },
+  "customer_materials": {
+    "mahogany": {
+      "description": "mahogany",
+      "usage_count": 1
+    },
+    "bronze": {
+      "description": "bronze",
+      "usage_count": 1
+    },
+    "leather": {
+      "description": "leather",
+      "usage_count": 1
+    },
+    "bone": {
+      "description": "bone",
+      "usage_count": 1
+    }
+  }
+}
