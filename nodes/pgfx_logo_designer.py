@@ -654,6 +654,7 @@ SHARED_ATMOS = list(_LIB["atmospherics"].keys())
 SHARED_STYLES = list(_LIB["styles"].keys())
 SHARED_INTENTS = ["vector", "raster"]
 SHARED_BG_MODES = ["simple", "preset", "custom", "none"]
+SHARED_PROMPT_STYLES = ["conversational", "object_list"]
 
 
 def _resolve_choice(category, raw_value, choices, default, allow_add, custom_notes, custom_note_key):
@@ -743,24 +744,28 @@ def _style_render_phrase(output_intent, style_mode):
 
 def _geometry_instruction(geometry_adherence):
     adherence = _clamp(_safe_float(geometry_adherence, 1.0), 0.0, 1.0)
-    if adherence >= 0.9:
-        return "Preserve the source composition, lettering, silhouette, and layer hierarchy with near-CAD precision."
-    if adherence >= 0.65:
-        return "Preserve the source composition and exact lettering very closely; only minor stylization is allowed."
-    if adherence >= 0.35:
-        return "Respect the source layout as a strong blueprint and keep the lettering exact."
-    return "Use the source layout as a guide, but still keep the exact lettering and core arrangement recognizable."
+    if adherence >= 0.95:
+        return "Strictly preserve the original geometry, composition, lettering, silhouette, and layer hierarchy with absolute precision. Do not alter any shapes or paths."
+    if adherence >= 0.75:
+        return "Preserve the source composition, lettering, and layout very closely; only minor surface-level stylization is allowed."
+    if adherence >= 0.45:
+        return "Respect the source layout as a strong blueprint, but allow moderate structural variance."
+    if adherence >= 0.15:
+        return "Modify the design layout and geometry freely. Alter shapes and structure while keeping the core theme recognizable."
+    return "Completely reimagine the design geometry and composition. Feel free to alter shapes, layout, and structure. Use the source only as a loose thematic guide."
 
 
 def _flair_instruction(creative_flair):
     flair = _clamp(_safe_float(creative_flair, 0.5), 0.0, 1.0)
-    if flair >= 0.8:
-        return "Push ornate stylistic embellishment, but only where it does not disturb the source geometry."
-    if flair >= 0.55:
+    if flair >= 0.95:
+        return "Inject wild creative flair, highly imaginative styling, extreme ornate detail, and maximal artistic polish."
+    if flair >= 0.75:
+        return "Push ornate stylistic embellishment, adding creative details and rich surface textures."
+    if flair >= 0.45:
         return "Add tasteful stylization and production polish while staying loyal to the source design."
-    if flair >= 0.25:
-        return "Keep stylization restrained and professional."
-    return "Keep embellishment minimal and functional."
+    if flair >= 0.15:
+        return "Keep stylization restrained, minimal, and functional."
+    return "Keep the rendering simple, plain, and clean. No extra details, no embellishments, minimal stylistic changes."
 
 
 def _parse_extra_instruction(extra_instruction):
@@ -827,21 +832,32 @@ def _build_logo_prompt(kwargs):
         ]
     )
 
-    background_phrase = _coalesce_non_empty(
-        _normalize_text(extra_data.get("background_note", "")),
-        _background_phrase(
-            kwargs.get("background_mode", "none"),
-            kwargs.get("background_preset", "none"),
-            kwargs.get("background_custom_prompt", ""),
+    bg_mode = kwargs.get("background_mode", "simple")
+    bg_preset = kwargs.get("background_preset", "none")
+    bg_custom = kwargs.get("background_custom_prompt", "")
+
+    # Auto-detect mode based on explicit user choices to ensure widgets are respected:
+    if bg_custom and bg_custom.strip():
+        effective_bg_mode = "custom"
+    elif bg_preset not in (None, "", "none"):
+        effective_bg_mode = "preset"
+    else:
+        effective_bg_mode = bg_mode
+
+    # Only let the Agent's background_note override if the user has kept default simple/none settings
+    if effective_bg_mode == "simple" and bg_preset == "none" and not bg_custom and "background_note" in extra_data:
+        background_phrase = _normalize_text(extra_data.get("background_note", ""))
+        if background_phrase:
+            effective_bg_mode = "preset"
+    else:
+        background_phrase = _background_phrase(
+            effective_bg_mode,
+            bg_preset,
+            bg_custom,
             canvas_summary,
-        ),
-    )
+        )
 
     subject = _normalize_text(extra_data.get("subject", "")) or "logo or wordmark design"
-    style_note = _style_render_phrase(
-        kwargs.get("output_intent", "raster"),
-        kwargs.get("style_mode", "creative"),
-    )
     scene_interaction = _normalize_text(kwargs.get("scene_interaction", ""))
     layout_summary = _coalesce_non_empty(canvas_summary.get("layout_summary", ""), extra_data.get("layout_summary", ""))
 
@@ -859,10 +875,15 @@ def _build_logo_prompt(kwargs):
     # This is the reliable path — combo pin wiring may be absent.
     enforced_style = extra_data.get("enforced_style_mode", "") or ""
     enforced_intent = extra_data.get("enforced_intent", "") or ""
-    effective_style = enforced_style if enforced_style in SHARED_STYLES else kwargs.get("style_mode", "creative")
-    effective_intent = enforced_intent if enforced_intent in SHARED_INTENTS else kwargs.get("output_intent", "raster")
 
-    # Override style_note to use the Agent's enforced values
+    # Priority: Respect manual widget choices unless they are at their defaults
+    user_style = kwargs.get("style_mode", "creative")
+    effective_style = enforced_style if (user_style == "creative" and enforced_style in SHARED_STYLES) else user_style
+
+    user_intent = kwargs.get("output_intent", "vector")
+    effective_intent = enforced_intent if (user_intent == "vector" and enforced_intent in SHARED_INTENTS) else user_intent
+
+    # Override style_note to use the effective values
     style_note = _style_render_phrase(effective_intent, effective_style)
 
     if effective_style in ("flat_vector", "tattoo_art", "sticker_decal"):
@@ -877,64 +898,119 @@ def _build_logo_prompt(kwargs):
         material_bits = [m for m in material_bits if "tattoo" not in m.lower()]
         decoration_bits = [d for d in decoration_bits if "tattoo" not in d.lower() and "flash-art" not in d.lower()]
 
-    # --- PROMPT ASSEMBLY (SmartTextStyler philosophy) ---
-    # The prompt describes HOW to modify the design, never WHAT the design is.
-    # The source image IS the design — describing it causes dual-image hallucination.
+    # --- PROMPT ASSEMBLY ---
+    # Branches on prompt_style: "conversational" (natural prose) or "object_list" (token list)
+    prompt_style = str(kwargs.get("prompt_style", "conversational") or "conversational").lower()
 
-    # 1. Style transformation
-    style_parts = []
-    if material_bits:
-        style_parts.append(_list_phrase(material_bits))
-    if decoration_bits and any(decoration_bits):
-        style_parts.append(_list_phrase(decoration_bits))
-    if action_bits and any(action_bits):
-        style_parts.append(_list_phrase(action_bits))
+    if prompt_style == "object_list":
+        # ── Object List format ─────────────────────────────────────────────────
+        # Produces clean comma-separated tokens optimised for Flux / SDXL.
+        tokens = []
 
-    style_str = " ".join(style_parts).strip() if style_parts else ""
+        # Style + intent
+        tokens.append(style_note)
 
-    prompt = f"Change the design style to {style_note}."
-    if style_str:
-        prompt += f" Apply {style_str}."
+        # Production-rule additions
+        if effective_style == "tattoo_art":
+            tokens += ["high-contrast blackwork", "clean isolated line art", "stencil-ready", "no shading"]
+        elif effective_style == "flat_vector":
+            tokens += ["sharp geometric edges", "flat solid colors", "no photorealism", "no cinematic lighting"]
+        elif effective_style == "sticker_decal":
+            tokens += ["die-cut sticker", "distinct boundary outline", "clean silhouette"]
+        elif effective_intent == "vector":
+            tokens += ["crisp vector colors", "clean color separation", "no noise"]
 
-    # 1.5 Strict Production Rules
-    if effective_style == "tattoo_art":
-        prompt += " Use high-contrast blackwork, clean isolated line art, no shading or 3D gradients. Keep it stencil-ready."
-    elif effective_style == "flat_vector":
-        prompt += " Use sharp geometric edges, flat solid colors, no noise, no photorealism, and no cinematic lighting."
-    elif effective_style == "sticker_decal":
-        prompt += " Enforce a clean die-cut sticker presentation with a distinct boundary outline and no cluttered background."
-    elif effective_intent == "vector":
-        prompt += " Ensure crisp vector-like SVG separation of colors without noisy textures or soft gradients."
+        # Materials / decorations / actions
+        tokens.extend(material_bits)
+        tokens.extend(decoration_bits)
+        tokens.extend(action_bits)
 
-    # 2. Environment / atmospheric effects
-    if effect_descriptions and any(effect_descriptions):
-        prompt += f" Add {_list_phrase(effect_descriptions)} around the design."
+        # Atmospheric effects
+        tokens.extend(effect_descriptions)
 
-    # 3. Scene interaction
-    if scene_interaction:
-        prompt += f" {scene_interaction}."
+        # Scene interaction
+        if scene_interaction:
+            tokens.append(scene_interaction)
 
-    # 4. Background — only transformation instructions, never describe existing content
-    bg_mode = kwargs.get("background_mode", "none")
-    if bg_mode == "custom" and background_phrase:
-        prompt += f" Set the background to: {background_phrase}."
-    elif bg_mode == "preset" and background_phrase:
-        prompt += f" Set the background to: {background_phrase}."
-    elif bg_mode == "simple":
-        prompt += " Keep a clean solid background."
-    # bg_mode == "none" -> say nothing about background, let the source image's background pass through
+        # Background
+        if effective_bg_mode in ("preset", "custom") and background_phrase:
+            tokens.append(f"background: {background_phrase}")
+        elif effective_bg_mode == "simple":
+            tokens.append("clean solid background")
 
-    # 5. Freeform extra instructions
-    if freeform_extra:
-        prompt += f" {freeform_extra}."
+        # Freeform
+        if freeform_extra:
+            tokens.append(freeform_extra)
 
-    # 6. Geometry / flair directives
-    prompt += f" {_geometry_instruction(kwargs.get('geometry_adherence', 1.0))}"
-    prompt += f" {_flair_instruction(kwargs.get('creative_flair', 0.5))}"
+        # Geometry / flair
+        tokens.append(_geometry_instruction(kwargs.get("geometry_adherence", 1.0)))
+        tokens.append(_flair_instruction(kwargs.get("creative_flair", 0.5)))
 
-    # 7. Intensity and quality
-    prompt += f" {intensity_phrase}"
-    prompt += " Preserve the original position, layout, and text exactly."
+        # Intensity
+        tokens.append(intensity_phrase)
+
+        # Universal preservation clause
+        tokens.append("preserve original layout")
+        tokens.append("preserve text exactly")
+
+        # Filter empty and join
+        prompt = ", ".join(t.rstrip(".") for t in tokens if t and t.strip())
+
+    else:
+        # ── Conversational format (default) ───────────────────────────────────
+        # Natural prose that reads as instructions to the diffusion model.
+
+        # 1. Style transformation
+        style_parts = []
+        if material_bits:
+            style_parts.append(_list_phrase(material_bits))
+        if decoration_bits and any(decoration_bits):
+            style_parts.append(_list_phrase(decoration_bits))
+        if action_bits and any(action_bits):
+            style_parts.append(_list_phrase(action_bits))
+
+        style_str = " ".join(style_parts).strip() if style_parts else ""
+
+        prompt = f"Change the design style to {style_note}."
+        if style_str:
+            prompt += f" Apply {style_str}."
+
+        # 1.5 Strict Production Rules
+        if effective_style == "tattoo_art":
+            prompt += " Use high-contrast blackwork, clean isolated line art, no shading or 3D gradients. Keep it stencil-ready."
+        elif effective_style == "flat_vector":
+            prompt += " Use sharp geometric edges, flat solid colors, no noise, no photorealism, and no cinematic lighting."
+        elif effective_style == "sticker_decal":
+            prompt += " Enforce a clean die-cut sticker presentation with a distinct boundary outline and no cluttered background."
+        elif effective_intent == "vector":
+            prompt += " Ensure crisp vector-like SVG separation of colors without noisy textures or soft gradients."
+
+        # 2. Environment / atmospheric effects
+        if effect_descriptions and any(effect_descriptions):
+            prompt += f" Add {_list_phrase(effect_descriptions)} around the design."
+
+        # 3. Scene interaction
+        if scene_interaction:
+            prompt += f" {scene_interaction}."
+
+        # 4. Background
+        if effective_bg_mode in ("preset", "custom") and background_phrase:
+            prompt += f" Set the background to: {background_phrase}."
+        elif effective_bg_mode == "simple":
+            prompt += " Keep a clean solid background."
+        # effective_bg_mode == "none" -> no background instruction
+
+        # 5. Freeform extra instructions
+        if freeform_extra:
+            prompt += f" {freeform_extra}."
+
+        # 6. Geometry / flair directives
+        prompt += f" {_geometry_instruction(kwargs.get('geometry_adherence', 1.0))}"
+        prompt += f" {_flair_instruction(kwargs.get('creative_flair', 0.5))}"
+
+        # 7. Intensity and quality
+        prompt += f" {intensity_phrase}"
+        prompt += " Preserve the original position, layout, and text exactly."
 
     return prompt
 
@@ -1445,20 +1521,21 @@ class PGFX_LogoDesignerStudio:
                 "intensity": ("FLOAT", {"default": 1.0, "min": 0.2, "max": 2.0}),
                 "extra_instruction": ("STRING", {"default": "", "multiline": True}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-            },
-            "optional": {
-                "geometry_adherence": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0}),
-                "creative_flair": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0}),
+                "geometry_adherence": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "creative_flair": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "prompt_style": (SHARED_PROMPT_STYLES, {"default": "conversational"}),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
-    RETURN_NAMES = ("image", "mask", "flux_prompt")
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "FLOAT", "FLOAT")
+    RETURN_NAMES = ("image", "mask", "flux_prompt", "geometry_adherence", "creative_flair")
     FUNCTION = "generate_data"
     CATEGORY = "☠️PGFX🏴‍☠️ /Design"
 
     def generate_data(self, **kwargs):
         flux_prompt = _build_logo_prompt(kwargs)
+        geo_val = float(kwargs.get("geometry_adherence", 1.0))
+        flair_val = float(kwargs.get("creative_flair", 0.5))
         b64 = str(kwargs.get("base64_image_data", "") or "")
         if b64 and len(b64) > 100:
             try:
@@ -1469,6 +1546,8 @@ class PGFX_LogoDesignerStudio:
                     torch.from_numpy(arr[..., :3])[None,],
                     torch.from_numpy(arr[..., 3])[None,],
                     flux_prompt,
+                    geo_val,
+                    flair_val,
                 )
             except Exception:
                 pass
@@ -1477,6 +1556,8 @@ class PGFX_LogoDesignerStudio:
             torch.zeros((1, 512, 512, 3)),
             torch.zeros((1, 512, 512)),
             flux_prompt,
+            geo_val,
+            flair_val,
         )
 
 

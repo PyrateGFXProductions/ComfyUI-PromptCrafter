@@ -1,18 +1,34 @@
+# --- Core Dependencies ---
 requests
 langdetect
 python-dotenv
 llama-cpp-python
-# Optional but recommended for full functionality
+Pillow
+
+# --- Optional Utilities ---
 vtracer
 duckduckgo-search
 pypdf
 librosa
 matplotlib
-faster-whisper
-insanely-fast-whisper
-Pillow
-whisperx
-whisper-ctranslate2
 g2p_en
-speechbrain
-torchaudio
+
+# --- IMPORTANT: Torch-Dependent Packages ---
+# The following packages are NOT listed here to prevent 'pip' from reinstalling 'torch'
+# and potentially breaking your CUDA installation (reverting it to CPU-only).
+#
+# If you need Audio, Transcription, or Lyrics features, please install them
+# manually while ensuring they match your specific PyTorch/CUDA environment.
+#
+# RECOMMENDED (Safest):
+#   pip install --no-deps torchaudio faster-whisper whisperx speechbrain insanely-fast-whisper whisper-ctranslate2
+#
+# ALTERNATIVE (If you know your CUDA version, e.g. cu121):
+#   pip install torchaudio faster-whisper whisperx --extra-index-url https://download.pytorch.org/whl/cu121
+
+# torchaudio
+# faster-whisper
+# insanely-fast-whisper
+# whisperx
+# whisper-ctranslate2
+# speechbrain

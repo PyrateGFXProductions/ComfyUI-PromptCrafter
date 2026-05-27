@@ -99,9 +99,12 @@ try:
         print(f"Could not retrieve llama.cpp system info: {e}")
     print("------------------------------------")
     config.LLAMA_CPP_AVAILABLE = True
-except ImportError:
+except Exception as e:
     config.LLAMA_CPP_AVAILABLE = False
-    
+    # Only print warning if it was an actual loading error, not a simple missing package
+    if not isinstance(e, ImportError):
+        print(f"[PromptCrafter] Warning: llama-cpp-python is installed but failed to load (DLL issue?): {e}")
+
 # --- Soft dependency import for HuggingFace Transformers loading ---
 try:
     import torch
@@ -109,21 +112,27 @@ try:
     try:
         # Present in some transformers versions.
         from transformers import AutoModelForConditionalGeneration
-    except ImportError:
+    except Exception:
         try:
             # Newer transformers expose Seq2Seq instead of ConditionalGeneration.
             from transformers import AutoModelForSeq2SeqLM as AutoModelForConditionalGeneration
-        except ImportError:
+        except Exception:
             # Final fallback keeps HF loading available for CausalLM-only environments.
             AutoModelForConditionalGeneration = AutoModelForCausalLM
     import comfy.model_management
     from pathlib import Path
 
     config.HF_TRANSFORMERS_AVAILABLE = True
-    
-except ImportError as e:
+
+except Exception as e:
     config.HF_TRANSFORMERS_AVAILABLE = False
-    print(f"\033[91m[PromptCrafter] Warning: HuggingFace Transformers dependencies not fully met. Error: {e}. Local HF model loading is disabled. Please run `pip install torch transformers bitsandbytes accelerate`.\033[0m")
+    # Only print if it's more than just a missing package
+    if not isinstance(e, ImportError):
+        print(f"[PromptCrafter] Warning: HuggingFace Transformers dependencies failed to load: {e}")
+    else:
+        # Optional: Print help message for missing package
+        pass
+    
     # Create dummy classes if imports fail
     class DummyProcessor:
         def __call__(self, *args, **kwargs): raise ImportError("HF Transformers dependencies missing.")

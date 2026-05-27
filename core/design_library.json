@@ -2,7 +2,7 @@
   "materials": {
     "default": {
       "description": "clean professional surface",
-      "usage_count": 29
+      "usage_count": 39
     },
     "leather": {
       "description": "rich premium leather grain",
@@ -58,7 +58,7 @@
     },
     "matte_plastic": {
       "description": "minimalist clean matte plastic",
-      "usage_count": 1
+      "usage_count": 4
     },
     "marble_white": {
       "description": "luxurious white carrara marble with grey veins",
@@ -74,7 +74,7 @@
     },
     "denim_fabric": {
       "description": "thick blue woven denim fabric texture",
-      "usage_count": 0
+      "usage_count": 3
     },
     "velvet_red": {
       "description": "soft rich crimson red royal velvet",
@@ -202,7 +202,7 @@
     },
     "floating": {
       "description": "defying gravity in a zero-G float",
-      "usage_count": 17
+      "usage_count": 33
     },
     "shattering": {
       "description": "broken into thousands of sharp glass shards",
@@ -218,7 +218,7 @@
     },
     "cracked": {
       "description": "fractured with visible structural cracking",
-      "usage_count": 0
+      "usage_count": 1
     },
     "corroded": {
       "description": "eroded by corrosion and oxidation",
@@ -428,7 +428,7 @@
   "styles": {
     "flat_vector": {
       "description": "professional clean flat vector illustration",
-      "usage_count": 12
+      "usage_count": 14
     },
     "creative": {
       "description": "cinematic professional creative direction",
@@ -436,7 +436,7 @@
     },
     "realistic": {
       "description": "ultra-realistic photorealistic 8k textures",
-      "usage_count": 14
+      "usage_count": 30
     },
     "3d_render": {
       "description": "full physically-based 3D octane render with depth",

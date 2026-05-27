@@ -97,6 +97,37 @@ def _resolve_llm_runtime_kwargs(source):
         "reset_context": bool(source.get("reset_context", config.DEFAULT_LLM_STATELESS)),
     }
 
+def _collect_visual_dynamic_images(image_count=1, image_weights_json="{}", **kwargs):
+    images_with_weights = []
+    try:
+        count = int(image_count)
+    except (TypeError, ValueError):
+        count = 1
+    count = max(1, min(count, 5))
+
+    weights = {}
+    try:
+        parsed_weights = json_utils.extract_and_parse_json(image_weights_json)
+        if isinstance(parsed_weights, dict):
+            weights = parsed_weights
+    except Exception:
+        print(f"\033[93m[PromptCrafter] Warning: Could not parse image_weights_json. Using default weights. Value: {image_weights_json}\033[0m")
+
+    for i in range(1, count + 1):
+        image = kwargs.get(f"image_{i}")
+        if image is not None:
+            try:
+                weight = float(weights.get(f"image_weight_{i}", 1.0))
+            except (TypeError, ValueError):
+                weight = 1.0
+            images_with_weights.append((image, weight))
+    return images_with_weights
+
+def _visual_reference_outputs(images_with_weights, max_images=5):
+    passthrough_images = [img for img, _ in images_with_weights[:max_images]]
+    passthrough_images.extend([None] * (max_images - len(passthrough_images)))
+    return tuple(passthrough_images)
+
 def _json_only_requested(text: str) -> bool:
     if not text:
         return False
@@ -1076,6 +1107,7 @@ class PromptCrafter_LyricsInstruct:
 
 class PromptCrafter_VisualThink:
     DESCRIPTION = "THINK node for visual concept generation. Outputs labeled plain text."
+    MAX_IMAGES = 5
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1083,21 +1115,33 @@ class PromptCrafter_VisualThink:
             "required": {
                 "input_text": ("STRING", {"multiline": True, "default": ""}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for reasoning."}),
+                "image_count": ("INT", {"default": 1, "min": 1, "max": 5, "step": 1}),
             },
             "optional": {
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
+                "image_weights_json": ("STRING", {"multiline": True, "default": "{}"}),
             },
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("visual_think_output",)
+    RETURN_TYPES = ("STRING",) + ("IMAGE",) * MAX_IMAGES
+    RETURN_NAMES = ("visual_think_output",) + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
 
-    def execute(self, input_text, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
+    def execute(self, input_text, model, image_count=1, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, image_weights_json="{}", **kwargs):
+        images_with_weights = _collect_visual_dynamic_images(image_count=image_count, image_weights_json=image_weights_json, **kwargs)
+        passthrough_images = _visual_reference_outputs(images_with_weights, self.MAX_IMAGES)
         if not input_text or not str(input_text).strip():
-            return ("[ERROR] Input text is empty.",)
+            return ("[ERROR] Input text is empty.",) + passthrough_images
+
+        reference_note = ""
+        if images_with_weights:
+            reference_lines = [
+                f"Image {index} weight: {weight:.2f}"
+                for index, (_, weight) in enumerate(images_with_weights, start=1)
+            ]
+            reference_note = "\n\nREFERENCE IMAGES:\n" + "\n".join(reference_lines)
 
         prompt = textwrap.dedent(f"""
             You are a visual concept generator for a music video.
@@ -1112,11 +1156,13 @@ class PromptCrafter_VisualThink:
 
             INPUT:
             {input_text}
+            {reference_note}
         """).strip()
 
         ok, response = api_clients.query_model_auto(
             model,
             prompt=prompt,
+            images=[img for img, _ in images_with_weights],
             temperature=0.2,
             seed=0,
             timeout=timeout,
@@ -1124,16 +1170,17 @@ class PromptCrafter_VisualThink:
             reset_context=reset_context,
         )
         if not ok:
-            return (f"[ERROR] Model call failed: {response}",)
+            return (f"[ERROR] Model call failed: {response}",) + passthrough_images
 
         response_text = "" if response is None else str(response)
         if not response_text.strip():
-            return ("[ERROR] Model returned empty output.",)
-        return (response_text,)
+            return ("[ERROR] Model returned empty output.",) + passthrough_images
+        return (response_text,) + passthrough_images
 
 
 class PromptCrafter_VisualInstruct:
     DESCRIPTION = "INSTRUCT node that converts VisualThink output into JSON."
+    MAX_IMAGES = 5
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1141,21 +1188,29 @@ class PromptCrafter_VisualInstruct:
             "required": {
                 "visual_think_output": ("STRING", {"multiline": True, "default": ""}),
                 "model": (api_clients.get_all_models(), {"tooltip": "The model to use for formatting."}),
+                "image_count": ("INT", {"default": 1, "min": 1, "max": 5, "step": 1}),
             },
             "optional": {
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
+                "image_weights_json": ("STRING", {"multiline": True, "default": "{}"}),
             },
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("visual_json",)
+    RETURN_TYPES = ("STRING",) + ("IMAGE",) * MAX_IMAGES
+    RETURN_NAMES = ("visual_json",) + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
 
-    def execute(self, visual_think_output, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
+    def execute(self, visual_think_output, model, image_count=1, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, image_weights_json="{}", **kwargs):
+        images_with_weights = _collect_visual_dynamic_images(image_count=image_count, image_weights_json=image_weights_json, **kwargs)
+        passthrough_images = _visual_reference_outputs(images_with_weights, self.MAX_IMAGES)
         if not visual_think_output or not str(visual_think_output).strip():
-            return ("[ERROR] VisualThink output is empty.",)
+            return ("[ERROR] VisualThink output is empty.",) + passthrough_images
+
+        reference_note = ""
+        if images_with_weights:
+            reference_note = "\n\nREFERENCE IMAGES: Connected for context only. Preserve the VisualThink content when producing JSON."
 
         prompt = textwrap.dedent(f"""
             You are a formatting engine. Convert the VisualThink output into JSON.
@@ -1168,23 +1223,25 @@ class PromptCrafter_VisualInstruct:
 
             INPUT:
             {visual_think_output}
+            {reference_note}
         """).strip()
 
         ok, response = api_clients.query_model_auto(
             model,
             prompt=prompt,
+            images=[img for img, _ in images_with_weights],
             temperature=0.0,
             seed=0, timeout=timeout,
             llm_device=llm_device,
             reset_context=reset_context,
         )
         if not ok:
-            return (f"[ERROR] Model call failed: {response}",)
+            return (f"[ERROR] Model call failed: {response}",) + passthrough_images
 
         response_text = "" if response is None else str(response)
         if not response_text.strip():
-            return ("[ERROR] Model returned empty output.",)
-        return (response_text,)
+            return ("[ERROR] Model returned empty output.",) + passthrough_images
+        return (response_text,) + passthrough_images
 
 
 class PromptCrafter_QnAThink:

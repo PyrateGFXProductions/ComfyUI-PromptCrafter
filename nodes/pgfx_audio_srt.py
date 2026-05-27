@@ -44,7 +44,9 @@ def _ensure_speechbrain_lazy_patch(debug_mode=False):
                 _guard.add(key)
                 try:
                     return _orig_getattr(self, attr)
-                except RecursionError:
+                except (RecursionError, ImportError):
+                    # Break recursion loop or handle missing optional dependencies gracefully.
+                    # Raising AttributeError here tells callers (like inspect) that the attribute/module is unavailable.
                     raise AttributeError(attr)
                 finally:
                     _guard.discard(key)

@@ -11,6 +11,8 @@ const DYNAMIC_CREATOR_NODE_CONFIG = {
     PromptCrafter_BaseCreator: { numStandardOutputs: 6 },
     PromptCrafter_VisualCreator: { numStandardOutputs: 6 },
     PromptCrafter_VisualCreatorEasy: { numStandardOutputs: 6 },
+    PromptCrafter_VisualThink: { numStandardOutputs: 1 },
+    PromptCrafter_VisualInstruct: { numStandardOutputs: 1 },
     PGFX_LogoDesignerAgent: { numStandardOutputs: 16 },
     PGFX_MultiImagePreview: { numStandardOutputs: 0 },
     PromptCrafter_LyricsCreator: {

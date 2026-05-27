@@ -23,6 +23,19 @@ try:
 except Exception as e:
     print(f"\033[91m[PGFX] Error initializing ComfyGuard: {e}\033[0m")
 
+# 1.1 Validate Torch/CUDA Status
+# Users are often frustrated by dependency installs breaking their CUDA setup.
+# We check this early to provide immediate feedback.
+try:
+    import torch
+    if not torch.cuda.is_available():
+        # Only warn if they aren't explicitly forcing CPU
+        if os.getenv("PGFX_FORCE_CPU") != "1":
+            print("\033[91m[PGFX] WARNING: PyTorch is installed but CUDA is NOT available.\033[0m")
+            print("\033[91m[PGFX] If you have an NVIDIA GPU, your torch installation may have been\033[0m")
+            print("\033[91m[PGFX] corrupted (overwritten with a CPU-only version) by another node pack.\033[0m")
+except ImportError:
+    pass
 
 # 2. Dependency flags (non-invasive detection)
 def _set_flag(flag_name, module_name):
@@ -35,6 +48,9 @@ _set_flag("DUCKDUCKGO_SEARCH_AVAILABLE", "duckduckgo_search")
 _set_flag("LIBROSA_AVAILABLE", "librosa")
 _set_flag("MATPLOTLIB_AVAILABLE", "matplotlib")
 _set_flag("PIEXIF_AVAILABLE", "piexif")
+_set_flag("TORCHAUDIO_AVAILABLE", "torchaudio")
+_set_flag("FASTER_WHISPER_AVAILABLE", "faster_whisper")
+
 
 # 3. Consolidated Node Registration hub
 # We import the mappings from our modular packages, but guard optional deps.
@@ -43,6 +59,19 @@ _set_flag("PIEXIF_AVAILABLE", "piexif")
 def _safe_import(rel_path, label):
     try:
         return importlib.import_module(rel_path, package=__name__)
+    except ImportError as e:
+        # Check if the error is due to a missing optional dependency we know about
+        msg = str(e)
+        problematic = ["torchaudio", "faster_whisper", "whisperx", "speechbrain", "whisper_ctranslate2"]
+        missing = next((m for m in problematic if f"'{m}'" in msg or f" {m}" in msg), None)
+        
+        if missing:
+            print(f"\033[93m[PGFX] Skipping {label}: Missing optional dependency '{missing}'.\033[0m")
+            print(f"\033[93m[PGFX] To enable this feature without breaking Torch/CUDA, run:\033[0m")
+            print(f"\033[93m[PGFX]   pip install --no-deps {missing}\033[0m")
+        else:
+            print(f"\033[93m[PGFX] Skipping {label}: {e}\033[0m")
+        return None
     except Exception as e:
         print(f"\033[93m[PGFX] Skipping {label}: {e}\033[0m")
         return None
@@ -63,6 +92,7 @@ pgfx_comfyguard_node = _safe_import(
 )
 pgfx_viseme_nodes = _safe_import(".nodes.pgfx_viseme_nodes", "pgfx_viseme_nodes")
 pgfx_ltx2_nodes = _safe_import(".nodes.pgfx_ltx2_nodes", "pgfx_ltx2_nodes")
+pgfx_ltxv_sampler = _safe_import(".nodes.pgfx_ltxv_sampler", "pgfx_ltxv_sampler")
 pgfx_llm_nodes = _safe_import(".nodes.pgfx_llm_nodes", "pgfx_llm_nodes")
 pgfx_audio_nodes_enhanced = _safe_import(
     ".nodes.pgfx_audio_nodes_enhanced", "pgfx_audio_nodes_enhanced"
@@ -91,6 +121,7 @@ NODE_MODULES = [
     pgfx_comfyguard_node,
     pgfx_viseme_nodes,
     pgfx_ltx2_nodes,
+    pgfx_ltxv_sampler,
     pgfx_llm_nodes,
     pgfx_audio_nodes_enhanced,
     pgfx_film_nodes,

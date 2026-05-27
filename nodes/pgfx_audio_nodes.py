@@ -46,16 +46,17 @@ try:
             def patched_ensure_module(self, stacklevel):
                 try:
                     return _orig_ensure_module(self, stacklevel)
-                except RecursionError:
-                    # Break recursion loop during inspect/torch custom op registration.
+                except (RecursionError, ImportError):
+                    # Break recursion loop or handle missing optional dependencies gracefully.
+                    # Raising AttributeError here tells callers (like inspect) that the module/attr is not available.
                     raise AttributeError()
 
             def patched_getattr(self, attr):
                 try:
                     # This is the original logic from SpeechBrain's LazyModule.__getattr__
                     return getattr(self.ensure_module(1), attr)
-                except RecursionError:
-                    # Break recursion loop for Torch's custom_op inspection.
+                except (RecursionError, ImportError):
+                    # Break recursion loop or handle missing optional dependencies gracefully.
                     raise AttributeError(attr)
 
             # Apply the patch and mark it as applied.

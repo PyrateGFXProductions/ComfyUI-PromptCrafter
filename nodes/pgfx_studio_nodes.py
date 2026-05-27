@@ -36,10 +36,56 @@ try:
     import numpy as np
     import imageio
     import json
-except ImportError:
+except ImportError as e:
+    print(f"[PromptCrafter Studio] ImportError during initialization: {e}")
+    # Define minimal fallbacks for ALL imported modules to prevent NameError
+    if 'sound_engineer_profiles' not in locals() and 'sound_engineer_profiles' not in globals():
+        class _SoundFallback:
+            @staticmethod
+            def get_profile_options(): return ["Error: Missing Dependencies"]
+            NAMED_SOUND_ENGINEER_PROFILES = {}
+        sound_engineer_profiles = _SoundFallback()
+    if 'director_profiles' not in locals() and 'director_profiles' not in globals():
+        class _DirectorFallback:
+            @staticmethod
+            def get_director_profile_options(): return ["Error: Missing Dependencies"]
+            @staticmethod
+            def _load_director_profiles(): pass
+            NAMED_DIRECTOR_PROFILES = {}
+        director_profiles = _DirectorFallback()
+    if 'screenwriter_profiles' not in locals() and 'screenwriter_profiles' not in globals():
+        class _ScreenwriterFallback:
+            @staticmethod
+            def get_screenwriter_profile_options(): return ["Error: Missing Dependencies"]
+            NAMED_SCREENWRITER_PROFILES = {}
+        screenwriter_profiles = _ScreenwriterFallback()
+    if 'editor_profiles' not in locals() and 'editor_profiles' not in globals():
+        class _EditorFallback:
+            @staticmethod
+            def get_editor_profile_options(): return ["Error: Missing Dependencies"]
+            NAMED_EDITOR_PROFILES = {}
+        editor_profiles = _EditorFallback()
+    if 'creator_nodes' not in locals() and 'creator_nodes' not in globals():
+        class _CreatorFallback:
+            @staticmethod
+            def get_combined_models(): return ["Error: Missing Dependencies"]
+        creator_nodes = _CreatorFallback()
+    if 'utils' not in locals() and 'utils' not in globals():
+        class _UtilsFallback:
+            @staticmethod
+            def _unique_keep_order(l): return l
+        utils = _UtilsFallback()
+    if 'api_clients' not in locals() and 'api_clients' not in globals():
+        api_clients = None
+    if 'json_utils' not in locals() and 'json_utils' not in globals():
+        json_utils = None
+    if 'PromptCrafter_SRTCreator' not in locals() and 'PromptCrafter_SRTCreator' not in globals():
+        PromptCrafter_SRTCreator = None
+    
     print("[PromptCrafter Studio] Some dependencies are missing. Some features may be disabled.")
 except Exception as e:
     print(f"[PromptCrafter Studio] Unexpected error during node initialization: {e}")
+    traceback.print_exc()
 
 if "config" not in globals():
     class _StudioConfigFallback:
