@@ -1144,9 +1144,10 @@ class PromptCrafter_VisualThink:
             reference_note = "\n\nREFERENCE IMAGES:\n" + "\n".join(reference_lines)
 
         prompt = textwrap.dedent(f"""
-            You are a visual concept generator for a music video.
+            You are a visual concept generator for images of all kinds.
 
             OUTPUT FORMAT (EXACT labels, plain text):
+            CONTENT:
             STYLE:
             CAMERA LANGUAGE:
             LIGHTING:
@@ -1218,7 +1219,7 @@ class PromptCrafter_VisualInstruct:
             RULES:
             - Use the content exactly as provided.
             - Do not add or remove information.
-            - JSON keys must be: style, camera_language, lighting, mood, palette, era
+            - JSON keys must be: content, style, camera_language, lighting, mood, palette, era
             - Return ONLY the JSON object.
 
             INPUT:

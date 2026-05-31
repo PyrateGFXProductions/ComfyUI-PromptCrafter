@@ -148,36 +148,50 @@ _PGFX_LTXAV_CONNECTOR_CACHE = {
 
 def _discover_ltxav_connector_path():
     preferred = "ltx-2-19b-embeddings_connector_dev_bf16.safetensors"
+    
+    # Search in 'clip' folder paths
     try:
         clip_files = folder_paths.get_filename_list("clip")
+        for name in clip_files:
+            if preferred in name or ("ltx" in name.lower() and "embeddings_connector" in name.lower()):
+                path = folder_paths.get_full_path("clip", name)
+                if path and os.path.isfile(path):
+                    return path
     except Exception:
-        clip_files = []
+        pass
 
-    if preferred in clip_files:
-        path = folder_paths.get_full_path("clip", preferred)
-        if path and os.path.isfile(path):
-            return path
-
-    for name in clip_files:
-        lname = str(name).lower()
-        if lname.endswith(".safetensors") and "ltx" in lname and "embeddings_connector" in lname:
-            path = folder_paths.get_full_path("clip", name)
-            if path and os.path.isfile(path):
-                return path
+    # Fallback: search 'checkpoints' and 'diffusion_models'
+    for folder in ["checkpoints", "diffusion_models"]:
+        try:
+            files = folder_paths.get_filename_list(folder)
+            for name in files:
+                if preferred in name or ("ltx" in name.lower() and "embeddings_connector" in name.lower()):
+                    path = folder_paths.get_full_path(folder, name)
+                    if path and os.path.isfile(path):
+                        return path
+        except Exception:
+            continue
+            
     return None
 
-def _load_ltxav_connector_weights():
+def _load_ltxav_connector_weights(target_dtype=None, target_device=None):
     cached_path = _PGFX_LTXAV_CONNECTOR_CACHE.get("path")
     cached_weights = _PGFX_LTXAV_CONNECTOR_CACHE.get("weights")
+    
     if cached_path and isinstance(cached_weights, dict):
-        return cached_path, cached_weights
+        # Check if we need to re-cast
+        first_val = next(iter(cached_weights.values()))
+        if (target_dtype is None or first_val.dtype == target_dtype):
+             return cached_path, cached_weights
 
     connector_path = _discover_ltxav_connector_path()
     if not connector_path:
         return None, {}
 
+    print(f"### [PGFX] Loading LTXAV connectors from {os.path.basename(connector_path)}", file=sys.stderr)
     raw = comfy.utils.load_torch_file(connector_path, safe_load=True)
     connector_weights = {}
+    
     for key, value in raw.items():
         norm_key = key
         if norm_key.startswith("model.diffusion_model."):
@@ -186,6 +200,10 @@ def _load_ltxav_connector_weights():
             norm_key = norm_key[len("diffusion_model."):]
 
         if norm_key.startswith("audio_embeddings_connector.") or norm_key.startswith("video_embeddings_connector."):
+            if target_dtype is not None:
+                value = value.to(dtype=target_dtype)
+            if target_device is not None:
+                value = value.to(device=target_device)
             connector_weights[norm_key] = value
 
     _PGFX_LTXAV_CONNECTOR_CACHE["path"] = connector_path
@@ -196,13 +214,29 @@ _original_base_load_model_weights = comfy.model_base.BaseModel.load_model_weight
 
 def _pgfx_load_model_weights_with_ltxav_connectors(self, sd, unet_prefix="", assign=False):
     try:
-        if isinstance(self, comfy.model_base.LTXAV):
+        # Check for LTXAV model (or anything that has the connector keys but they are missing in sd)
+        is_ltxav = isinstance(self, comfy.model_base.LTXAV)
+        
+        # Also check for Gemma/LTX-2 style models by architecture name if possible
+        model_name = self.__class__.__name__.lower()
+        if not is_ltxav and ("ltx" in model_name or "gemma" in model_name):
+             is_ltxav = True
+
+        if is_ltxav:
             pref = unet_prefix or ""
             has_audio_connector = any(k.startswith(f"{pref}audio_embeddings_connector.") for k in sd.keys())
             has_video_connector = any(k.startswith(f"{pref}video_embeddings_connector.") for k in sd.keys())
 
             if not (has_audio_connector and has_video_connector):
-                connector_path, connector_weights = _load_ltxav_connector_weights()
+                # Determine target dtype from an existing weight to prevent FP8/BF16 mismatches
+                target_dtype = None
+                if sd:
+                    # Get dtype of first available tensor
+                    first_tensor = next(iter(sd.values()))
+                    if hasattr(first_tensor, "dtype"):
+                        target_dtype = first_tensor.dtype
+                
+                connector_path, connector_weights = _load_ltxav_connector_weights(target_dtype=target_dtype)
                 if connector_weights:
                     injected = 0
                     for key, value in connector_weights.items():
@@ -212,12 +246,13 @@ def _pgfx_load_model_weights_with_ltxav_connectors(self, sd, unet_prefix="", ass
                             injected += 1
                     if injected > 0:
                         print(
-                            f"### [PGFX] LTXAV connector merge: injected {injected} tensors from {os.path.basename(connector_path)}",
+                            f"### [PGFX] LTXAV connector merge: injected {injected} tensors ({target_dtype}) from {os.path.basename(connector_path)}",
                             file=sys.stderr,
                         )
                 else:
                     print(
-                        "### [PGFX] WARNING: LTXAV model missing connector tensors and no connector file was found.",
+                        "### [PGFX] CRITICAL: LTXAV model missing connector tensors (audio_embeddings_connector / video_embeddings_connector). "
+                        "Generation will likely be NOISE. Please place 'ltx-2-19b-embeddings_connector_dev_bf16.safetensors' in your models/clip folder.",
                         file=sys.stderr,
                     )
     except Exception as e:

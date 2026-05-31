@@ -3790,6 +3790,8 @@ class PGFX_Studio_ShotPlanToShotList:
                 raise ValueError(f"visual_style_json missing required key: {key}")
 
         style_val = str(visual_style.get("style", ""))
+        subject_val = str(visual_style.get("subject", ""))
+        action_val = str(visual_style.get("action", ""))
         camera_language = str(visual_style.get("camera_language", ""))
         lighting = str(visual_style.get("lighting", ""))
         mood = str(visual_style.get("mood", ""))
@@ -3837,14 +3839,22 @@ class PGFX_Studio_ShotPlanToShotList:
                 shot_block += f"\nVisual continuity note: {continuity}."
 
             lyric_block = f"Inspired by lyric: {lyric_text}"
-            style_block = (
-                f"Visual style: {style_val}.\n"
-                f"Camera language: {camera_language}.\n"
-                f"Lighting: {lighting}.\n"
-                f"Mood: {mood}.\n"
-                f"Color palette: {palette}.\n"
+
+            style_parts = []
+            if subject_val:
+                style_parts.append(f"Subject: {subject_val}.")
+            if action_val:
+                style_parts.append(f"Action: {action_val}.")
+            style_parts.extend([
+                f"Visual style: {style_val}.",
+                f"Camera language: {camera_language}.",
+                f"Lighting: {lighting}.",
+                f"Mood: {mood}.",
+                f"Color palette: {palette}.",
                 f"Era: {era}."
-            )
+            ])
+            style_block = "\n".join(style_parts)
+
             constraint_block = (
                 "Cinematic still frame, realistic photography, no text, no watermark, no logos, no extra people."
             )
