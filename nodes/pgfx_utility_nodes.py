@@ -1144,18 +1144,24 @@ class PromptCrafter_VisualThink:
             reference_note = "\n\nREFERENCE IMAGES:\n" + "\n".join(reference_lines)
 
         prompt = textwrap.dedent(f"""
-            You are a visual concept generator for images of all kinds.
+            You are a creative visual director and professional prompt engineer.
+            Your task is to transform a brief instruction into a rich, detailed cinematic scene description.
+
+            If an image is connected, analyze it and describe it in detail while incorporating the user's intent.
+            If no image is connected, imagine a visually stunning scene that fulfills the user's request.
+
+            DO NOT just repeat the user's instruction. Instead, generate the specific visual details needed for a high-quality AI image or video generation.
 
             OUTPUT FORMAT (EXACT labels, plain text):
-            CONTENT:
-            STYLE:
-            CAMERA LANGUAGE:
-            LIGHTING:
-            MOOD:
-            COLOR PALETTE:
-            ERA:
+            CONTENT: A detailed 2-3 sentence description of the subjects, their actions, and the environment.
+            STYLE: The specific artistic, photographic, or cinematic style (e.g., "Neo-noir film, anamorphic lenses").
+            CAMERA LANGUAGE: The shot type, angle, and lens details (e.g., "Low-angle medium shot, 35mm lens, handheld motion").
+            LIGHTING: The lighting setup, quality, and direction (e.g., "Soft golden hour light, long shadows, lens flare").
+            MOOD: The emotional tone or atmosphere (e.g., "Nostalgic, melancholic, ethereal").
+            COLOR PALETTE: Specific colors and grading (e.g., "Muted teals and warm ambers, high contrast").
+            ERA: The time period, setting, or aesthetic age (e.g., "1970s retro-futurism").
 
-            INPUT:
+            USER BRIEF:
             {input_text}
             {reference_note}
         """).strip()
@@ -1214,15 +1220,17 @@ class PromptCrafter_VisualInstruct:
             reference_note = "\n\nREFERENCE IMAGES: Connected for context only. Preserve the VisualThink content when producing JSON."
 
         prompt = textwrap.dedent(f"""
-            You are a formatting engine. Convert the VisualThink output into JSON.
+            You are a data extraction engine. Convert the visual concept description into a clean JSON object.
 
             RULES:
-            - Use the content exactly as provided.
-            - Do not add or remove information.
-            - JSON keys must be: content, style, camera_language, lighting, mood, palette, era
-            - Return ONLY the JSON object.
+            - Map each labeled section (CONTENT, STYLE, CAMERA LANGUAGE, LIGHTING, MOOD, COLOR PALETTE, ERA) to the corresponding JSON key.
+            - If a section is empty or missing in the input, use your knowledge of the scene to fill it with appropriate details.
+            - The JSON object must have exactly these keys: "content", "style", "camera_language", "lighting", "mood", "palette", "era".
+            - Map "COLOR PALETTE" to the key "palette".
+            - Map "CAMERA LANGUAGE" to the key "camera_language".
+            - Return ONLY the raw JSON object. Do not include markdown code fences or commentary.
 
-            INPUT:
+            INPUT DESCRIPTION:
             {visual_think_output}
             {reference_note}
         """).strip()

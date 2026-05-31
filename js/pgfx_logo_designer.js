@@ -342,9 +342,22 @@ class LogoStudioUI {
                         const heightInput = document.getElementById('pgfx-canvas-height');
                         const presetSelect = document.getElementById('pgfx-canvas-preset');
                         if (widthInput && heightInput) {
-                            widthInput.value = this.canvas.getWidth();
-                            heightInput.value = this.canvas.getHeight();
-                            if (presetSelect) presetSelect.value = "custom";
+                            widthInput.value = this.targetWidth;
+                            heightInput.value = this.targetHeight;
+                            
+                            const presetVal = `${this.targetWidth}x${this.targetHeight}`;
+                            if (presetSelect) {
+                                const optionExists = Array.from(presetSelect.options).some(opt => opt.value === presetVal);
+                                if (optionExists) {
+                                    presetSelect.value = presetVal;
+                                    widthInput.disabled = true;
+                                    heightInput.disabled = true;
+                                } else {
+                                    presetSelect.value = "custom";
+                                    widthInput.disabled = false;
+                                    heightInput.disabled = false;
+                                }
+                            }
                         }
 
                         this.canvas.renderAll();
@@ -370,16 +383,23 @@ class LogoStudioUI {
                 this.fitCanvasToView();
                 this._syncBackgroundPicker();
                 this.fitCanvasToView();
-                this.lastCanvasText = this._extractCanvasText();
-                this._saveToHistory();
-                this.scheduleNodeStateSync();
+                this.setupEventHandlers();
+                // Automatically fit/zoom/center on first load
+                this.fitCanvasToView();
+                setTimeout(() => this.fitCanvasToView(), 50);
+                setTimeout(() => this.fitCanvasToView(), 150);
+                setTimeout(() => this.fitCanvasToView(), 300);
             }
 
             this.setupEventHandlers();
         } else {
-            // Canvas already exists â€” if text_input changed since last open, update the primary text layer   
+            // Canvas already exists — if text_input changed since last open, update the primary text layer   
             this._syncTextInputToCanvas();
             this._syncBackgroundPicker();
+            this.fitCanvasToView();
+            setTimeout(() => this.fitCanvasToView(), 50);
+            setTimeout(() => this.fitCanvasToView(), 150);
+            setTimeout(() => this.fitCanvasToView(), 300);
             this.scheduleNodeStateSync();
         }
     }
@@ -389,7 +409,7 @@ class LogoStudioUI {
         const rawText = (this.textWidget?.value || "").trim();
         const displayText = rawText || "YOUR TEXT\nHERE";
         const text = new fabric.IText(displayText, {
-            left: this.canvas.getWidth() / 2, top: this.canvas.getHeight() / 2,
+            left: this.targetWidth / 2, top: this.targetHeight / 2,
             fontFamily: 'Arial', fontSize: 140,
             fill: '#ffffff', textAlign: 'center',
             originX: 'center', originY: 'center',
@@ -444,7 +464,8 @@ class LogoStudioUI {
         // Hide overlay items (like the page border) from export
         this.isExporting = true;
 
-        this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        const exportZoom = this.canvas.getWidth() / this.targetWidth;
+        this.canvas.setViewportTransform([exportZoom, 0, 0, exportZoom, 0, 0]);
         // Do NOT call renderAll() here; let toDataURL do its synchronous rendering in-memory.
         // This avoids layout flashing and jumping completely.
 
@@ -481,11 +502,36 @@ class LogoStudioUI {
         };
     }
 
-    applyCanvasStateToNode({ bumpSeed = false, closeAfter = false } = {}) {
+    async applyCanvasStateToNode({ bumpSeed = false, closeAfter = false } = {}) {
         const snapshot = this._captureCanvasState();
         if (!snapshot) return;
 
-        if (this.base64Widget) this.base64Widget.value = snapshot.dataUrl;
+        // Upload image to server and set widget value to the filename path
+        try {
+            const blob = await (await fetch(snapshot.dataUrl)).blob();
+            const nodeId = this.node?.id || "temp";
+            const body = new FormData();
+            body.append("image", blob, `pgfx_logo_${nodeId}.png`);
+            body.append("overwrite", "true");
+            body.append("subfolder", "pgfx_logo");
+
+            const resp = await fetch("/upload/image", {
+                method: "POST",
+                body
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                const filenamePath = (data.subfolder ? data.subfolder + "/" : "") + data.name;
+                if (this.base64Widget) this.base64Widget.value = filenamePath;
+            } else {
+                console.error("[PGFX Studio] Upload failed, falling back to base64 widget value");
+                if (this.base64Widget) this.base64Widget.value = snapshot.dataUrl;
+            }
+        } catch (err) {
+            console.error("[PGFX Studio] Upload exception, falling back to base64 widget value", err);
+            if (this.base64Widget) this.base64Widget.value = snapshot.dataUrl;
+        }
+
         if (this.jsonWidget) this.jsonWidget.value = snapshot.jsonText;
         if (this.textWidget && snapshot.canvasText) this.textWidget.value = snapshot.canvasText;
         this.lastCanvasText = snapshot.canvasText;
@@ -838,8 +884,8 @@ class LogoStudioUI {
                 opacity: parseFloat(document.getElementById('pgfx-camera-opacity').value || 1)
             });
 
-            fabricVideo.scaleX = this.canvas.getWidth() / videoEl.videoWidth;
-            fabricVideo.scaleY = this.canvas.getHeight() / videoEl.videoHeight;
+            fabricVideo.scaleX = this.targetWidth / videoEl.videoWidth;
+            fabricVideo.scaleY = this.targetHeight / videoEl.videoHeight;
 
             this.canvas.setBackgroundImage(fabricVideo, this.canvas.renderAll.bind(this.canvas));
 
@@ -896,8 +942,8 @@ class LogoStudioUI {
                 opacity: opacity
             });
 
-            img.scaleX = this.canvas.getWidth() / img.width;
-            img.scaleY = this.canvas.getHeight() / img.height;
+            img.scaleX = this.targetWidth / img.width;
+            img.scaleY = this.targetHeight / img.height;
 
             // Turn off webcam streaming after snapshot capture
             this.stopCameraStream();
@@ -1039,7 +1085,7 @@ class LogoStudioUI {
         document.getElementById('pgfx-add-text').onclick = () => {
             const font = document.getElementById('pgfx-font-select').value;
             const text = new fabric.IText("NEW TEXT", {
-                left: this.canvas.getWidth() / 2, top: this.canvas.getHeight() / 2,
+                left: this.targetWidth / 2, top: this.targetHeight / 2,
                 fontFamily: font, fontSize: 100, fill: '#ffffff', originX: 'center', originY: 'center'
             });
             this.canvas.add(text);
@@ -1049,7 +1095,7 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-add-rect').onclick = () => {
             const rect = new fabric.Rect({
-                left: this.canvas.getWidth() / 2, top: this.canvas.getHeight() / 2,
+                left: this.targetWidth / 2, top: this.targetHeight / 2,
                 width: 200, height: 200, fill: '#ffffff', originX: 'center', originY: 'center'
             });
             this.canvas.add(rect);
@@ -1059,7 +1105,7 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-add-circle').onclick = () => {
             const circle = new fabric.Circle({
-                left: this.canvas.getWidth() / 2, top: this.canvas.getHeight() / 2,
+                left: this.targetWidth / 2, top: this.targetHeight / 2,
                 radius: 100, fill: '#ffffff', originX: 'center', originY: 'center'
             });
             this.canvas.add(circle);
@@ -1069,7 +1115,7 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-add-triangle').onclick = () => {
             const tri = new fabric.Triangle({
-                left: this.canvas.getWidth() / 2, top: this.canvas.getHeight() / 2,
+                left: this.targetWidth / 2, top: this.targetHeight / 2,
                 width: 200, height: 200, fill: '#ffffff', originX: 'center', originY: 'center'
             });
             this.canvas.add(tri);
@@ -1088,7 +1134,7 @@ class LogoStudioUI {
                 points.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
             }
             const star = new fabric.Polygon(points, {
-                left: this.canvas.getWidth() / 2, top: this.canvas.getHeight() / 2,
+                left: this.targetWidth / 2, top: this.targetHeight / 2,
                 fill: '#ffffff', originX: 'center', originY: 'center'
             });
             this.canvas.add(star);
@@ -1104,7 +1150,7 @@ class LogoStudioUI {
                 points.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
             }
             const hex = new fabric.Polygon(points, {
-                left: this.canvas.getWidth() / 2, top: this.canvas.getHeight() / 2,
+                left: this.targetWidth / 2, top: this.targetHeight / 2,
                 fill: '#ffffff', originX: 'center', originY: 'center'
             });
             this.canvas.add(hex);
@@ -1167,7 +1213,7 @@ class LogoStudioUI {
                 fabric.loadSVGFromURL(url, (objects, options) => {
                     const obj = fabric.util.groupSVGElements(objects, options);
                     if (!obj) return;
-                    obj.set({ left: this.canvas.getWidth() / 2, top: this.canvas.getHeight() / 2, originX: 'center', originY: 'center' });
+                    obj.set({ left: this.targetWidth / 2, top: this.targetHeight / 2, originX: 'center', originY: 'center' });
                     if (obj.width < 10 || obj.height < 10) obj.scaleToWidth(200);
                     if (obj.width > 800) obj.scaleToWidth(800);
                     this.canvas.add(obj);
@@ -1177,7 +1223,7 @@ class LogoStudioUI {
                 });
             } else {
                 fabric.Image.fromURL(url, (img) => {
-                    img.set({ left: this.canvas.getWidth() / 2, top: this.canvas.getHeight() / 2, originX: 'center', originY: 'center' });
+                    img.set({ left: this.targetWidth / 2, top: this.targetHeight / 2, originX: 'center', originY: 'center' });
                     if (img.width > 800) img.scaleToWidth(800);
                     this.canvas.add(img);
                     this.canvas.setActiveObject(img);
@@ -1366,11 +1412,35 @@ class LogoStudioUI {
         };
         document.getElementById('pgfx-align-h').onclick = () => {
             const active = this.canvas.getActiveObject();
-            if(active) { active.centerH(); active.setCoords(); commitCanvasChange(); }
+            if (active) {
+                if (active.type === 'activeSelection') {
+                    const center = active.getCenterPoint();
+                    const offset = (this.targetWidth / 2) - center.x;
+                    active.set({ left: active.left + offset });
+                } else {
+                    const centerPoint = active.getCenterPoint();
+                    const offset = (this.targetWidth / 2) - centerPoint.x;
+                    active.set({ left: active.left + offset });
+                }
+                active.setCoords();
+                commitCanvasChange();
+            }
         };
         document.getElementById('pgfx-align-v').onclick = () => {
             const active = this.canvas.getActiveObject();
-            if(active) { active.centerV(); active.setCoords(); commitCanvasChange(); }
+            if (active) {
+                if (active.type === 'activeSelection') {
+                    const center = active.getCenterPoint();
+                    const offset = (this.targetHeight / 2) - center.y;
+                    active.set({ top: active.top + offset });
+                } else {
+                    const centerPoint = active.getCenterPoint();
+                    const offset = (this.targetHeight / 2) - centerPoint.y;
+                    active.set({ top: active.top + offset });
+                }
+                active.setCoords();
+                commitCanvasChange();
+            }
         };
         document.getElementById('pgfx-clone').onclick = () => {
             const active = this.canvas.getActiveObject();
@@ -1514,7 +1584,7 @@ class LogoStudioUI {
 
             // Render actual page background fill
             ctx.fillStyle = this.pageBackgroundColor || '#000000';
-            ctx.fillRect(0, 0, this.canvas.getWidth(), this.canvas.getHeight());
+            ctx.fillRect(0, 0, this.targetWidth, this.targetHeight);
 
             ctx.restore();
         });
@@ -1531,7 +1601,7 @@ class LogoStudioUI {
             const zoom = this.canvas.getZoom();
             ctx.lineWidth = 2 / zoom;
             ctx.setLineDash([4 / zoom, 4 / zoom]);
-            ctx.strokeRect(0, 0, this.canvas.getWidth(), this.canvas.getHeight());
+            ctx.strokeRect(0, 0, this.targetWidth, this.targetHeight);
 
             ctx.restore();
         });
@@ -1608,6 +1678,13 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-fit-btn').onclick = () => this.fitCanvasToView();
 
+        // Add window resize event listener to automatically keep the view fitted
+        window.addEventListener('resize', () => {
+            if (this.overlay && this.overlay.classList.contains('active')) {
+                this.fitCanvasToView();
+            }
+        });
+
         document.getElementById('pgfx-canvas-preset').onchange = (e) => {
             const val = e.target.value;
             if (val === 'custom') {
@@ -1658,9 +1735,23 @@ class LogoStudioUI {
         document.getElementById('pgfx-undo-btn').onclick = () => this.undo();
         document.getElementById('pgfx-redo-btn').onclick = () => this.redo();
 
-        document.getElementById('pgfx-save-btn').onclick = () => {
-            this.applyCanvasStateToNode({ bumpSeed: true, closeAfter: true });
-        };
+        const saveBtn = document.getElementById('pgfx-save-btn');
+        if (saveBtn) {
+            saveBtn.onclick = async () => {
+                saveBtn.disabled = true;
+                const originalText = saveBtn.innerHTML;
+                saveBtn.innerHTML = "Saving...";
+                try {
+                    await this.applyCanvasStateToNode({ bumpSeed: true, closeAfter: true });
+                } catch (err) {
+                    console.error("[PGFX Studio] Failed to save canvas state:", err);
+                    alert("Failed to save: " + err.message);
+                } finally {
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = originalText;
+                }
+            };
+        }
 
         document.getElementById('pgfx-cancel-btn').onclick = () => this.close();
 
@@ -2134,7 +2225,7 @@ app.registerExtension({
             if (origDrawFg) origDrawFg(ctx);
 
             const currentSrc = base64Widget?.value || "";
-            if (!currentSrc.startsWith("data:image")) return;
+            if (!currentSrc) return;
 
             // If the src changed (or was reset by the save button), reload the image
             if (!this._pgfxPreviewImg || this._pgfxLastSrc !== currentSrc) {
@@ -2143,7 +2234,15 @@ app.registerExtension({
                 const img = new Image();
                 img.onload  = () => { app.graph?.setDirtyCanvas(true, true); };
                 img.onerror = () => { this._pgfxPreviewImg = null; };
-                img.src = currentSrc;
+
+                let realSrc = currentSrc;
+                if (!realSrc.startsWith("data:image")) {
+                    const parts = currentSrc.split("/");
+                    const filename = parts.pop();
+                    const subfolder = parts.join("/");
+                    realSrc = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}`;
+                }
+                img.src = realSrc;
                 this._pgfxPreviewImg = img;
                 return; // Render on next frame after image decodes
             }
@@ -2207,7 +2306,7 @@ app.registerExtension({
         const origComputeSize = node.computeSize?.bind(node);
         node.computeSize = function(out) {
             const s = origComputeSize ? origComputeSize(out) : [this.size[0], 400];
-            const hasSrc = (base64Widget?.value || "").startsWith("data:image");
+            const hasSrc = (base64Widget?.value || "").trim().length > 0;
             if (hasSrc) {
                 s[1] = s[1] + PREVIEW_H + PREVIEW_PAD * 2;
             }

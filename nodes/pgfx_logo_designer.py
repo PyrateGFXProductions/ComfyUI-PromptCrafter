@@ -386,8 +386,8 @@ def _summarize_canvas_json(canvas_json_text):
             summary["text"] = "\n".join(_dedupe_preserve(t.replace("\\n", "\n") for t in regex_texts))
         return summary
 
-    width = _safe_float(data.get("width"), 1024.0)
-    height = _safe_float(data.get("height"), 1024.0)
+    width = _safe_float(data.get("pgfx_canvas_width") or data.get("width"), 1024.0)
+    height = _safe_float(data.get("pgfx_canvas_height") or data.get("height"), 1024.0)
     summary["background_color"] = _normalize_text(
         data.get("backgroundColor") or data.get("background") or data.get("background_color") or ""
     )
@@ -758,9 +758,9 @@ def _geometry_instruction(geometry_adherence):
 def _flair_instruction(creative_flair):
     flair = _clamp(_safe_float(creative_flair, 0.5), 0.0, 1.0)
     if flair >= 0.95:
-        return "Inject wild creative flair, highly imaginative styling, extreme ornate detail, and maximal artistic polish."
+        return "Inject wild creative flair, highly imaginative styling, extreme depth of detail, rich stylistic execution, and maximal artistic polish."
     if flair >= 0.75:
-        return "Push ornate stylistic embellishment, adding creative details and rich surface textures."
+        return "Push bold creative execution, adding inventive details and rich surface textures that suit the chosen materials and style."
     if flair >= 0.45:
         return "Add tasteful stylization and production polish while staying loyal to the source design."
     if flair >= 0.15:
@@ -836,15 +836,19 @@ def _build_logo_prompt(kwargs):
     bg_preset = kwargs.get("background_preset", "none")
     bg_custom = kwargs.get("background_custom_prompt", "")
 
-    # Auto-detect mode based on explicit user choices to ensure widgets are respected:
-    if bg_custom and bg_custom.strip():
+    # Explicit 'none' is always respected — user deliberately silenced background instructions.
+    # Auto-detection only triggers when the user left bg_mode at the default 'simple'.
+    if bg_mode == "none":
+        effective_bg_mode = "none"
+    elif bg_mode == "custom" or (bg_custom and bg_custom.strip()):
         effective_bg_mode = "custom"
-    elif bg_preset not in (None, "", "none"):
+    elif bg_mode == "preset" or bg_preset not in (None, "", "none"):
         effective_bg_mode = "preset"
     else:
+        # bg_mode is 'simple' (default) — allow Agent override via background_note
         effective_bg_mode = bg_mode
 
-    # Only let the Agent's background_note override if the user has kept default simple/none settings
+    # Only let the Agent's background_note override if the user has kept default simple settings
     if effective_bg_mode == "simple" and bg_preset == "none" and not bg_custom and "background_note" in extra_data:
         background_phrase = _normalize_text(extra_data.get("background_note", ""))
         if background_phrase:
@@ -1537,10 +1541,34 @@ class PGFX_LogoDesignerStudio:
         geo_val = float(kwargs.get("geometry_adherence", 1.0))
         flair_val = float(kwargs.get("creative_flair", 0.5))
         b64 = str(kwargs.get("base64_image_data", "") or "")
-        if b64 and len(b64) > 100:
+        img = None
+        if b64:
+            if b64.startswith("data:image") or ";base64," in b64 or len(b64) > 512:
+                try:
+                    encoded = b64.split(",", 1)[1] if "," in b64 else b64
+                    img = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGBA")
+                except Exception as e:
+                    print(f"[PGFX Logo Studio] Error decoding base64: {e}")
+            else:
+                try:
+                    import folder_paths
+                    input_dir = folder_paths.get_input_directory()
+                    path_parts = b64.replace("\\", "/").split("/")
+                    full_path = os.path.join(input_dir, *path_parts)
+                    if os.path.exists(full_path):
+                        img = Image.open(full_path).convert("RGBA")
+                    else:
+                        filename = os.path.basename(b64)
+                        fallback_path = os.path.join(input_dir, filename)
+                        if os.path.exists(fallback_path):
+                            img = Image.open(fallback_path).convert("RGBA")
+                        else:
+                            print(f"[PGFX Logo Studio] Warning: Image file '{b64}' not found in input directory '{input_dir}'.")
+                except Exception as e:
+                    print(f"[PGFX Logo Studio] Error loading image from file path '{b64}': {e}")
+
+        if img is not None:
             try:
-                encoded = b64.split(",", 1)[1] if "," in b64 else b64
-                img = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGBA")
                 arr = np.array(img).astype(np.float32) / 255.0
                 return (
                     torch.from_numpy(arr[..., :3])[None,],
@@ -1549,8 +1577,9 @@ class PGFX_LogoDesignerStudio:
                     geo_val,
                     flair_val,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[PGFX Logo Studio] Error processing image tensor: {e}")
+
 
         return (
             torch.zeros((1, 512, 512, 3)),
