@@ -2134,6 +2134,8 @@ class LogoStudioUI {
                                     Applies a dynamic physical process to the design (e.g. burning, dissolving, floating).<br><br>
                                     <b style="color:#e4e4e7;">environment_1/2/3</b><br>
                                     Three independent atmospheric effect slots. Adds particles, fog, lightning, etc. around the design.<br><br>
+                                    <b style="color:#e4e4e7;">environment_1_intensity / environment_2_intensity / environment_3_intensity</b><br>
+                                    Per-slot intensity for each environment effect. 0.0 = disabled. 0.5 = subtle/sparse. 1.0 = normal. 1.5 = heavy. 2.0 = dramatic/intense.<br><br>
                                     <b style="color:#e4e4e7;">style_mode</b><br>
                                     flat_vector: Pure 2-D, no shading (best for vinyl).<br>
                                     creative: Cinematic lighting and artistic direction.<br>

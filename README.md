@@ -64,17 +64,19 @@ The pack is split into several tiers:
 
 ### PGFX Logo Designer Studio
 **Class:** `PGFX_LogoDesignerStudio`  
-**Category:** `☠️PGFX🏴‍☠️ /Logo Designer`
+**Category:** `☠️PGFX🏴‍☠️ /Design`
 
 A persistent **Fabric.js** canvas workspace with a full professional toolbar, wired directly into the ComfyUI prompt pipeline.
 
 **Features:**
-- 🖼️ **Persistent Canvas** — Design state is serialized as base64 JSON and stored in the node widget. Your work survives graph saves and reloads.
+- 🖼️ **Persistent Canvas** — Design state is serialized as JSON and uploaded as a server-side image on save. Large canvas data never bloats the workflow file, eliminating the `Failed to save workflow draft` error.
 - ✏️ **Pro Drawing Toolbar** — Free-hand Pencil, Spray, and Circle brushes with live opacity and size controls.
 - 📐 **Vector Primitive Library** — Instant generation of Rectangles, Circles, Triangles, Stars, and Hexagons.
 - 🅰️ **Text Layers** — Multiple independent text objects with font, size, colour, and weight controls. Text is synced safely to avoid duplication on re-open.
-- 🖌️ **Background Presets** — `ancient_temple`, `deep_space`, `neon_cyberpunk`, `enchanted_forest`, and more. Selected preset is always forwarded to the generation prompt.
-- 🎨 **Style Widgets** — `geometry_adherence` (0–1 float) and `creative_flair` (0–1 float) sliders with high-contrast prompt variance at extremes.
+- 🖌️ **Background Modes** — `simple` (canvas colour), `preset` (named scene), `custom` (free text), or `none` (disabled). Chosen mode is always forwarded to the prompt.
+- 🌫️ **Three Environment Slots** — `environment_1`, `environment_2`, `environment_3` let you stack independent atmospheric effects (particles, fog, lightning, smoke, etc.).
+- 🎚️ **Per-Environment Intensity** — Each environment slot has its own `_intensity` slider (0.0–2.0). `0.0` disables the effect; `0.5` = subtle/sparse; `1.0` = normal; `1.5` = heavy; `2.0` = dramatic/intense.
+- 🎨 **Style Sliders** — `geometry_adherence` (0–1) and `creative_flair` (0–1) with high-contrast prompt variance at extremes.
 - 📝 **Prompt Style** — Toggle between `conversational` (natural prose) and `object_list` (token-based) generation modes.
 - 🔌 **Float Outputs** — `geometry_adherence` and `creative_flair` are exposed as FLOAT output pins, wireable into samplers, ControlNet, or any downstream node.
 
@@ -82,22 +84,38 @@ A persistent **Fabric.js** canvas workspace with a full professional toolbar, wi
 
 | Input | Type | Description |
 |-------|------|-------------|
-| `canvas_data` | STRING | Base64 Fabric.js JSON (auto-managed) |
-| `design_style` | COMBO | Overall art direction style |
-| `background_preset` | COMBO | Pre-defined background theme |
-| `background_prompt` | STRING | Custom background override text |
+| `base64_image_data` | STRING | Canvas image data (auto-managed; uploaded to server on save) |
+| `canvas_json_data` | STRING | Fabric.js JSON state (auto-managed) |
+| `text_input` | STRING | Fallback text if no canvas text layer is present |
+| `output_intent` | COMBO | `vector` (flat 2-D) or `raster` (shading / depth) |
+| `background_mode` | COMBO | `simple`, `preset`, `custom`, or `none` |
+| `background_preset` | COMBO | Named scene environment (active when `background_mode = preset`) |
+| `background_custom_prompt` | STRING | Free-text background description (active when `background_mode = custom`) |
+| `scene_interaction` | STRING | Describes how the design interacts with its environment |
+| `material` | COMBO | Surface finish applied to all elements (gold, marble, neon, etc.) |
+| `decoration` | COMBO | Surface ornamentation on top of the material |
+| `action` | COMBO | Dynamic physical process applied to the design |
+| `environment_1` | COMBO | First atmospheric effect slot |
+| `environment_1_intensity` | FLOAT (0–2) | Intensity for `environment_1`. `0` = disabled; `1` = normal; `2` = extreme |
+| `environment_2` | COMBO | Second atmospheric effect slot |
+| `environment_2_intensity` | FLOAT (0–2) | Intensity for `environment_2` |
+| `environment_3` | COMBO | Third atmospheric effect slot |
+| `environment_3_intensity` | FLOAT (0–2) | Intensity for `environment_3` |
+| `style_mode` | COMBO | `flat_vector`, `creative`, `realistic`, or `3d_render` |
+| `intensity` | FLOAT (0.2–2) | Overall prompt detail level (0.2 = subtle; 1.0 = normal; 2.0 = extreme) |
 | `geometry_adherence` | FLOAT (0–1) | How strictly the model preserves the source geometry |
 | `creative_flair` | FLOAT (0–1) | Degree of creative embellishment allowed |
 | `prompt_style` | COMBO | `conversational` or `object_list` |
-| `model` | COMBO | LLM model for agent-assisted operations |
+| `extra_instruction` | STRING | Free-form text appended verbatim to the final prompt |
+| `seed` | INT | Generation seed |
 
 **Outputs:**
 
 | Output | Type | Description |
 |--------|------|-------------|
-| `prompt` | STRING | The assembled generation prompt |
-| `negative_prompt` | STRING | Negative guidance prompt |
-| `canvas_image` | IMAGE | Rendered flat composite of the canvas |
+| `image` | IMAGE | Canvas composite rendered to a tensor |
+| `mask` | MASK | Alpha mask extracted from the canvas |
+| `flux_prompt` | STRING | The fully assembled generation prompt |
 | `geometry_adherence` | FLOAT | Passthrough slider value |
 | `creative_flair` | FLOAT | Passthrough slider value |
 
@@ -513,4 +531,4 @@ ComfyUI-PromptCrafter/
 
 ---
 
-*Documentation maintained by PGFX Industrial Engineering. Last updated: 2026-05-26.*
+*Documentation maintained by PGFX Industrial Engineering. Last updated: 2026-05-31.*

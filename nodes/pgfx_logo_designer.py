@@ -779,6 +779,32 @@ def _parse_extra_instruction(extra_instruction):
     return {}, _normalize_text(extra_text)
 
 
+def _apply_intensity_to_effect(desc, intensity_val):
+    desc = str(desc or "").strip()
+    if not desc:
+        return ""
+    intensity = _clamp(_safe_float(intensity_val, 1.0), 0.0, 2.0)
+    if intensity <= 0.05:
+        return ""  # 0.0 disables the effect completely
+
+    clean_desc = desc
+    if intensity <= 0.45 or intensity >= 1.3:
+        for prefix in ("subtle ", "soft ", "small ", "a "):
+            if clean_desc.lower().startswith(prefix):
+                clean_desc = clean_desc[len(prefix):]
+                break
+
+    if intensity <= 0.45:
+        return f"subtle, sparse {clean_desc}"
+    if intensity <= 0.8:
+        return f"light {clean_desc}"
+    if intensity <= 1.25:
+        return desc
+    if intensity <= 1.65:
+        return f"dense, heavy {clean_desc}"
+    return f"intense, dramatic and thick {clean_desc}"
+
+
 def _build_logo_prompt(kwargs):
     canvas_json_raw = str(kwargs.get("canvas_json_data", "") or "")
     canvas_summary = _summarize_canvas_json(canvas_json_raw)
@@ -800,11 +826,15 @@ def _build_logo_prompt(kwargs):
         ]
     )
 
+    env_1_int = kwargs.get("environment_1_intensity", 1.0)
+    env_2_int = kwargs.get("environment_2_intensity", 1.0)
+    env_3_int = kwargs.get("environment_3_intensity", 1.0)
+
     effect_descriptions = _dedupe_preserve(
         [
-            DesignLibrary.description("atmospherics", kwargs.get("environment_1")),
-            DesignLibrary.description("atmospherics", kwargs.get("environment_2")),
-            DesignLibrary.description("atmospherics", kwargs.get("environment_3")),
+            _apply_intensity_to_effect(DesignLibrary.description("atmospherics", kwargs.get("environment_1")), env_1_int),
+            _apply_intensity_to_effect(DesignLibrary.description("atmospherics", kwargs.get("environment_2")), env_2_int),
+            _apply_intensity_to_effect(DesignLibrary.description("atmospherics", kwargs.get("environment_3")), env_3_int),
             *custom_effects,
         ]
     )
@@ -1519,8 +1549,11 @@ class PGFX_LogoDesignerStudio:
                 "decoration": (SHARED_DECOR, {"default": "none"}),
                 "action": (SHARED_ACTS, {"default": "none"}),
                 "environment_1": (SHARED_ATMOS, {"default": "none"}),
+                "environment_1_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.05}),
                 "environment_2": (SHARED_ATMOS, {"default": "none"}),
+                "environment_2_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.05}),
                 "environment_3": (SHARED_ATMOS, {"default": "none"}),
+                "environment_3_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.05}),
                 "style_mode": (SHARED_STYLES, {"default": "creative"}),
                 "intensity": ("FLOAT", {"default": 1.0, "min": 0.2, "max": 2.0}),
                 "extra_instruction": ("STRING", {"default": "", "multiline": True}),
