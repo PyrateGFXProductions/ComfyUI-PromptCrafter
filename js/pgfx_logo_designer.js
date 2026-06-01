@@ -1049,24 +1049,45 @@ class LogoStudioUI {
         const active = this.canvas.getActiveObject();
         if (!active) return;
 
+        // Helper to safely update a readout span
+        const _valEl = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+
         // Common
-        document.getElementById('pgfx-opacity').value = active.opacity || 1;
-        document.getElementById('pgfx-rotation').value = active.angle || 0;
-        document.getElementById('pgfx-skew-x').value = active.skewX || 0;
+        const opacityVal = active.opacity != null ? active.opacity : 1;
+        const rotationVal = Math.round(active.angle || 0);
+        const skewVal = Math.round(active.skewX || 0);
+        const strokeVal = active.strokeWidth || 0;
+
+        document.getElementById('pgfx-opacity').value = opacityVal;
+        document.getElementById('pgfx-rotation').value = rotationVal;
+        document.getElementById('pgfx-skew-x').value = skewVal;
+
+        _valEl('pgfx-opacity-val', Math.round(opacityVal * 100) + '%');
+        _valEl('pgfx-rotation-val', rotationVal + '\u00b0');
+        _valEl('pgfx-skew-x-val', String(skewVal));
 
         // Colors
         if (active.fill) document.getElementById('pgfx-color-picker').value = active.fill;
         if (active.stroke) document.getElementById('pgfx-stroke-picker').value = active.stroke;
-        document.getElementById('pgfx-stroke-width').value = active.strokeWidth || 0;
+        document.getElementById('pgfx-stroke-width').value = strokeVal;
+        _valEl('pgfx-stroke-width-val', String(strokeVal));
 
         // Text specific
         if (active.type === 'i-text' || active.type === 'text') {
+            const sizeVal = active.fontSize || 100;
+            const letterVal = active.charSpacing || 0;
+            const lineVal = active.lineHeight || 1.16;
+
             document.getElementById('pgfx-font-select').value = active.fontFamily || 'Arial';
-            document.getElementById('pgfx-font-size').value = active.fontSize || 100;
+            document.getElementById('pgfx-font-size').value = sizeVal;
             document.getElementById('pgfx-font-weight').value = active.fontWeight || 'normal';
             document.getElementById('pgfx-font-style').value = active.fontStyle || 'normal';
-            document.getElementById('pgfx-line-spacing').value = active.lineHeight || 1.16;
-            document.getElementById('pgfx-letter-spacing').value = active.charSpacing || 0;
+            document.getElementById('pgfx-line-spacing').value = lineVal;
+            document.getElementById('pgfx-letter-spacing').value = letterVal;
+
+            _valEl('pgfx-font-size-val', String(Math.round(sizeVal)));
+            _valEl('pgfx-letter-spacing-val', String(Math.round(letterVal)));
+            _valEl('pgfx-line-spacing-val', parseFloat(lineVal).toFixed(2));
 
             // Alignment buttons visual state (optional enhancement)
             const alignment = active.textAlign || 'center';
@@ -1201,16 +1222,47 @@ class LogoStudioUI {
         // --- ASSET IMPORTER ---
         const fileInput = document.getElementById('pgfx-import-input');
         document.getElementById('pgfx-import-btn').onclick = () => fileInput.click();
-        fileInput.onchange = (e) => {
+        fileInput.onchange = async (e) => {
             const file = e.target.files[0];
             if(!file) return;
 
-            const reader = new FileReader();
             const isSVG = file.type === "image/svg+xml" || file.name.endsWith('.svg');
 
-            const url = URL.createObjectURL(file);
+            // Generate clean unique filename to avoid conflicts and cache collisions
+            const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const uniqueName = `pgfx_${Date.now()}_${cleanName}`;
+
+            let url = URL.createObjectURL(file);
+            let persistentUrl = null;
+
+            try {
+                const body = new FormData();
+                body.append("image", file, uniqueName);
+                body.append("overwrite", "true");
+                body.append("subfolder", "pgfx_assets");
+
+                const resp = await fetch("/upload/image", {
+                    method: "POST",
+                    body
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    persistentUrl = `/view?filename=${encodeURIComponent(data.name)}&type=input&subfolder=${encodeURIComponent(data.subfolder || '')}`;
+                    console.log("[PGFX Studio] Persistent asset uploaded:", persistentUrl);
+                } else {
+                    console.warn("[PGFX Studio] Asset upload failed, falling back to local Blob URL");
+                }
+            } catch (err) {
+                console.error("[PGFX Studio] Asset upload exception:", err);
+            }
+
+            const targetUrl = persistentUrl || url;
+            if (persistentUrl) {
+                URL.revokeObjectURL(url); // Not using the blob URL, revoke it now
+            }
+
             if (isSVG) {
-                fabric.loadSVGFromURL(url, (objects, options) => {
+                fabric.loadSVGFromURL(targetUrl, (objects, options) => {
                     const obj = fabric.util.groupSVGElements(objects, options);
                     if (!obj) return;
                     obj.set({ left: this.targetWidth / 2, top: this.targetHeight / 2, originX: 'center', originY: 'center' });
@@ -1219,16 +1271,16 @@ class LogoStudioUI {
                     this.canvas.add(obj);
                     this.canvas.setActiveObject(obj);
                     commitCanvasChange();
-                    URL.revokeObjectURL(url);
+                    if (!persistentUrl) URL.revokeObjectURL(url); // Revoke fallback blob URL after load
                 });
             } else {
-                fabric.Image.fromURL(url, (img) => {
+                fabric.Image.fromURL(targetUrl, (img) => {
                     img.set({ left: this.targetWidth / 2, top: this.targetHeight / 2, originX: 'center', originY: 'center' });
                     if (img.width > 800) img.scaleToWidth(800);
                     this.canvas.add(img);
                     this.canvas.setActiveObject(img);
                     commitCanvasChange();
-                    URL.revokeObjectURL(url);
+                    if (!persistentUrl) URL.revokeObjectURL(url); // Revoke fallback blob URL after load
                 });
             }
             fileInput.value = '';
@@ -1297,6 +1349,8 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-stroke-width').oninput = (e) => {
             const active = this.canvas.getActiveObject();
+            const valEl = document.getElementById('pgfx-stroke-width-val');
+            if (valEl) valEl.textContent = e.target.value;
             if (active) {
                 active.set('strokeWidth', parseInt(e.target.value));
                 commitCanvasChange();
@@ -1319,6 +1373,8 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-font-size').oninput = (e) => {
             const active = this.canvas.getActiveObject();
+            const valEl = document.getElementById('pgfx-font-size-val');
+            if (valEl) valEl.textContent = e.target.value;
             if (active && active.type.includes('text')) {
                 active.set('fontSize', parseInt(e.target.value));
                 commitCanvasChange();
@@ -1343,6 +1399,8 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-letter-spacing').oninput = (e) => {
             const active = this.canvas.getActiveObject();
+            const valEl = document.getElementById('pgfx-letter-spacing-val');
+            if (valEl) valEl.textContent = e.target.value;
             if (active && active.type.includes('text')) {
                 active.set('charSpacing', parseInt(e.target.value));
                 commitCanvasChange();
@@ -1351,6 +1409,8 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-line-spacing').oninput = (e) => {
             const active = this.canvas.getActiveObject();
+            const valEl = document.getElementById('pgfx-line-spacing-val');
+            if (valEl) valEl.textContent = parseFloat(e.target.value).toFixed(2);
             if (active && active.type.includes('text')) {
                 active.set('lineHeight', parseFloat(e.target.value));
                 commitCanvasChange();
@@ -1371,6 +1431,8 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-rotation').oninput = (e) => {
             const active = this.canvas.getActiveObject();
+            const valEl = document.getElementById('pgfx-rotation-val');
+            if (valEl) valEl.textContent = e.target.value + '°';
             if (active) {
                 active.rotate(parseInt(e.target.value));
                 commitCanvasChange();
@@ -1379,6 +1441,8 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-skew-x').oninput = (e) => {
             const active = this.canvas.getActiveObject();
+            const valEl = document.getElementById('pgfx-skew-x-val');
+            if (valEl) valEl.textContent = e.target.value;
             if (active) {
                 active.set('skewX', parseInt(e.target.value));
                 commitCanvasChange();
@@ -1387,6 +1451,8 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-opacity').oninput = (e) => {
             const active = this.canvas.getActiveObject();
+            const valEl = document.getElementById('pgfx-opacity-val');
+            if (valEl) valEl.textContent = Math.round(parseFloat(e.target.value) * 100) + '%';
             if (active) {
                 active.set('opacity', parseFloat(e.target.value));
                 commitCanvasChange();
@@ -1617,6 +1683,29 @@ class LogoStudioUI {
                              (activeObject && activeObject.isEditing);
 
             if(isTyping && !e.ctrlKey) return; // Allow Ctrl shortcuts like Ctrl+G even when typing, but block single keys
+
+            // ARROW KEYS: Nudge active object (1px standard, 10px with Shift)
+            if (['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(e.key)) {
+                if (activeObject) {
+                    e.preventDefault();
+                    const moveAmount = e.shiftKey ? 10 : 1;
+                    let deltaX = 0;
+                    let deltaY = 0;
+
+                    if (e.key === 'ArrowLeft') deltaX = -moveAmount;
+                    else if (e.key === 'ArrowRight') deltaX = moveAmount;
+                    else if (e.key === 'ArrowUp') deltaY = -moveAmount;
+                    else if (e.key === 'ArrowDown') deltaY = moveAmount;
+
+                    activeObject.set({
+                        left: activeObject.left + deltaX,
+                        top: activeObject.top + deltaY
+                    });
+                    activeObject.setCoords();
+                    this.canvas.fire('object:modified', { target: activeObject });
+                    this.canvas.requestRenderAll();
+                }
+            }
 
             // DELETE / BACKSPACE: Remove object
             if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -2003,14 +2092,17 @@ class LogoStudioUI {
                                 <div class="pgfx-row">
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Size</span>
                                     <input type="range" id="pgfx-font-size" min="10" max="600" value="100" style="flex: 1;">
+                                    <span id="pgfx-font-size-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">100</span>
                                 </div>
                                 <div class="pgfx-row">
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Letter</span>       
                                     <input type="range" id="pgfx-letter-spacing" min="-100" max="1000" value="0" style="flex: 1;">
+                                    <span id="pgfx-letter-spacing-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">0</span>
                                 </div>
                                 <div class="pgfx-row">
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Line</span>
                                     <input type="range" id="pgfx-line-spacing" min="0.1" max="5" step="0.05" value="1.16" style="flex: 1;">
+                                    <span id="pgfx-line-spacing-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">1.16</span>
                                 </div>
                             </div>
 
@@ -2028,6 +2120,7 @@ class LogoStudioUI {
                                 <div class="pgfx-row">
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Stroke</span>       
                                     <input type="range" id="pgfx-stroke-width" min="0" max="100" value="0" style="flex: 1;">
+                                    <span id="pgfx-stroke-width-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">0</span>
                                 </div>
                             </div>
 
@@ -2037,14 +2130,17 @@ class LogoStudioUI {
                                 <div class="pgfx-row">
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Rotate</span>       
                                     <input type="range" id="pgfx-rotation" min="-180" max="180" value="0" style="flex: 1;">
+                                    <span id="pgfx-rotation-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">0°</span>
                                 </div>
                                 <div class="pgfx-row">
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Skew X</span>       
                                     <input type="range" id="pgfx-skew-x" min="-100" max="100" value="0" style="flex: 1;">
+                                    <span id="pgfx-skew-x-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">0</span>
                                 </div>
                                 <div class="pgfx-row">
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Opacity</span>      
                                     <input type="range" id="pgfx-opacity" min="0" max="1" step="0.05" value="1" style="flex: 1;">
+                                    <span id="pgfx-opacity-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">100%</span>
                                 </div>
                             </div>
 
@@ -2094,7 +2190,9 @@ class LogoStudioUI {
 
                                     <b style="color:#e4e4e7;">Keyboard</b><br>
                                     â€¢ <span style="color:#06b6d4;">TAB / SHIFT+TAB</span>: Cycle Objects<br>  
-                                    â€¢ <span style="color:#06b6d4;">DEL / BACKSPACE</span>: Delete Selected<br><br>
+                                    â€¢ <span style="color:#06b6d4;">DEL / BACKSPACE</span>: Delete Selected<br>
+                                    â€¢ <span style="color:#06b6d4;">Arrow Keys</span>: Nudge Object (1px)<br>
+                                    â€¢ <span style="color:#06b6d4;">SHIFT + Arrow Keys</span>: Nudge Object (10px)<br><br>
 
                                     <b style="color:#e4e4e7;">Shortcuts</b><br>
                                     â€¢ <span style="color:#06b6d4;">Double-Click</span>: Edit Text Layers<br>  
@@ -2242,7 +2340,7 @@ app.registerExtension({
                     const parts = currentSrc.split("/");
                     const filename = parts.pop();
                     const subfolder = parts.join("/");
-                    realSrc = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}`;
+                    realSrc = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}&t=${Date.now()}`;
                 }
                 img.src = realSrc;
                 this._pgfxPreviewImg = img;

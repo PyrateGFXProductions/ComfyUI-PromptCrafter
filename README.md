@@ -77,6 +77,8 @@ A persistent **Fabric.js** canvas workspace with a full professional toolbar, wi
 - 🌫️ **Three Environment Slots** — `environment_1`, `environment_2`, `environment_3` let you stack independent atmospheric effects (particles, fog, lightning, smoke, etc.).
 - 🎚️ **Per-Environment Intensity** — Each environment slot has its own `_intensity` slider (0.0–2.0). `0.0` disables the effect; `0.5` = subtle/sparse; `1.0` = normal; `1.5` = heavy; `2.0` = dramatic/intense.
 - 🎨 **Style Sliders** — `geometry_adherence` (0–1) and `creative_flair` (0–1) with high-contrast prompt variance at extremes.
+- 🎚️ **Inline Value Displays** — Each styling/transform slider (Size, Letter spacing, Line height, Stroke, Rotate, Skew X, and Opacity) features a precise live numerical readout span for immediate value reference.
+- ⌨️ **Keyboard Nudging Controls** — Selected elements can be nudged smoothly using keyboard arrow keys: single-pixel micro adjustments by default, or 10-pixel adjustments when combined with the Shift key (matching Figma/Inkscape/Illustrator standards). Fully integrated with undo/redo history.
 - 📝 **Prompt Style** — Toggle between `conversational` (natural prose) and `object_list` (token-based) generation modes.
 - 🔌 **Float Outputs** — `geometry_adherence` and `creative_flair` are exposed as FLOAT output pins, wireable into samplers, ControlNet, or any downstream node.
 
