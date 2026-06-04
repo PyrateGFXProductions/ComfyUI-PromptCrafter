@@ -1,7 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-// Helper to inject CSS
 const injectStyles = () => {
     if (document.getElementById("pgfx-visual-browser-styles")) return;
     const style = document.createElement("style");
@@ -9,8 +8,8 @@ const injectStyles = () => {
     style.textContent = `
         .pgfx-browser-container {
             display: flex;
-            flex-direction: row;
-            gap: 12px;
+            flex-direction: column;
+            gap: 8px;
             background: #111113;
             border: 1px solid rgba(255,255,255,0.1);
             border-radius: 8px;
@@ -20,70 +19,133 @@ const injectStyles = () => {
             pointer-events: auto;
             min-height: 400px;
         }
-        .pgfx-browser-main {
+        .pgfx-browser-header {
             display: flex;
-            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
             gap: 8px;
-            flex: 1;
-            min-width: 280px;
         }
-        .pgfx-browser-details {
-            width: 180px;
-            background: #18181b;
-            border-radius: 6px;
-            padding: 10px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            border-left: 1px solid #333;
+        .pgfx-browser-title {
             font-size: 11px;
-        }
-        .pgfx-details-title {
-            font-family: 'Impact', 'Arial Black', sans-serif;
-            text-transform: uppercase;
+            font-weight: bold;
             color: #06b6d4;
-            font-size: 14px;
-            letter-spacing: 0.5px;
-            border-bottom: 1px solid #333;
-            padding-bottom: 4px;
-            margin-bottom: 4px;
+            white-space: nowrap;
         }
-        .pgfx-details-row {
+        .pgfx-breadcrumbs {
             display: flex;
-            flex-direction: column;
+            flex-wrap: wrap;
+            align-items: center;
             gap: 2px;
-        }
-        .pgfx-details-label {
-            font-family: 'Impact', 'Arial Black', sans-serif;
-            font-size: 10px;
-            text-transform: uppercase;
-            color: #888;
-            letter-spacing: 0.5px;
-        }
-        .pgfx-details-value {
-            font-family: 'Inter', system-ui, sans-serif;
-            color: #eee;
-            word-break: break-all;
+            padding: 4px 8px;
             background: #000;
-            padding: 4px 6px;
-            border-radius: 3px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            font-size: 11px;
+            min-height: 28px;
+        }
+        .pgfx-breadcrumb-segment {
+            cursor: pointer;
+            color: #06b6d4;
+            padding: 1px 4px;
+            border-radius: 2px;
+            white-space: nowrap;
+        }
+        .pgfx-breadcrumb-segment:hover {
+            background: #1a1a2e;
+        }
+        .pgfx-breadcrumb-sep {
+            color: #555;
+            margin: 0 2px;
+        }
+        .pgfx-breadcrumb-current {
+            color: #aaa;
+            white-space: nowrap;
+        }
+        .pgfx-toolbar {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .pgfx-btn {
+            background: #18181b;
+            border: 1px solid #333;
+            color: #aaa;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 10px;
+            white-space: nowrap;
+        }
+        .pgfx-btn:hover {
+            background: #222;
+            color: white;
+        }
+        .pgfx-btn:disabled {
+            opacity: 0.4;
+            cursor: default;
         }
         .pgfx-browser-search {
             background: #000;
             border: 1px solid #444;
             color: white;
-            padding: 6px 10px;
+            padding: 4px 8px;
             border-radius: 4px;
-            font-size: 12px;
+            font-size: 11px;
             outline: none;
+            flex: 1;
+            min-width: 80px;
         }
         .pgfx-browser-search:focus {
             border-color: #06b6d4;
         }
+        .pgfx-browser-main {
+            display: flex;
+            gap: 8px;
+            flex: 1;
+            min-height: 0;
+        }
+        .pgfx-folder-list {
+            width: 160px;
+            min-width: 120px;
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 4px;
+            overflow-y: auto;
+            padding: 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+            max-height: 280px;
+        }
+        .pgfx-folder-item {
+            padding: 4px 6px;
+            font-size: 11px;
+            cursor: pointer;
+            border-radius: 3px;
+            color: #ccc;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .pgfx-folder-item:hover {
+            background: #1a1a2e;
+            color: white;
+        }
+        .pgfx-folder-item.active-folder {
+            background: #06b6d4;
+            color: black;
+        }
+        .pgfx-grid-area {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
         .pgfx-browser-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
+            grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+            gap: 6px;
             max-height: 280px;
             overflow-y: auto;
             padding-right: 4px;
@@ -104,6 +166,12 @@ const injectStyles = () => {
             border: 2px solid transparent;
             transition: all 0.2s ease;
             position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: #888;
+            text-align: center;
         }
         .pgfx-browser-item:hover {
             border-color: #06b6d4;
@@ -119,23 +187,68 @@ const injectStyles = () => {
             height: 100%;
             object-fit: cover;
         }
-        .pgfx-refresh-btn {
-            background: #18181b;
-            border: 1px solid #333;
-            color: #aaa;
-            padding: 2px 8px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 10px;
-            align-self: flex-end;
+        .pgfx-folder-thumb {
+            font-size: 24px;
+            opacity: 0.5;
         }
-        .pgfx-refresh-btn:hover {
-            background: #222;
-            color: white;
+        .pgfx-pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 4px;
+            margin-top: 4px;
+        }
+        .pgfx-page-info {
+            font-size: 10px;
+            color: #888;
+            white-space: nowrap;
+        }
+        .pgfx-browser-details {
+            width: 160px;
+            min-width: 120px;
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 10px;
+            max-height: 280px;
+            overflow-y: auto;
+        }
+        .pgfx-details-title {
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #06b6d4;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 4px;
+        }
+        .pgfx-details-row {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+        .pgfx-details-label {
+            font-size: 9px;
+            text-transform: uppercase;
+            color: #888;
+            letter-spacing: 0.5px;
+        }
+        .pgfx-details-value {
+            color: #eee;
+            word-break: break-all;
+            background: #111;
+            padding: 3px 5px;
+            border-radius: 2px;
         }
     `;
     document.head.appendChild(style);
 };
+
+const thumbCache = new Map();
 
 app.registerExtension({
     name: "PromptCrafter.VisualFolderLoader",
@@ -152,140 +265,305 @@ app.registerExtension({
             const folderWidget = node.widgets.find(w => w.name === "folder");
             const selectedImageWidget = node.widgets.find(w => w.name === "selected_image");
 
-            // Hide the selected_image widget
             selectedImageWidget.type = "hidden";
 
-            // Create Visual Browser Container
+            let currentFolder = folderWidget.value || ".";
+            let allSubfolders = [];
+
+            // --- State ---
+            let imageData = { images: [], total: 0, page: 0, total_pages: 1 };
+            let currentPage = 0;
+            const perPage = 18;
+
+            // --- Thumbnail cache ---
+            const getCachedThumb = (url) => {
+                if (thumbCache.has(url)) return thumbCache.get(url);
+                const img = new Image();
+                img.src = url;
+                thumbCache.set(url, img);
+                return img;
+            };
+
+            const clearImageCache = () => {
+                // Only clear image data cache, not rendered Image objects
+            };
+
+            // --- Container ---
             const container = document.createElement("div");
             container.className = "pgfx-browser-container";
 
-            // Left Side: Browser
-            const mainContent = document.createElement("div");
-            mainContent.className = "pgfx-browser-main";
-            container.appendChild(mainContent);
-
+            // --- Header row ---
             const headerRow = document.createElement("div");
-            headerRow.style.display = "flex";
-            headerRow.style.justifyContent = "space-between";
-            headerRow.style.alignItems = "center";
-            headerRow.style.marginBottom = "4px";
+            headerRow.className = "pgfx-browser-header";
 
             const title = document.createElement("span");
-            title.textContent = "Visual Browser";
-            title.style.fontSize = "11px";
-            title.style.fontWeight = "bold";
-            title.style.color = "#06b6d4";
+            title.className = "pgfx-browser-title";
+            title.textContent = "PGFX Visual Browser";
+
+            const headerToolbar = document.createElement("div");
+            headerToolbar.className = "pgfx-toolbar";
 
             const refreshBtn = document.createElement("button");
-            refreshBtn.className = "pgfx-refresh-btn";
-            refreshBtn.textContent = "Refresh Folders";
+            refreshBtn.className = "pgfx-btn";
+            refreshBtn.textContent = "↻ Refresh";
             refreshBtn.onclick = async (e) => {
                 e.stopPropagation();
-                await refreshFolders();
-                await refreshImages();
+                await loadSubfolders();
+                await loadImages(0);
             };
 
-            headerRow.append(title, refreshBtn);
-            mainContent.appendChild(headerRow);
+            headerToolbar.appendChild(refreshBtn);
+            headerRow.append(title, headerToolbar);
+            container.appendChild(headerRow);
+
+            // --- Breadcrumbs ---
+            const breadcrumbs = document.createElement("div");
+            breadcrumbs.className = "pgfx-breadcrumbs";
+            container.appendChild(breadcrumbs);
+
+            // --- Search row ---
+            const searchRow = document.createElement("div");
+            searchRow.style.display = "flex";
+            searchRow.style.gap = "6px";
+            searchRow.style.alignItems = "center";
 
             const searchInput = document.createElement("input");
             searchInput.className = "pgfx-browser-search";
-            searchInput.placeholder = "🔍 Search images...";
-            mainContent.appendChild(searchInput);
+            searchInput.placeholder = "Search images...";
+            searchRow.appendChild(searchInput);
+            container.appendChild(searchRow);
+
+            // --- Main area (folder sidebar + grid + details) ---
+            const mainArea = document.createElement("div");
+            mainArea.className = "pgfx-browser-main";
+
+            // Folder list sidebar
+            const folderList = document.createElement("div");
+            folderList.className = "pgfx-folder-list";
+            mainArea.appendChild(folderList);
+
+            // Grid area
+            const gridArea = document.createElement("div");
+            gridArea.className = "pgfx-grid-area";
 
             const grid = document.createElement("div");
             grid.className = "pgfx-browser-grid";
-            mainContent.appendChild(grid);
+            gridArea.appendChild(grid);
 
-            // Pagination Controls
             const paginationRow = document.createElement("div");
-            paginationRow.style.display = "flex";
-            paginationRow.style.justifyContent = "space-between";
-            paginationRow.style.alignItems = "center";
-            paginationRow.style.marginTop = "8px";
-            paginationRow.style.padding = "0 4px";
+            paginationRow.className = "pgfx-pagination";
 
             const prevBtn = document.createElement("button");
-            prevBtn.className = "pgfx-refresh-btn";
+            prevBtn.className = "pgfx-btn";
             prevBtn.textContent = "◀ Prev";
-            prevBtn.style.padding = "4px 10px";
 
-            const pageIndicator = document.createElement("span");
-            pageIndicator.style.fontSize = "11px";
-            pageIndicator.style.color = "#888";
-            pageIndicator.textContent = "Pg 1 / 1";
+            const pageInfo = document.createElement("span");
+            pageInfo.className = "pgfx-page-info";
+            pageInfo.textContent = "Page 0 / 0";
 
             const nextBtn = document.createElement("button");
-            nextBtn.className = "pgfx-refresh-btn";
+            nextBtn.className = "pgfx-btn";
             nextBtn.textContent = "Next ▶";
-            nextBtn.style.padding = "4px 10px";
 
-            paginationRow.append(prevBtn, pageIndicator, nextBtn);
-            mainContent.appendChild(paginationRow);
+            paginationRow.append(prevBtn, pageInfo, nextBtn);
+            gridArea.appendChild(paginationRow);
+            mainArea.appendChild(gridArea);
 
-            // Right Side: Details
+            // Details panel
             const detailsPanel = document.createElement("div");
             detailsPanel.className = "pgfx-browser-details";
-            detailsPanel.innerHTML = '<div class="pgfx-details-title">Details</div><div style="color: #666; text-align: center; margin-top: 20px;">Select an image</div>';
-            container.appendChild(detailsPanel);
+            detailsPanel.innerHTML = '<div class="pgfx-details-title">Details</div><div style="color: #666; text-align: center; margin-top: 10px;">Select an image</div>';
+            mainArea.appendChild(detailsPanel);
 
-            // Add DOM widget to the node
+            container.appendChild(mainArea);
+
+            // --- DOM Widget ---
             const widget = node.addDOMWidget("VisualBrowser", "visual_browser", container, {
                 serialize: false,
                 getValue() { return selectedImageWidget.value; },
                 setValue(v) { selectedImageWidget.value = v; }
             });
+            node.size = [680, 480];
 
-            // Adjust node size to fit browser
-            node.size = [550, 480];
+            // --- Breadcrumb rendering ---
+            const renderBreadcrumbs = () => {
+                breadcrumbs.innerHTML = "";
+                const segments = currentFolder === "." ? [] : currentFolder.split("/");
+                const allParts = [".", ...segments];
 
-            let allImages = [];
-            let currentPage = 0;
-            const itemsPerPage = 9; // Reduced to 9 for 3x3 grid to make room for details
+                allParts.forEach((part, idx) => {
+                    if (idx > 0) {
+                        const sep = document.createElement("span");
+                        sep.className = "pgfx-breadcrumb-sep";
+                        sep.textContent = "/";
+                        breadcrumbs.appendChild(sep);
+                    }
 
-            const refreshFolders = async () => {
+                    const isLast = idx === allParts.length - 1;
+                    if (isLast) {
+                        const span = document.createElement("span");
+                        span.className = "pgfx-breadcrumb-current";
+                        const label = part === "." ? "Output" : part;
+                        span.textContent = label;
+                        breadcrumbs.appendChild(span);
+                    } else {
+                        const span = document.createElement("span");
+                        span.className = "pgfx-breadcrumb-segment";
+                        const label = part === "." ? "Output" : part;
+                        span.textContent = label;
+                        const path = allParts.slice(0, idx + 1).join("/");
+                        span.onclick = () => navigateTo(path);
+                        breadcrumbs.appendChild(span);
+                    }
+                });
+            };
+
+            // --- Navigation ---
+            const navigateTo = async (folder) => {
+                currentFolder = folder;
+                folderWidget.value = folder;
+                renderBreadcrumbs();
+                await loadSubfolders();
+                await loadImages(0);
+            };
+
+            // --- Load subfolders ---
+            const loadSubfolders = async () => {
                 try {
-                    const response = await api.fetchApi("/pgfx/browser/folders");
-                    const folders = await response.json();
-                    if (folderWidget) {
-                        folderWidget.options.values = folders;
-                        if (!folders.includes(folderWidget.value)) {
-                            folderWidget.value = folders[0] || ".";
-                        }
+                    const resp = await api.fetchApi(`/pgfx/browser/subfolders?folder=${encodeURIComponent(currentFolder)}`);
+                    const data = await resp.json();
+                    allSubfolders = data.subfolders || [];
+
+                    folderList.innerHTML = "";
+
+                    // Parent folder item
+                    if (data.parent) {
+                        const parentItem = document.createElement("div");
+                        parentItem.className = "pgfx-folder-item";
+                        parentItem.textContent = "📁 .. (Up)";
+                        parentItem.onclick = () => navigateTo(data.parent);
+                        folderList.appendChild(parentItem);
+                    }
+
+                    // Subfolder items
+                    allSubfolders.forEach(sf => {
+                        const item = document.createElement("div");
+                        item.className = "pgfx-folder-item";
+                        item.textContent = "📁 " + sf;
+                        item.onclick = () => {
+                            const target = currentFolder === "." ? sf : currentFolder + "/" + sf;
+                            navigateTo(target);
+                        };
+                        folderList.appendChild(item);
+                    });
+
+                    if (allSubfolders.length === 0 && !data.parent) {
+                        folderList.innerHTML = '<div style="padding: 8px; font-size: 10px; color: #555; text-align: center;">No subfolders</div>';
                     }
                 } catch (e) {
-                    console.error("[PGFX] Error refreshing folders:", e);
+                    console.error("[PGFX] Error loading subfolders:", e);
                 }
             };
 
-            const refreshImages = async () => {
-                const folder = folderWidget.value;
+            // --- Load images with server pagination ---
+            let searchTimer = null;
+
+            const loadImages = async (page) => {
+                const folder = currentFolder;
                 grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px; color: #666;">Loading...</div>';
-                
+
                 try {
-                    const response = await api.fetchApi(`/pgfx/browser/images?folder=${encodeURIComponent(folder)}`);
-                    allImages = await response.json();
-                    currentPage = 0;
-                    renderImages();
-                    
-                    // If we have a selected image already, update its details
-                    if (selectedImageWidget.value) {
-                        updateDetails(selectedImageWidget.value);
-                    }
+                    const query = searchInput.value.trim();
+                    let url = `/pgfx/browser/images?folder=${encodeURIComponent(folder)}&page=${page}&per_page=${perPage}`;
+                    if (query) url += `&search=${encodeURIComponent(query)}`;
+                    const resp = await api.fetchApi(url);
+                    const data = await resp.json();
+
+                    imageData = data;
+                    currentPage = data.page;
+                    renderGrid();
+                    updatePagination();
                 } catch (e) {
-                    console.error("[PGFX] Error refreshing images:", e);
+                    console.error("[PGFX] Error loading images:", e);
                     grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px; color: #f44;">Error loading images</div>';
                 }
             };
 
+            // --- Render grid ---
+            const renderGrid = () => {
+                grid.innerHTML = "";
+                const images = imageData.images || [];
+
+                if (images.length === 0) {
+                    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px; color: #666;">No images found</div>';
+                    return;
+                }
+
+                images.forEach(imgData => {
+                    const item = document.createElement("div");
+                    item.className = "pgfx-browser-item";
+                    if (selectedImageWidget.value === imgData.filename) {
+                        item.classList.add("selected");
+                    }
+
+                    const img = document.createElement("img");
+                    const thumbUrl = imgData.url + "&preview=true";
+                    const cached = getCachedThumb(thumbUrl);
+                    if (cached.complete && cached.naturalWidth > 0) {
+                        img.src = thumbUrl;
+                    } else {
+                        img.src = thumbUrl;
+                    }
+                    img.loading = "lazy";
+
+                    item.append(img);
+
+                    item.onclick = () => {
+                        const prevSelected = grid.querySelector(".selected");
+                        if (prevSelected) prevSelected.classList.remove("selected");
+                        item.classList.add("selected");
+                        selectedImageWidget.value = imgData.filename;
+                        updateDetails(imgData.filename);
+                        node.setDirtyCanvas(true, true);
+                    };
+
+                    grid.appendChild(item);
+                });
+            };
+
+            // --- Pagination controls ---
+            const updatePagination = () => {
+                const tp = imageData.total_pages || 1;
+                pageInfo.textContent = `Page ${currentPage + 1} / ${tp} (${imageData.total} images)`;
+                prevBtn.disabled = currentPage <= 0;
+                nextBtn.disabled = currentPage >= tp - 1;
+            };
+
+            prevBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (currentPage > 0) loadImages(currentPage - 1);
+            };
+
+            nextBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (currentPage < imageData.total_pages - 1) loadImages(currentPage + 1);
+            };
+
+            // --- Search with debounce ---
+            searchInput.oninput = () => {
+                if (searchTimer) clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => loadImages(0), 250);
+            };
+
+            // --- Details ---
             const updateDetails = async (filename) => {
-                const folder = folderWidget.value;
-                detailsPanel.innerHTML = '<div class="pgfx-details-title">Details</div><div style="color: #666; text-align: center; margin-top: 20px;">Loading...</div>';
-                
+                const folder = currentFolder;
+                detailsPanel.innerHTML = '<div class="pgfx-details-title">Details</div><div style="color: #666; text-align: center; margin-top: 10px;">Loading...</div>';
+
                 try {
-                    const response = await api.fetchApi(`/pgfx/browser/details?folder=${encodeURIComponent(folder)}&filename=${encodeURIComponent(filename)}`);
-                    const details = await response.json();
-                    
+                    const resp = await api.fetchApi(`/pgfx/browser/details?folder=${encodeURIComponent(folder)}&filename=${encodeURIComponent(filename)}`);
+                    const details = await resp.json();
+
                     detailsPanel.innerHTML = `
                         <div class="pgfx-details-title">Details</div>
                         <div class="pgfx-details-row">
@@ -311,97 +589,21 @@ app.registerExtension({
                     `;
                 } catch (e) {
                     console.error("[PGFX] Error fetching details:", e);
-                    detailsPanel.innerHTML = '<div class="pgfx-details-title">Details</div><div style="color: #f44;">Error loading details</div>';
+                    detailsPanel.innerHTML = '<div class="pgfx-details-title">Details</div><div style="color: #f44; margin-top: 10px;">Error loading details</div>';
                 }
             };
 
-            const renderImages = () => {
-                grid.innerHTML = "";
-                
-                const query = searchInput.value.toLowerCase();
-                const filtered = allImages.filter(img => img.filename.toLowerCase().includes(query));
-                
-                const totalPages = Math.ceil(filtered.length / itemsPerPage) || 1;
-                if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
-
-                const start = currentPage * itemsPerPage;
-                const end = start + itemsPerPage;
-                const pageItems = filtered.slice(start, end);
-
-                pageIndicator.textContent = `Pg ${currentPage + 1} / ${totalPages}`;
-                prevBtn.disabled = currentPage === 0;
-                nextBtn.disabled = (currentPage + 1) >= totalPages;
-
-                if (pageItems.length === 0) {
-                    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px; color: #666;">No images found</div>';
-                    return;
-                }
-
-                pageItems.forEach(imgData => {
-                    const item = document.createElement("div");
-                    item.className = "pgfx-browser-item";
-                    if (selectedImageWidget.value === imgData.filename) {
-                        item.classList.add("selected");
-                    }
-
-                    const img = document.createElement("img");
-                    img.src = imgData.url + "&preview=true";
-                    img.loading = "lazy";
-
-                    item.append(img);
-
-                    item.onclick = () => {
-                        const prevSelected = grid.querySelector(".selected");
-                        if (prevSelected) prevSelected.classList.remove("selected");
-                        
-                        item.classList.add("selected");
-                        selectedImageWidget.value = imgData.filename;
-                        updateDetails(imgData.filename);
-                        node.setDirtyCanvas(true, true);
-                    };
-
-                    grid.appendChild(item);
-                });
+            // --- Initialization ---
+            const init = async () => {
+                renderBreadcrumbs();
+                await loadSubfolders();
+                await loadImages(0);
             };
 
-            searchInput.oninput = () => {
-                currentPage = 0;
-                renderImages();
-            };
-
-            prevBtn.onclick = (e) => {
-                e.stopPropagation();
-                if (currentPage > 0) {
-                    currentPage--;
-                    renderImages();
-                }
-            };
-
-            nextBtn.onclick = (e) => {
-                e.stopPropagation();
-                const filtered = allImages.filter(img => img.filename.toLowerCase().includes(searchInput.value.toLowerCase()));
-                if ((currentPage + 1) * itemsPerPage < filtered.length) {
-                    currentPage++;
-                    renderImages();
-                }
-            };
-
-            // Intercept folder changes
-            const origCallback = folderWidget.callback;
-            folderWidget.callback = function(value, canvas, node) {
-                refreshImages();
-                if (this.triggerDraw) this.triggerDraw();
-                else if (node && node.triggerDraw) node.triggerDraw();
-                if (origCallback) return origCallback.apply(this, arguments);
-            };
-
-            // Initial load
-            setTimeout(() => {
-                refreshImages();
-            }, 100);
+            setTimeout(init, 100);
         };
 
-        // Ensure addDOMWidget helper exists on the node
+        // --- addDOMWidget shim ---
         const onNodeCreatedBase = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function() {
             if (!this.addDOMWidget) {
@@ -411,72 +613,47 @@ app.registerExtension({
                         name: name,
                         get value() { return options.getValue ? options.getValue() : element.value; },
                         set value(v) { if (options.setValue) options.setValue(v); else element.value = v; },
-                        draw(ctx, node, widget_width, y, widget_height) {
-                            const margin = 10;
-                            const elRect = element.getBoundingClientRect();
-                            const top = node.pos[1] + y + margin;
-                            const left = node.pos[0] + margin;
-                            
-                            // Align with LiteGraph zoom/pan
-                            const transform = window.getComputedStyle(ctx.canvas).getPropertyValue('transform');
-                            // This is a simplified approach, real ComfyUI might need more complex sync
-                            // But usually append to document.body and positioning works for static zoom
-                            // Better: use the built-in DOM widget support if available or shim it.
-                        },
+                        draw() {},
                         element: element,
-                        options: options
+                        options: options,
                     };
-                    
+
                     element.style.position = "absolute";
                     element.style.zIndex = 10;
-                    
-                    // ComfyUI standard: widgets are added to node.widgets
                     this.widgets.push(widget);
-                    
-                    // We need to attach the element to the actual DOM. 
-                    // ComfyUI's internal handling of DOM widgets usually appends them to the parent of the canvas.
+
                     const canvasParent = app.canvas.el.parentElement;
                     canvasParent.appendChild(element);
-                    
-                    // Cleanup on node remove
+
                     const onRemoved = this.onRemoved;
                     this.onRemoved = function() {
                         element.remove();
                         onRemoved?.apply(this, arguments);
                     };
-                    
-                    // Positioning logic
+
                     const updatePosition = () => {
                         if (!this.graph || !element.parentElement) return;
-                        
                         const scale = app.canvas.ds.scale;
                         const offset = app.canvas.ds.offset;
-                        
-                        // Find this widget's index to calculate Y
                         const widgetIndex = this.widgets.indexOf(widget);
                         let yOffset = 0;
-                        for(let i=0; i<widgetIndex; i++) {
+                        for (let i = 0; i < widgetIndex; i++) {
                             yOffset += this.widgets[i].computeSize ? this.widgets[i].computeSize()[1] : 20;
                         }
-                        
-                        // Roughly calculate position
                         const x = (this.pos[0] + offset[0]) * scale;
-                        const y = (this.pos[1] + offset[1] + 60 + yOffset) * scale; // 60 for title bar + inputs
-                        
+                        const y = (this.pos[1] + offset[1] + 60 + yOffset) * scale;
                         element.style.left = `${x}px`;
                         element.style.top = `${y}px`;
                         element.style.width = `${(this.size[0] - 20) * scale}px`;
                         element.style.transformOrigin = "top left";
                         element.style.transform = `scale(${scale})`;
-                        
                         if (this.flags?.collapsed) {
                             element.style.display = "none";
                         } else {
                             element.style.display = "flex";
                         }
                     };
-                    
-                    // Hook into graph draw
+
                     const origDraw = this.onDrawForeground;
                     this.onDrawForeground = function() {
                         updatePosition();

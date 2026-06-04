@@ -174,36 +174,81 @@ async def get_folders(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
-@PromptServer.instance.routes.get("/pgfx/browser/images")
-async def get_images(request):
+@PromptServer.instance.routes.get("/pgfx/browser/subfolders")
+async def get_subfolders(request):
     try:
         folder = request.query.get("folder", ".")
         root_output = folder_paths.get_output_directory()
         target_dir = os.path.abspath(os.path.join(root_output, folder))
 
-        # Security check
         if not target_dir.startswith(os.path.abspath(root_output)):
             return web.json_response({"error": "Access denied"}, status=403)
+        if not os.path.exists(target_dir):
+            return web.json_response({"error": "Folder not found"}, status=404)
 
+        subfolders = []
+        for entry in os.scandir(target_dir):
+            if entry.is_dir() and not entry.name.startswith("."):
+                subfolders.append(entry.name)
+        subfolders.sort(key=str.lower)
+
+        # Determine parent
+        parent = None
+        parent_dir = os.path.dirname(target_dir)
+        if parent_dir.startswith(os.path.abspath(root_output)):
+            parent = os.path.relpath(parent_dir, root_output).replace("\\", "/")
+            if parent == ".":
+                parent = None
+
+        return web.json_response({"subfolders": subfolders, "parent": parent})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.get("/pgfx/browser/images")
+async def get_images(request):
+    try:
+        folder = request.query.get("folder", ".")
+        search = request.query.get("search", "").strip().lower()
+        page = int(request.query.get("page", "0"))
+        per_page = int(request.query.get("per_page", "18"))
+        root_output = folder_paths.get_output_directory()
+        target_dir = os.path.abspath(os.path.join(root_output, folder))
+
+        if not target_dir.startswith(os.path.abspath(root_output)):
+            return web.json_response({"error": "Access denied"}, status=403)
         if not os.path.exists(target_dir):
             return web.json_response({"error": "Folder not found"}, status=404)
 
         valid_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.bmp'}
-        images = []
-        for f in os.listdir(target_dir):
-            if os.path.splitext(f)[1].lower() in valid_extensions:
-                full_path = os.path.join(target_dir, f)
-                mtime = os.path.getmtime(full_path)
-                images.append({
-                    "filename": f,
+        all_images = []
+        for entry in os.scandir(target_dir):
+            if entry.is_file() and os.path.splitext(entry.name)[1].lower() in valid_extensions:
+                if search and search not in entry.name.lower():
+                    continue
+                mtime = entry.stat().st_mtime
+                all_images.append({
+                    "filename": entry.name,
                     "mtime": mtime,
-                    "url": f"/view?filename={f}&subfolder={folder}&type=output"
+                    "url": f"/view?filename={entry.name}&subfolder={folder}&type=output"
                 })
 
-        # Sort newest first
-        images.sort(key=lambda x: x["mtime"], reverse=True)
-        
-        return web.json_response(images)
+        all_images.sort(key=lambda x: x["mtime"], reverse=True)
+
+        total = len(all_images)
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = max(0, min(page, total_pages - 1))
+        start = page * per_page
+        end = start + per_page
+        page_images = all_images[start:end]
+
+        return web.json_response({
+            "images": page_images,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+        })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
