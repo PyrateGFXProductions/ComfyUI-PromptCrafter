@@ -3,7 +3,32 @@ import re
 import torch
 import node_helpers
 
+# ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        import os
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
+
 class PGFXTextEncodeAceStepAudio15Advanced:
+    DESCRIPTION = get_node_description("PGFXTextEncodeAceStepAudio15Advanced")
     ACE15_LATENT_FRAMES_PER_SECOND = 25.0
     ACE15_AUDIO_CODE_TOKENS_PER_SECOND = 5.0
     TIMELINE_OFFSET_MODES = ["trim_pad", "wrap"]
@@ -376,7 +401,7 @@ class PGFXTextEncodeAceStepAudio15Advanced:
     RETURN_NAMES = ("CONDITIONING", "built_prompt")
     FUNCTION = "encode"
 
-    CATEGORY = "☠️PGFX🏴‍☠️ /Audio"
+    CATEGORY = "☠️PGFX /Audio"
     
     def _apply_semantic_dropout(self, tensor, dropout_prob, mask_value=0.0):
         """
@@ -771,6 +796,7 @@ class PGFXTextEncodeAceStepAudio15Advanced:
 
 
 class PGFXAceStep15LatentTimelineOffset:
+    DESCRIPTION = get_node_description("PGFXAceStep15LatentTimelineOffset")
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -802,7 +828,7 @@ class PGFXAceStep15LatentTimelineOffset:
 
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "offset"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Audio"
+    CATEGORY = "☠️PGFX /Audio"
 
     @staticmethod
     def _shift_samples(samples, offset_seconds, offset_mode, latent_fps):

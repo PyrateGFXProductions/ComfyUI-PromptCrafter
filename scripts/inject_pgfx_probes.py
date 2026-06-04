@@ -1,7 +1,7 @@
 import json
 import os
 
-workflow_path = "/home/pyrategfx/ComfyUI/custom_nodes/ComfyUI-PromptCrafter/workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json"
+workflow_path = os.path.join(os.path.dirname(__file__), "..", "workflows", "PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json")
 
 with open(workflow_path, 'r') as f:
     data = json.load(f)

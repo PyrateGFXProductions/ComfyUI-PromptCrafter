@@ -48,7 +48,7 @@ class PGFX_Studio_Sampler:
 
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "sample"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
+    CATEGORY = "☠️PGFX /Studio"
 
     def _analyze_audio(self, audio, band="All"):
         """Extracts energy levels from the audio waveform using FFT."""

@@ -1,7 +1,7 @@
 import json
 import os
 
-workflow_path = "/home/pyrategfx/ComfyUI/custom_nodes/ComfyUI-PromptCrafter/workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json"
+workflow_path = os.path.join(os.path.dirname(__file__), "..", "workflows", "PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json")
 backup_path = workflow_path + ".bak_proper"
 
 if not os.path.exists(backup_path):

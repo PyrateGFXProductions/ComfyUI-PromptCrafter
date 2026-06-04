@@ -16,6 +16,31 @@ import comfy.ldm.modules.attention
 import comfy.model_base
 import comfy.utils
 
+# ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        import os
+        import re
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
+
 # --- RUNTIME PATCH FOR CPU ATTENTION ---
 # Some MultiGPU patches force the LTX2/LTXV text encoder to CPU.
 # ComfyUI's default optimized_attention may try to use xformers on these CPU tensors,
@@ -275,7 +300,7 @@ class PGFX_Studio_LTX2Queue:
     Automatically calculates the number of required generation sets based on audio
     duration and frames per scene, and dispatches the required jobs to the ComfyUI API queue.
     """
-    DESCRIPTION = "Manages sequential LTX-2 video clip generation by querying the ComfyUI API queue based on audio timing."
+    DESCRIPTION = get_node_description("PGFX_Studio_LTX2Queue")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -294,7 +319,7 @@ class PGFX_Studio_LTX2Queue:
     RETURN_TYPES = ("DICT", "DICT", "INT", "INT", "BOOLEAN")
     RETURN_NAMES = ("PROJECT_CONFIG", "TIMING_MAP", "current_set_index", "total_sets", "is_final_set")
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
+    CATEGORY = "☠️PGFX /Studio"
 
     _SESSION_STATE = {}
 
@@ -398,7 +423,7 @@ class PGFX_Studio_Stitcher:
     Collects the generated clips from the output directory and concatenates them
     with the original audio stem using ffmpeg.
     """
-    DESCRIPTION = "Stitches sequential video clips together with the original audio track into a final MP4."
+    DESCRIPTION = get_node_description("PGFX_Studio_Stitcher")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -417,7 +442,7 @@ class PGFX_Studio_Stitcher:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("final_video_path",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
+    CATEGORY = "☠️PGFX /Studio"
     OUTPUT_NODE = True
 
     def execute(self, PROJECT_CONFIG: Dict[str, Any], is_final_set: bool, original_audio: Any = None, file_prefix: str = "LTX2_Part_", clear_parts_after_stitch: bool = False) -> Tuple[str]:
@@ -534,13 +559,14 @@ class PGFX_LTXVLatentUpsampler:
     Enhanced LTXV Latent Upsampler that preserves and spatially upscales the noise mask.
     Prevents NoneType errors in subsequent sampling stages.
     """
+    DESCRIPTION = get_node_description("PGFX_LTXVLatentUpsampler")
     @classmethod
     def INPUT_TYPES(s):
         return LTXVLatentUpsampler.INPUT_TYPES()
 
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "upsample"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
+    CATEGORY = "☠️PGFX /Studio"
 
     def _ensure_5d_latent(self, tensor):
         """Normalize legacy 4D video latents to 5D [B,C,F,H,W]."""
@@ -673,6 +699,7 @@ class PGFX_LTXVCorrectiveMask:
     Ensures a noise_mask is present and correctly shaped for LTXV nodes.
     Used before SamplerCustomAdvanced to prevent 'NoneType' shape errors.
     """
+    DESCRIPTION = get_node_description("PGFX_LTXVCorrectiveMask")
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -687,7 +714,7 @@ class PGFX_LTXVCorrectiveMask:
 
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "fix_mask"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
+    CATEGORY = "☠️PGFX /Studio"
 
     def _flatten_nested_leaves(self, value):
         if getattr(value, "is_nested", False):
@@ -879,6 +906,7 @@ class PGFX_LTXVCorrectiveMask:
         return (result,)
 
 class PGFX_LatentProbe:
+    DESCRIPTION = get_node_description("PGFX_LatentProbe")
     def __init__(self):
         pass
 
@@ -893,7 +921,7 @@ class PGFX_LatentProbe:
 
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "probe"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
+    CATEGORY = "☠️PGFX /Studio"
 
     def probe(self, samples, label):
         print(f"--- [PGFX_Probe: {label}] ---", file=sys.stderr)

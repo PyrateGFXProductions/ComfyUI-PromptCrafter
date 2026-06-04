@@ -20,6 +20,29 @@ try:
 except Exception as e:
     print(f"[PGFX Logo Studio] Could not load font manager: {e}")
 
+# ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
+
 
 DEFAULT_LIBRARY = {
     "materials": {
@@ -403,6 +426,7 @@ def _summarize_canvas_json(canvas_json_text):
         if not isinstance(obj, dict):
             continue
         obj_type = str(obj.get("type", "object"))
+        obj_name = _normalize_text(obj.get("name", ""))
         position = _relative_position(obj.get("left"), obj.get("top"), width, height)
 
         if obj_type in {"i-text", "text", "textbox"}:
@@ -412,7 +436,12 @@ def _summarize_canvas_json(canvas_json_text):
             font_family = _normalize_text(obj.get("fontFamily", ""))
             font_size = _safe_int(obj.get("fontSize"), 0)
             font_weight = _normalize_text(obj.get("fontWeight", ""))
-            parts = [f'text "{text_value}"' if text_value else "text layer", f"at {position}"]
+            
+            label = f'text "{text_value}"' if text_value else "text layer"
+            if obj_name:
+                label = f'"{obj_name}" ({label})'
+
+            parts = [label, f"at {position}"]
             if font_family:
                 parts.append(f"font {font_family}")
             if font_size > 0:
@@ -423,15 +452,34 @@ def _summarize_canvas_json(canvas_json_text):
             continue
 
         shape = _shape_name(obj)
-        shape_bits = [shape, f"at {position}"]
-        fill = _normalize_text(obj.get("fill", ""))
-        if fill and fill not in {"", "transparent"}:
-            shape_bits.append(f"fill {fill}")
+        label = f'"{obj_name}" ({shape})' if obj_name else shape
+        shape_bits = [label, f"at {position}"]
+        
+        fill = obj.get("fill")
+        if isinstance(fill, dict) and fill.get("type"):
+            shape_bits.append(f"{fill.get('type')} gradient fill")
+        else:
+            fill_str = _normalize_text(fill or "")
+            if fill_str and fill_str not in {"", "transparent"}:
+                shape_bits.append(f"fill {fill_str}")
+        
+        if obj.get("shadow"):
+            shape_bits.append("has drop shadow")
+
         layout_bits.append(", ".join(shape_bits))
 
     summary["text"] = "\n".join(_dedupe_preserve(text_fragments))
     if layout_bits:
         summary["layout_summary"] = "Source layout includes " + "; ".join(layout_bits[:8]) + "."
+
+    # Check for Elite Agent Focus
+    agent_focus = data.get("agent_focus")
+    if isinstance(agent_focus, dict):
+        focus_layer = agent_focus.get("target_layer")
+        focus_props = agent_focus.get("properties")
+        if focus_layer and focus_props:
+            summary["layout_summary"] += f"\nCRITICAL AGENT FOCUS: User is currently refining the layer \"{focus_layer}\". Details: {focus_props}"
+
     return summary
 
 
@@ -1051,6 +1099,7 @@ def _build_logo_prompt(kwargs):
 
 class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
     _pgfx_llm_controls_promoted = True
+    DESCRIPTION = get_node_description("PGFX_LogoDesignerAgent")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1067,12 +1116,12 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
         )
         return {
             "required": {
-                "user_prompt": ("STRING", {"multiline": True, "placeholder": "Describe your vision..."}),
-                "thinking_model": (all_models, {"default": thinking_default}),
-                "instruct_model": (all_models, {"default": instruct_default}),
-                "image_count": ("INT", {"default": 1, "min": 1, "max": 8}),
-                "output_intent_override": (["AI DETERMINED"] + SHARED_INTENTS, {"default": "AI DETERMINED"}),
-                "style_mode_override": (["AI DETERMINED"] + SHARED_STYLES, {"default": "AI DETERMINED"}),
+                "user_prompt": ("STRING", {"multiline": True, "placeholder": "Describe your vision...", "tooltip": "Explain your creative concept. The Elite Agent will translate this into precise Studio settings."}),
+                "thinking_model": (all_models, {"default": thinking_default, "tooltip": "Select a high-intelligence 'Reasoning' model (like DeepSeek-R1) for the best architectural layout decisions."}),
+                "instruct_model": (all_models, {"default": instruct_default, "tooltip": "Select a fast model to handle the final JSON configuration mapping."}),
+                "image_count": ("INT", {"default": 1, "min": 1, "max": 8, "tooltip": "The number of connected reference images the Agent should analyze."}),
+                "output_intent_override": (["AI DETERMINED"] + SHARED_INTENTS, {"default": "AI DETERMINED", "tooltip": "Force a specific output format (Vector or Raster), or let the Agent decide based on your prompt."}),
+                "style_mode_override": (["AI DETERMINED"] + SHARED_STYLES, {"default": "AI DETERMINED", "tooltip": "Force a specific artistic style (e.g., 3D Render, Tattoo), or let the Agent analyze your intent."}),
             },
             "optional": {
                 "geometry_adherence": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
@@ -1137,7 +1186,7 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
     ) + tuple(f"reference_image_{i}" for i in range(1, 9))
 
     FUNCTION = "think"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Design"
+    CATEGORY = "☠️PGFX /Design"
 
     def think(
         self,
@@ -1314,10 +1363,12 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
         ).strip()
 
         agent_temperature = _clamp((_temp * 0.5) + (_flair * 0.35), 0.1, 1.1)
-        ok, raw_response = api_clients.query_model_auto(
+        
+        # Elite Optimization: Use the specialized reasoning backend with forced JSON mode
+        ok, raw_response = api_clients._reason_with_model(
             instruct_model,
             prompt=user_payload,
-            system=system_prompt + "\nJSON ONLY.",
+            system=system_prompt, # _reason_with_model will add "JSON ONLY" context if needed
             images=llm_images or None,
             temperature=agent_temperature,
             seed=_seed,
@@ -1533,6 +1584,7 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
 
 
 class PGFX_LogoDesignerStudio:
+    DESCRIPTION = get_node_description("PGFX_LogoDesignerStudio")
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -1567,7 +1619,7 @@ class PGFX_LogoDesignerStudio:
     RETURN_TYPES = ("IMAGE", "MASK", "STRING", "FLOAT", "FLOAT")
     RETURN_NAMES = ("image", "mask", "flux_prompt", "geometry_adherence", "creative_flair")
     FUNCTION = "generate_data"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Design"
+    CATEGORY = "☠️PGFX /Design"
 
     def generate_data(self, **kwargs):
         flux_prompt = _build_logo_prompt(kwargs)
@@ -1624,6 +1676,7 @@ class PGFX_LogoDesignerStudio:
 
 
 class PGFX_ImageVectorizer:
+    DESCRIPTION = get_node_description("PGFX_ImageVectorizer")
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -1653,7 +1706,7 @@ class PGFX_ImageVectorizer:
     RETURN_NAMES = ("svg_string", "image_preview")
     FUNCTION = "vectorize"
     OUTPUT_NODE = True
-    CATEGORY = "☠️PGFX🏴‍☠️ /Design"
+    CATEGORY = "☠️PGFX /Design"
 
     def vectorize(self, image, preset, mode, posterize_levels, dithering, layering_mode, color_matching, noise_suppression, path_precision):
         if preset != "Custom (Use Manual Sliders)":

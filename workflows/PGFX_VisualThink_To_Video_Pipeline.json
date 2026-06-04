@@ -1,0 +1,62 @@
+{
+  "last_node_id": 7,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Note",
+      "pos": [10, 10],
+      "size": [500, 140],
+      "widgets_values": ["PGFX VISUAL THINK → VIDEO PIPELINE\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nConcept → Cinematic Vision → Structured JSON → Video\n\nCHAIN: VisualThink (THINK) → VisualInstruct (INSTRUCT) → KeyframePromptScheduler → your LTX nodes\n\nType a scene concept into VisualThink. It generates a cinematic description.\nVisualInstruct extracts structured JSON with style/mood/lighting/action keys.\nThe output JSON feeds into your video generation pipeline."]
+    },
+    {
+      "id": 2,
+      "type": "PromptCrafter_VisualThink",
+      "pos": [150, 180],
+      "size": [400, 300],
+      "widgets_values": ["A neon-lit cyberpunk market in 2099, rain-slicked streets reflecting holographic advertisements, merchants in augmented reality visors haggling over mysterious tech artifacts.", "openai/gpt-4o", 1, 120, "auto", true, "{}"]
+    },
+    {
+      "id": 3,
+      "type": "PromptCrafter_VisualInstruct",
+      "pos": [600, 180],
+      "size": [400, 300],
+      "inputs": [{"name": "visual_think_output", "type": "STRING", "link": 1}],
+      "widgets_values": ["openai/gpt-4o", 1, 120, "auto", true, "{}"]
+    },
+    {
+      "id": 4,
+      "type": "Note",
+      "pos": [600, 480],
+      "size": [400, 90],
+      "widgets_values": ["VisualInstruct JSON OUTPUT:\n{\n  \"content\": \"...\",\n  \"style\": \"...\",\n  \"camera_language\": \"...\",\n  \"lighting\": \"...\",\n  \"mood\": \"...\",\n  \"palette\": \"...\",\n  \"era\": \"...\",\n  \"action\": \"...\"   ← FIXED: action key now included\n}"]
+    },
+    {
+      "id": 5,
+      "type": "Note",
+      "pos": [150, 480],
+      "size": [400, 90],
+      "widgets_values": ["VisualThink OUTPUT:\nCONTENT: A bustling cyberpunk market...\nSTYLE: Cinematic cyberpunk noir...\nCAMERA LANGUAGE: Low-angle dolly shot...\nLIGHTING: Neon and holographic glow...\nMOOD: Gritty yet vibrant...\nCOLOR PALETTE: Magenta, cyan, deep indigo...\nERA: 2099 cyberpunk"]
+    },
+    {
+      "id": 6,
+      "type": "KeyframePromptScheduler",
+      "pos": [1050, 180],
+      "size": [315, 150],
+      "inputs": [{"name": "schedule_json", "type": "STRING", "link": 2}],
+      "widgets_values": [0]
+    },
+    {
+      "id": 7,
+      "type": "Note",
+      "pos": [1050, 350],
+      "size": [315, 120],
+      "widgets_values": ["ATTACH YOUR LTX PIPELINE HERE:\n\nThe KeyframePromptScheduler outputs per-frame prompts from the VisualInstruct JSON.\n\n→ Use PGFX_LTXVInContextSampler as your video generator.\n→ The \"action\" key in the JSON drives motion description for better video coherence.\n→ Connect guiding_latents with IC-LoRA for in-context style transfer."]
+    }
+  ],
+  "links": [
+    [1, 2, 0, 3, 0, "STRING"],
+    [2, 3, 0, 6, 0, "STRING"]
+  ],
+  "version": 0.4
+}

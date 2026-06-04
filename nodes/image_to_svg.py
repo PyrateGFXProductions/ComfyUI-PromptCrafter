@@ -13,6 +13,31 @@ from ..utils import pgfx_utils as utils
 # Set up logging for the brand
 logger = logging.getLogger("PromptCrafter")
 
+# ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        import os
+        import re
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
+
 # Dependency Guard
 try:
     import vtracer
@@ -25,6 +50,7 @@ class CP_ImageToSVG:
     PromptCrafter Image to SVG
     Converts model-generated images into vector SVG files locally.
     """
+    DESCRIPTION = get_node_description("CP_ImageToSVG")
     
     @classmethod
     def INPUT_TYPES(s):
@@ -46,7 +72,7 @@ class CP_ImageToSVG:
     RETURN_TYPES = ("STRING", "STRING",)
     RETURN_NAMES = ("svg_raw", "file_path",)
     FUNCTION = "vectorize"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Vector"
+    CATEGORY = "☠️PGFX /Design"
 
     def vectorize(self, image, colormode, hierarchical, color_precision, layer_difference, path_precision, simplify_tolerance, filename_prefix="PromptCrafter_Vector"):
         if vtracer is None:
@@ -96,6 +122,7 @@ class CP_SaveSVG:
     PromptCrafter Save SVG
     Saves a raw SVG string to the output directory.
     """
+    DESCRIPTION = get_node_description("CP_SaveSVG")
     
     @classmethod
     def INPUT_TYPES(s):
@@ -111,7 +138,7 @@ class CP_SaveSVG:
     RETURN_NAMES = ("file_path",)
     FUNCTION = "save_svg"
     OUTPUT_NODE = True
-    CATEGORY = "☠️PGFX🏴‍☠️ /Vector"
+    CATEGORY = "☠️PGFX /Design"
 
     def save_svg(self, svg_raw, filename_prefix, output_path):
         # 1. Resolve Output Directory

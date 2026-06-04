@@ -95,6 +95,29 @@ def _enforce_local_only_models(local_only_models, selected_models):
         )
 
 # ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
+
+# ------------------------------------------------------------------------------------
 # PromptCrafter Creator Nodes (Base, Image, Video, Lyrics)
 # ------------------------------------------------------------------------------------
 from ..core.pgfx_base_creator import PromptCrafter_BaseCreator
@@ -103,7 +126,7 @@ from ..core.pgfx_base_creator import PromptCrafter_BaseCreator
 # PromptCrafter_VisualCreator Node
 # ------------------------------------------------------------------------------------
 class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
-    DESCRIPTION = "Enhanced visual creator with professional talent direction for superior prompt generation."
+    DESCRIPTION = get_node_description("PromptCrafter_VisualCreator")
     @classmethod
     def INPUT_TYPES(cls):
         combined_models = get_combined_models()
@@ -159,7 +182,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING") + ("IMAGE",) * MAX_IMAGES
     RETURN_NAMES = ("prompt", "schedule", "image_context", "negative_prompt", "model_out", "seed_out") + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /Creator"
+    CATEGORY = "☠️PGFX /Creator"
 
     def execute(self, instruction, subject, model, negative_prompt="", **kwargs):
         try:
@@ -487,9 +510,9 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
 # PromptCrafter_LyricsCreator Node
 # ------------------------------------------------------------------------------------
 class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
-    DESCRIPTION = "Enhanced lyrics-to-prompt creator with professional film crew direction."
-
+    DESCRIPTION = get_node_description("PromptCrafter_LyricsCreator")
     @classmethod
+
     def get_whisper_models(cls):
         """Scans for local Whisper models and returns a list including defaults."""
         default_models = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
@@ -597,7 +620,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
     RETURN_TYPES = STATIC_RETURN_TYPES + ("IMAGE",) * MAX_DYNAMIC_IMAGES + ("STRING",)
     RETURN_NAMES = STATIC_RETURN_NAMES + tuple(f"reference_image_{i}" for i in range(1, MAX_DYNAMIC_IMAGES + 1)) + ("schedule_json",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Creator"
+    CATEGORY = "☠️PGFX /Creator"
 
     @staticmethod
     def _resolve_schedule_json_output(schedule_value):
@@ -923,7 +946,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
 # Easy / Simplified Variants
 # ------------------------------------------------------------------------------------
 class PromptCrafter_VisualCreatorEasy(PromptCrafter_VisualCreator):
-    DESCRIPTION = "Simplified Visual Creator with optimum defaults."
+    DESCRIPTION = get_node_description("PromptCrafter_VisualCreatorEasy")
     @classmethod
     def INPUT_TYPES(cls):
         combined_models = get_combined_models()
@@ -945,7 +968,7 @@ class PromptCrafter_VisualCreatorEasy(PromptCrafter_VisualCreator):
         return super().execute(instruction, subject, model, negative_prompt=negative_prompt, **kwargs)
 
 class PromptCrafter_LyricsCreatorEasy(PromptCrafter_LyricsCreator):
-    DESCRIPTION = "Simplified Lyrics Creator with optimum defaults."
+    DESCRIPTION = get_node_description("PromptCrafter_LyricsCreatorEasy")
     @classmethod
     def INPUT_TYPES(cls):
         combined_models = get_combined_models()

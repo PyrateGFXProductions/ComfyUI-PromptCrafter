@@ -72,7 +72,7 @@ class PromptCrafter_DirectorAgent:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("decision_json", "reasoning_log")
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Agents"
+    CATEGORY = "☠️PGFX /Studio"
 
     def execute(self, thinking_model, instruct_model, whisper_data, style_list, debug_mode, image_a=None, image_b=None, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         

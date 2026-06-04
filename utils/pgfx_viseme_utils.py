@@ -42,12 +42,43 @@ VISEME_TO_LANDMARK_MAP = {
 }
 
 PHONEME_TO_VISEME_MAP = {
-    'SIL': 'SIL', 'F': 'LABIODENTAL', 'V': 'LABIODENTAL', 'TH': 'DENTAL', 'DH': 'DENTAL', 
-    'P': 'SIL', 'B': 'SIL', 'M': 'SIL', 'AA': 'AA', 'AE': 'AA', 'AH': 'AA', 'AO': 'AA', 
-    'AW': 'AA', 'AY': 'AA', 'IY': 'EE', 'IH': 'EE', 'EH': 'EE', 'EY': 'EE', 'OW': 'OO', 
-    'OY': 'OO', 'UW': 'OO', 'UH': 'OO', 'L': 'S_L', 'S': 'S_L', 'Z': 'S_L', 'R': 'OO', 
-    'W': 'OO', 'Y': 'EE', 'CH': 'O_SH', 'JH': 'O_SH', 'SH': 'O_SH', 'ZH': 'O_SH', 
-    'G': 'AA', 'K': 'AA', 'NG': 'AA', 'N': 'S_L', 'HH': 'AA'
+    'SIL': {'viseme': 'SIL', 'weight': 1.0}, 
+    'F': {'viseme': 'LABIODENTAL', 'weight': 0.2}, 
+    'V': {'viseme': 'LABIODENTAL', 'weight': 0.2}, 
+    'TH': {'viseme': 'DENTAL', 'weight': 0.2}, 
+    'DH': {'viseme': 'DENTAL', 'weight': 0.2}, 
+    'P': {'viseme': 'SIL', 'weight': 0.15}, 
+    'B': {'viseme': 'SIL', 'weight': 0.15}, 
+    'M': {'viseme': 'SIL', 'weight': 0.4}, 
+    'AA': {'viseme': 'AA', 'weight': 0.8}, 
+    'AE': {'viseme': 'AA', 'weight': 0.8}, 
+    'AH': {'viseme': 'AA', 'weight': 0.7}, 
+    'AO': {'viseme': 'AA', 'weight': 0.9}, 
+    'AW': {'viseme': 'AA', 'weight': 0.9}, 
+    'AY': {'viseme': 'AA', 'weight': 0.9}, 
+    'IY': {'viseme': 'EE', 'weight': 0.8}, 
+    'IH': {'viseme': 'EE', 'weight': 0.6}, 
+    'EH': {'viseme': 'EE', 'weight': 0.7}, 
+    'EY': {'viseme': 'EE', 'weight': 0.8}, 
+    'OW': {'viseme': 'OO', 'weight': 0.9}, 
+    'OY': {'viseme': 'OO', 'weight': 0.9}, 
+    'UW': {'viseme': 'OO', 'weight': 1.0}, 
+    'UH': {'viseme': 'OO', 'weight': 0.6}, 
+    'L': {'viseme': 'S_L', 'weight': 0.3}, 
+    'S': {'viseme': 'S_L', 'weight': 0.3}, 
+    'Z': {'viseme': 'S_L', 'weight': 0.3}, 
+    'R': {'viseme': 'OO', 'weight': 0.4}, 
+    'W': {'viseme': 'OO', 'weight': 0.4}, 
+    'Y': {'viseme': 'EE', 'weight': 0.4}, 
+    'CH': {'viseme': 'O_SH', 'weight': 0.3}, 
+    'JH': {'viseme': 'O_SH', 'weight': 0.3}, 
+    'SH': {'viseme': 'O_SH', 'weight': 0.3}, 
+    'ZH': {'viseme': 'O_SH', 'weight': 0.3}, 
+    'G': {'viseme': 'AA', 'weight': 0.2}, 
+    'K': {'viseme': 'AA', 'weight': 0.2}, 
+    'NG': {'viseme': 'AA', 'weight': 0.3}, 
+    'N': {'viseme': 'S_L', 'weight': 0.3}, 
+    'HH': {'viseme': 'AA', 'weight': 0.2}
 }
 
 EMOTION_PROFILES = {
@@ -63,6 +94,56 @@ COARTICULATION_PROFILES = {
     "Fast Speech": {"influence": 0.3, "smoothing": 1, "weights": (0.20, 0.60, 0.20)},
     "None": {"influence": 0.0, "smoothing": 0, "weights": (0.00, 1.00, 0.00)},
 }
+
+def gaussian_smooth_landmarks(landmarks_series, sigma=1.0):
+    """
+    Applies a 1D Gaussian temporal filter using pure numpy to eliminate jitter.
+    landmarks_series: [total_frames, num_landmarks, 2]
+    """
+    if len(landmarks_series) < 3 or sigma <= 0:
+        return landmarks_series
+        
+    series_np = np.array(landmarks_series) # [F, L, 2]
+    f_count = series_np.shape[0]
+    
+    # 1. Create Gaussian Kernel
+    radius = int(3 * sigma)
+    x = np.arange(-radius, radius + 1)
+    kernel = np.exp(-(x**2) / (2 * sigma**2))
+    kernel = kernel / kernel.sum()
+    
+    # 2. Apply convolution along temporal axis (axis 0)
+    smoothed = np.copy(series_np)
+    for l in range(series_np.shape[1]): # For each landmark
+        for d in range(2): # For X and Y
+            # Pad ends to prevent "black bars" / closing mouth at start/end
+            signal = series_np[:, l, d]
+            padded = np.pad(signal, radius, mode='edge')
+            smoothed[:, l, d] = np.convolve(padded, kernel, mode='valid')
+            
+    return smoothed.tolist()
+
+def get_mouth_mask(landmarks, width, height, padding=0.2):
+    """
+    Generates a lip-focused mask based on landmark bounding box.
+    """
+    pts = np.array([(x * width, y * height) for x, y in landmarks])
+    min_x, min_y = np.min(pts, axis=0)
+    max_x, max_y = np.max(pts, axis=0)
+    
+    w = max_x - min_x
+    h = max_y - min_y
+    
+    # Add padding
+    min_x = max(0, min_x - w * padding)
+    min_y = max(0, min_y - h * padding)
+    max_x = min(width, max_x + w * padding)
+    max_y = min(height, max_y + h * padding)
+    
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rectangle([min_x, min_y, max_x, max_y], fill=255)
+    return mask
 
 def calculate_dynamic_intensity(frame_time, word_start, word_end):
     """Calculates sinusoidal intensity for visemes during a word's duration."""

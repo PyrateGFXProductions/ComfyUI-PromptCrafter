@@ -179,7 +179,31 @@ class AnyType(str):
 
 any_typ = AnyType("*")
 
+# ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
+
 class PromptCrafter_AudioSplitter_v2:
+    DESCRIPTION = get_node_description("PromptCrafter_AudioSplitter_v2")
     RETURN_TYPES = (
         "DICT", "FLOAT", "STRING", "INT", "STRING", "STRING", "STRING",
         "INT", "INT", "INT", "DICT", "STRING"
@@ -193,7 +217,7 @@ class PromptCrafter_AudioSplitter_v2:
     ) + tuple([f"audio_{i}" for i in range(1, 17)]) + ("signal_out",)
 
     FUNCTION = "run"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Audio"
+    CATEGORY = "☠️PGFX /Audio"
 
     def __init__(self):
         self.transcription_model = None

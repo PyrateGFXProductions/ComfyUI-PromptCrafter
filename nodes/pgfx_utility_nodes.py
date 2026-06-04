@@ -20,7 +20,6 @@ from typing import Union
 # Third-party imports
 import torch
 from PIL import Image, ImageDraw, ImageFont
-import librosa
 import numpy as np
 
 # ComfyUI imports
@@ -462,7 +461,7 @@ class PromptCrafter_QnA:
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "DICT")
     RETURN_NAMES = ("response_text", "response_json_str", "history_out", "reasoning_log", "project_state")
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Text"
     
     def execute(self, instruction, subject, model, project_state=None, **kwargs):
         try:
@@ -873,7 +872,7 @@ class PromptCrafter_QnA_Simple:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("response",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Text"
 
     def execute(self, prompt, model, image=None, timeout=120, **kwargs):
         try:
@@ -971,7 +970,7 @@ class PromptCrafter_LyricsThink:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("lyrics_think_output",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
+    CATEGORY = "☠️PGFX /Text"
 
     def execute(self, input_text, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         raw_text = "" if input_text is None else str(input_text)
@@ -1067,7 +1066,7 @@ class PromptCrafter_LyricsInstruct:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("lyrics_json",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
+    CATEGORY = "☠️PGFX /Text"
 
     def execute(self, lyrics_think_output, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not lyrics_think_output or not str(lyrics_think_output).strip():
@@ -1127,7 +1126,7 @@ class PromptCrafter_VisualThink:
     RETURN_TYPES = ("STRING",) + ("IMAGE",) * MAX_IMAGES
     RETURN_NAMES = ("visual_think_output",) + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
+    CATEGORY = "☠️PGFX /Text"
 
     def execute(self, input_text, model, image_count=1, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, image_weights_json="{}", **kwargs):
         images_with_weights = _collect_visual_dynamic_images(image_count=image_count, image_weights_json=image_weights_json, **kwargs)
@@ -1207,7 +1206,7 @@ class PromptCrafter_VisualInstruct:
     RETURN_TYPES = ("STRING",) + ("IMAGE",) * MAX_IMAGES
     RETURN_NAMES = ("visual_json",) + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
+    CATEGORY = "☠️PGFX /Text"
 
     def execute(self, visual_think_output, model, image_count=1, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, image_weights_json="{}", **kwargs):
         images_with_weights = _collect_visual_dynamic_images(image_count=image_count, image_weights_json=image_weights_json, **kwargs)
@@ -1223,11 +1222,13 @@ class PromptCrafter_VisualInstruct:
             You are a data extraction engine. Convert the visual concept description into a clean JSON object.
 
             RULES:
-            - Map each labeled section (CONTENT, STYLE, CAMERA LANGUAGE, LIGHTING, MOOD, COLOR PALETTE, ERA) to the corresponding JSON key.
+            - Map each labeled section (CONTENT, STYLE, CAMERA LANGUAGE, LIGHTING, MOOD, COLOR PALETTE, ERA, ACTION) to the corresponding JSON key.
             - If a section is empty or missing in the input, use your knowledge of the scene to fill it with appropriate details.
-            - The JSON object must have exactly these keys: "content", "style", "camera_language", "lighting", "mood", "palette", "era".
+            - The JSON object must have exactly these keys: "content", "style", "camera_language", "lighting", "mood", "palette", "era", "action".
             - Map "COLOR PALETTE" to the key "palette".
             - Map "CAMERA LANGUAGE" to the key "camera_language".
+            - Map "ACTION" to the key "action".
+            - For the "action" field: if the user's instruction explicitly describes an action, use that. Otherwise, infer a plausible action from the scene content. Use vivid, descriptive language suitable for a video generation prompt.
             - Return ONLY the raw JSON object. Do not include markdown code fences or commentary.
 
             INPUT DESCRIPTION:
@@ -1272,7 +1273,7 @@ class PromptCrafter_QnAThink:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("qna_think_output",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Think"
+    CATEGORY = "☠️PGFX /Text"
 
     def execute(self, prompt, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         if not prompt or not str(prompt).strip():
@@ -1323,7 +1324,7 @@ class PromptCrafter_QnAInstruct:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("formatted_output",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Text/Instruct"
+    CATEGORY = "☠️PGFX /Text"
 
     def execute(self, qna_think_output, format_instruction, model, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         raw_content = "" if qna_think_output is None else str(qna_think_output)
@@ -1633,7 +1634,7 @@ class PromptCrafter_Captioner:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("caption",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Text"
 
     def _sanitize_filename(self, text, max_length=150):
         """Sanitizes a string to be a valid filename."""
@@ -1839,7 +1840,7 @@ class PromptCrafter_AudioSplitter(creator_nodes.PromptCrafter_BaseCreator):
     RETURN_TYPES = tuple(["AUDIO"] * 16)
     RETURN_NAMES = tuple([f"audio_{i}" for i in range(1, 17)])
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /Creator"
+    CATEGORY = "☠️PGFX /Audio"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -2018,7 +2019,7 @@ class PromptCrafter_Formatter:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("formatted_prompt", "formatted_schedule")
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Text"
 
     def _format_text(self, text, prefix, suffix, find_text, replace_with):
         """Helper function to apply formatting rules to a single text string."""
@@ -2138,7 +2139,7 @@ class PromptCrafter_SaveTextFile:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("save_status",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Utils"
 
     def execute(self, text_to_save, folder_path, filename_template, model_name="", seed="", user_text="", custom_var="", file_type="txt"):
         replacements = {
@@ -2279,7 +2280,7 @@ class PromptCrafter_LTX2LocalPipelineBuilder:
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("manifest_json", "render_script", "manifest_path", "script_path", "status")
     FUNCTION = "build"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Studio"
 
     def _parse_schedule_items(self, schedule_json):
         parsed = None
@@ -2610,7 +2611,7 @@ class PromptCrafter_FileOrganizer:
     RETURN_TYPES = ("STRING", "STRING", "STRING")
     RETURN_NAMES = ("summary", "dry_run_plan", "generated_scheme_out")
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Utils"
     OUTPUT_NODE = True
 
     def _read_metadata(self, image_path):
@@ -3166,7 +3167,7 @@ class PromptCrafter_CacheUtility:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("status",)
     FUNCTION = "execute"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Utils"
 
     def execute(self, action):
         if action == "Clear Cache":
@@ -3310,7 +3311,7 @@ class PromptCrafter_VideoFrameSelector:
         "selection_info",
     )
     FUNCTION = "select_frames"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Video"
+    CATEGORY = "☠️PGFX /Video"
 
     @staticmethod
     def _ensure_frame_batch(video_frames):
@@ -3564,57 +3565,76 @@ class PromptCrafter_VideoFrameSelector:
 # ------------------------------------------------------------------------------------
 # In nodes.py, locate and replace the PromptCrafter_ImageSwitcher class:
 
-class PromptCrafter_ImageSwitcher:
-    DESCRIPTION = "Switches between multiple image inputs based on an index or randomly, triggered by a signal."
-    
+class PGFX_UniversalSwitchBox:
+    DESCRIPTION = "Intelligently routes multiple inputs (Images, Latents, Text, etc.) based on an index or by automatically detecting which pipeline is active. Eliminates the need for separate signal wiring."
+
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                # NEW: Switching mode selector
-                "image_count": ("INT", {"default": 2, "min": 2, "max": 16, "step": 1, "tooltip": "The number of image input pins to generate. Use the 'Manual Refresh' button to apply changes."}),
-                "switching_mode": (["Chronological (Index)", "Random Select"], {"default": "Chronological (Index)", "tooltip": "Method to choose the image: incremental using the index or pure random selection."}),
-                "signal": ("*", {"optional": True, "tooltip": "A signal from another node to force execution/switching."}),
+                "input_count": ("INT", {"default": 2, "min": 2, "max": 16, "step": 1, "tooltip": "The number of wildcard input pins to generate."}),
+                "switching_mode": (["Auto-Detect (Priority)", "Chronological (Index)", "Random Select"], {"default": "Auto-Detect (Priority)", "tooltip": "'Auto-Detect' intelligently routes the first pin that has actual data—perfect for switching between generation and upscale pipelines."}),
             },
             "optional": {
-                # Input for the chronological mode
-                "current_index": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1, "tooltip": "The 0-based index of the image to select (only used in Chronological mode)."}),
+                "current_index": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1, "tooltip": "The 0-based index of the input to select (used in Chronological mode)."}),
+            },
+            "hidden": {
+                "ui_preview": ("STRING", {"default": ""}),
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "INT")
-    RETURN_NAMES = ("selected_image", "selected_index")
-    FUNCTION = "switch_image"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    RETURN_TYPES = ("*", "INT")
+    RETURN_NAMES = ("selected_data", "selected_index")
+    FUNCTION = "route_input"
+    CATEGORY = "☠️PGFX /Utils"
 
-    def switch_image(self, switching_mode, image_count, current_index=0, signal=None, **kwargs):
-        images = []
-        
-        # 1. Collect all connected dynamic image inputs based on image_count
-        for i in range(1, image_count + 1):
-            key = f"image_{i}"
-            # Only append the image tensor if the pin exists and is connected
+    @classmethod
+    def route_input(cls, switching_mode, input_count, current_index=0, **kwargs):
+        active_inputs = {}
+
+        # 1. Collect all connected inputs that actually have data
+        for i in range(1, input_count + 1):
+            key = f"input_{i}"
             if key in kwargs and kwargs[key] is not None:
-                images.append(kwargs[key])
-        
-        if not images:
-            raise ValueError("PromptCrafter_ImageSwitcher: No images were provided or connected to the dynamic pins.")
+                active_inputs[i-1] = kwargs[key]
 
-        num_images = len(images)
+        if not active_inputs:
+            return (None, -1)
+
         selected_index = 0
 
-        # 2. Implement switching logic based on mode
-        if switching_mode == "Chronological (Index)":
-            # Use the user's index (clamped to prevent out-of-bounds error)
-            selected_index = max(0, min(num_images - 1, current_index))
-        
+        # 2. Routing Logic
+        if switching_mode == "Auto-Detect (Priority)":
+            sorted_keys = sorted(active_inputs.keys())
+            selected_index = sorted_keys[0]
+
         elif switching_mode == "Random Select":
-            # Select a random index from the connected images (0 to num_images - 1)
-            selected_index = random.randint(0, num_images - 1)
-        
-        # 3. Return the selected image and the index used
-        selected_image = images[selected_index]
-        return (selected_image, selected_index)
+            import random
+            selected_index = random.choice(list(active_inputs.keys()))
+
+        else: # Chronological (Index)
+            available_indices = sorted(active_inputs.keys())
+            if current_index in available_indices:
+                selected_index = current_index
+            else:
+                selected_index = min(available_indices, key=lambda x: abs(x - current_index))
+
+        selected_data = active_inputs[selected_index]
+
+        # 3. UI Preview (Only if data is an image tensor)
+        ui_data = {}
+        if isinstance(selected_data, torch.Tensor) and len(selected_data.shape) == 4:
+            try:
+                import nodes
+                preview = nodes.PreviewImage().save_images(selected_data)
+                ui_data = preview.get("ui", {})
+            except Exception:
+                pass
+
+        return {
+            "ui": ui_data, 
+            "result": (selected_data, selected_index)
+        }
 
 # ------------------------------------------------------------------------------------
 # PromptCrafter_OllamaRouterNode (OpenRouter-compatible workflow adapter)
@@ -3742,7 +3762,7 @@ class PromptCrafter_OllamaRouterNode:
     RETURN_TYPES = ("STRING", "IMAGE", "STRING", "STRING")
     RETURN_NAMES = ("Output", "image", "Stats", "Credits")
     FUNCTION = "generate_response"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Text"
 
     @staticmethod
     def _placeholder_image():
@@ -4243,7 +4263,7 @@ class PromptCrafter_PromptChunker:
         }
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Text"
 
     RETURN_TYPES = tuple(["STRING"] * MAX_OUTPUTS)
     RETURN_NAMES = tuple(f"prompt_scene_{i+1}" for i in range(MAX_OUTPUTS))
@@ -4295,7 +4315,7 @@ class PGFX_MultiImagePreview:
     RETURN_NAMES = tuple(f"reference_image_{i}" for i in range(1, 17))
     FUNCTION = "preview_images"
     OUTPUT_NODE = True
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Utils"
 
     def preview_images(self, image_count, **kwargs):
         from nodes import PreviewImage
@@ -4338,8 +4358,7 @@ class PGFX_MultiImagePreview:
 
 NODE_CLASS_MAPPINGS = {
     "PGFX_MultiImagePreview": PGFX_MultiImagePreview,
-    "PromptCrafter_QnA": PromptCrafter_QnA_Simple,
-    "PromptCrafter_QnA_Advanced": PromptCrafter_QnA,
+    "PromptCrafter_QnA": PromptCrafter_QnA,
     "PromptCrafter_QnA_Simple": PromptCrafter_QnA_Simple,
     "PromptCrafter_LyricsThink": PromptCrafter_LyricsThink,
     "PromptCrafter_LyricsInstruct": PromptCrafter_LyricsInstruct,
@@ -4356,14 +4375,13 @@ NODE_CLASS_MAPPINGS = {
     "PromptCrafter_SaveTextFile": PromptCrafter_SaveTextFile,
     "PromptCrafter_LTX2LocalPipelineBuilder": PromptCrafter_LTX2LocalPipelineBuilder,
     "PromptCrafter_OllamaRouterNode": PromptCrafter_OllamaRouterNode,
-    "PromptCrafter_ImageSwitcher": PromptCrafter_ImageSwitcher,
+    "PGFX_UniversalSwitchBox": PGFX_UniversalSwitchBox,
     "PromptCrafter_PromptChunker": PromptCrafter_PromptChunker,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_MultiImagePreview": "🖼️ Multi-Image Preview",
     "PromptCrafter_QnA": "💬 QnA",
-    "PromptCrafter_QnA_Advanced": "💬 QnA (Advanced)",
     "PromptCrafter_QnA_Simple": "💬 QnA (Simple)",
     "PromptCrafter_LyricsThink": "🧠 Lyrics Think",
     "PromptCrafter_LyricsInstruct": "✍️ Lyrics Instruct",
@@ -4372,10 +4390,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_QnAThink": "🧠 QnA Think",
     "PromptCrafter_QnAInstruct": "✍️ QnA Instruct",
     "PromptCrafter_Captioner": "🖼️ Image Captioner",
-    "PromptCrafter_VisualCreator": "✨ Visual Creator",
-    "PromptCrafter_SRTCreator": "📝 SRT Creator",
-    "PromptCrafter_LyricsCreator": "🎤 Lyrics Creator",
-    "PromptCrafter_AudioSplitter_v2": "🎤 Audio Splitter v2",
     "PromptCrafter_AudioSplitter": "🎤 Audio Splitter",
     "PromptCrafter_CacheUtility": "🧹 Cache Utility",
     "PromptCrafter_VideoFrameSelector": "🎞️ Frame Selector",
@@ -4384,7 +4398,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_SaveTextFile": "💾 Save Text File",
     "PromptCrafter_LTX2LocalPipelineBuilder": "🎬 LTX-2 Local Pipeline Builder",
     "PromptCrafter_OllamaRouterNode": "🦙 Ollama Router Node",
-    "PromptCrafter_ImageSwitcher": "🔀 Image Switcher",
+    "PGFX_UniversalSwitchBox": "🔀 PGFX Universal Switch Box",
     "PromptCrafter_PromptChunker": "🧩 Prompt Chunker",
 }
 

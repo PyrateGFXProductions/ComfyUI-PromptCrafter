@@ -25,7 +25,7 @@ class PGFX_Studio_ControlNet:
     RETURN_TYPES = ("CONTROL_NET_CONDITIONING", "IMAGE")
     RETURN_NAMES = ("conditioning", "preview_visemes")
     FUNCTION = "apply_visemes"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Studio"
+    CATEGORY = "☠️PGFX /Studio"
 
     def apply_visemes(self, viseme_depth, viseme_canny, strength, start_percent, end_percent, base_controlnet=None):
         # In a real ComfyUI environment, this would interface with the ControlNet logic.

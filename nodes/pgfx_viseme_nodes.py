@@ -7,8 +7,179 @@ from PIL import Image, ImageDraw
 
 from ..utils import pgfx_viseme_utils as viseme_utils
 
+# ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        import os
+        import re
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
+
+# ------------------------------------------------------------------------------------
+# PGFX_CinemaVisemeRig Node
+# ------------------------------------------------------------------------------------
+class PGFX_CinemaVisemeRig:
+    DESCRIPTION = get_node_description("PGFX_CinemaVisemeRig")
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "lyrics": ("STRING", {"multiline": True, "placeholder": "Enter the text to animate...", "tooltip": "The phonetic driver. The node will calculate precise mouth movements based on these words."}),
+                "fps": ("INT", {"default": 25, "min": 1, "max": 120}),
+                "target_mode": (["LivePortrait (Cyan/Magenta)", "ControlNet (Canny)", "Mask Only (Lip Focus)"], {"default": "LivePortrait (Cyan/Magenta)", "tooltip": "Select the backend you are driving. 'LivePortrait' is the Gold Standard for realism."}),
+                "smoothing_sigma": ("FLOAT", {"default": 1.2, "min": 0.0, "max": 5.0, "step": 0.1, "tooltip": "Gaussian temporal smoothing. Higher values (1.5+) eliminate all jitter but may look 'mumbly'. Lower values (0.5) are sharper but twitchier."}),
+                "image_width": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 64}),
+                "image_height": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 64}),
+            },
+            "optional": {
+                "audio_meta": ("DICT", {"tooltip": "Optional: Connect a WhisperX output here for perfect millisecond-level word timing."}),
+                "face_template": ("IMAGE", {"tooltip": "Optional: A reference face to draw the rig on top of. If empty, a black background is used."}),
+                "emotion_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "IMAGE", "MASK", "STRING")
+    RETURN_NAMES = ("rig_guides", "canny_guides", "lip_mask", "phoneme_debug")
+    FUNCTION = "animate"
+    CATEGORY = "☠️PGFX /Video"
+
+    def animate(self, lyrics, fps, target_mode, smoothing_sigma, image_width, image_height, audio_meta=None, face_template=None, emotion_intensity=1.0, **kwargs):
+        try:
+            g2p = viseme_utils.get_g2p()
+            if not g2p:
+                raise RuntimeError("G2P_EN library failed to initialize.")
+
+            # 1. Resolve Timing
+            word_segments = []
+            if audio_meta and "word_segments" in audio_meta:
+                word_segments = audio_meta["word_segments"]
+            else:
+                # Basic phonetic spacing if no audio_meta
+                words = [w for w in re.sub(r"[^\w'\- ]+", "", lyrics).split() if w]
+                cursor = 0.0
+                words_per_sec = 2.5 # Average speaking rate
+                for w in words:
+                    duration = max(0.2, len(w) / (words_per_sec * 5))
+                    word_segments.append({"word": w, "start": cursor, "end": cursor + duration})
+                    cursor += duration + 0.05
+
+            if not word_segments:
+                return (torch.zeros(1, image_height, image_width, 3), torch.zeros(1, image_height, image_width, 3), torch.zeros(1, image_height, image_width), "No words found")
+
+            total_duration = word_segments[-1]["end"]
+            total_frames = int(round(total_duration * fps))
+            total_frames = max(1, total_frames)
+
+            # 2. Build Weighted Phoneme Script
+            phoneme_script = []
+            for word_info in word_segments:
+                word_text = word_info["word"]
+                start, end = word_info["start"], word_info["end"]
+                
+                phonemes = g2p(word_text.upper())
+                valid = []
+                total_weight = 0.0
+                for p in phonemes:
+                    token = re.sub(r"\d+", "", str(p)).strip()
+                    if token in viseme_utils.PHONEME_TO_VISEME_MAP:
+                        weight = viseme_utils.PHONEME_TO_VISEME_MAP[token]['weight']
+                        valid.append({'token': token, 'weight': weight})
+                        total_weight += weight
+                
+                if not valid:
+                    phoneme_script.append(("SIL", start, end, 1.0))
+                    continue
+
+                # Distribute duration by weight
+                word_dur = end - start
+                curr_t = start
+                for v in valid:
+                    p_dur = (v['weight'] / total_weight) * word_dur
+                    phoneme_script.append((v['token'], curr_t, curr_t + p_dur, v['weight']))
+                    curr_t += p_dur
+
+            # 3. Sample Landmarks per Frame
+            raw_landmarks_series = []
+            frame_visemes = []
+            for f in range(total_frames):
+                t = (f + 0.5) / fps
+                active_viseme = "SIL"
+                for p, p_start, p_end, _ in phoneme_script:
+                    if p_start <= t < p_end:
+                        active_viseme = viseme_utils.PHONEME_TO_VISEME_MAP.get(p, {'viseme': 'SIL'})['viseme']
+                        break
+                
+                frame_visemes.append(active_viseme)
+                raw_landmarks_series.append(viseme_utils.VISEME_TO_LANDMARK_MAP.get(active_viseme, viseme_utils.VISEME_TO_LANDMARK_MAP["SIL"]))
+
+            # 4. Gaussian Smoothing (The Secret Sauce)
+            smoothed_landmarks = viseme_utils.gaussian_smooth_landmarks(raw_landmarks_series, sigma=smoothing_sigma)
+
+            # 5. Render Outputs
+            rig_images = []
+            canny_images = []
+            lip_masks = []
+            
+            template_frames = viseme_utils.tensor_to_pil(face_template) if face_template is not None else []
+            
+            for f in range(total_frames):
+                lms = smoothed_landmarks[f]
+                
+                # Base Rig / Guides
+                if template_frames:
+                    base_img = template_frames[f % len(template_frames)].copy().resize((image_width, image_height))
+                else:
+                    base_img = Image.new("RGB", (image_width, image_height), "black")
+                
+                draw = ImageDraw.Draw(base_img)
+                
+                # Configure style based on target_mode
+                if "LivePortrait" in target_mode:
+                    viseme_utils.draw_landmarks_helper(draw, lms, image_width, image_height, "Filled Outline", "#06b6d4", "#ff00ff", "#000000", 4, 3, "NEUTRAL", 1.0)
+                else:
+                    viseme_utils.draw_landmarks_helper(draw, lms, image_width, image_height, "Dots", "white", "white", "black", 4, 2, "NEUTRAL", 1.0)
+                
+                rig_images.append(base_img)
+                
+                # Canny Logic
+                canny_img = Image.new("RGB", (image_width, image_height), "black")
+                viseme_utils.draw_landmarks_helper(ImageDraw.Draw(canny_img), lms, image_width, image_height, "Outline", "white", "white", "black", 1, 2, "NEUTRAL", 1.0)
+                canny_images.append(canny_img)
+                
+                # Mask Logic
+                lip_masks.append(viseme_utils.get_mouth_mask(lms, image_width, image_height))
+
+            return (
+                viseme_utils.pil_to_tensor(rig_images),
+                viseme_utils.pil_to_tensor(canny_images),
+                viseme_utils.pil_to_tensor(lip_masks).squeeze(-1),
+                f"Generated {total_frames} frames of phonetic animation."
+            )
+
+        except Exception as e:
+            traceback.print_exc()
+            return (torch.zeros(1, image_height, image_width, 3), torch.zeros(1, image_height, image_width, 3), torch.zeros(1, image_height, image_width), f"ERROR: {e}")
 
 class PGFX_ScriptGuidedVisemes:
+    DESCRIPTION = get_node_description("PGFX_ScriptGuidedVisemes")
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -39,7 +210,7 @@ class PGFX_ScriptGuidedVisemes:
             },
         }
 
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Video"
     RETURN_TYPES = ("IMAGE", "STRING", "BOOLEAN", "STRING")
     RETURN_NAMES = ("control_images", "phoneme_debug_text", "is_silent", "instrumental_cue")
     FUNCTION = "execute"
@@ -379,6 +550,7 @@ class PGFX_ScriptGuidedVisemes:
 
 
 class PGFX_UniversalVisemeGuides(PGFX_ScriptGuidedVisemes):
+    DESCRIPTION = get_node_description("PGFX_UniversalVisemeGuides")
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -411,7 +583,7 @@ class PGFX_UniversalVisemeGuides(PGFX_ScriptGuidedVisemes):
             },
         }
 
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Video"
     RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "STRING", "BOOLEAN", "STRING")
     RETURN_NAMES = (
         "control_images",
@@ -686,6 +858,7 @@ class PGFX_UniversalVisemeGuides(PGFX_ScriptGuidedVisemes):
 
 
 class PGFX_WordTimingJsonBuilder(PGFX_ScriptGuidedVisemes):
+    DESCRIPTION = get_node_description("PGFX_WordTimingJsonBuilder")
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -700,7 +873,7 @@ class PGFX_WordTimingJsonBuilder(PGFX_ScriptGuidedVisemes):
             },
         }
 
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Video"
     RETURN_TYPES = ("STRING", "DICT", "INT", "STRING")
     RETURN_NAMES = ("word_timing_json", "word_segments", "total_words", "status_text")
     FUNCTION = "build"
@@ -964,11 +1137,13 @@ class PGFX_WordTimingJsonBuilder(PGFX_ScriptGuidedVisemes):
 
 
 NODE_CLASS_MAPPINGS = {
+    "PGFX_CinemaVisemeRig": PGFX_CinemaVisemeRig,
     "PGFX_ScriptGuidedVisemes": PGFX_ScriptGuidedVisemes,
     "PGFX_UniversalVisemeGuides": PGFX_UniversalVisemeGuides,
     "PGFX_WordTimingJsonBuilder": PGFX_WordTimingJsonBuilder,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "PGFX_CinemaVisemeRig": "👄 Cinema Viseme Rig",
     "PGFX_ScriptGuidedVisemes": "👄 Script-Guided Visemes",
     "PGFX_UniversalVisemeGuides": "👄 Universal Viseme Guides",
     "PGFX_WordTimingJsonBuilder": "📝 Word Timing JSON Builder",

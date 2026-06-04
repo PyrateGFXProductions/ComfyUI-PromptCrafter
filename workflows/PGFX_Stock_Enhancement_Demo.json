@@ -1,0 +1,878 @@
+{
+  "last_node_id": 27,
+  "last_link_id": 25,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Note",
+      "pos": [
+        10,
+        10
+      ],
+      "size": [
+        900,
+        160
+      ],
+      "widgets_values": [
+        "PGFX-ENHANCED STOCK LTXV PIPELINE\n===========================================\nThis workflow shows how PGFX nodes enhance a standard ComfyUI LTXV pipeline.\n\n- STOCK nodes (gray): Standard ComfyUI: model loading, VAE, scheduler, guider\n- PGFX nodes (colored): Replace/enhance stock parts:   - VisualThink + VisualInstruct: AI-powered prompt engineering (replaces manual prompts)\n   - PGFX_LTXVInContextSampler: IC-LoRA guided video sampling (replaces LTXVBaseSampler)\n   - PGFX_LTXVCorrectiveMask + PGFX_LTXVLatentUpsampler: Post-processing enhancements"
+      ],
+      "_meta": {
+        "title": "PGFX Enhancement Demo Overview"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Note",
+      "pos": [
+        50,
+        200
+      ],
+      "size": [
+        300,
+        100
+      ],
+      "widgets_values": [
+        "STEP 1: LOAD MODELS (STOCK)\nAll stock ComfyUI nodes.\nLoad your LTXV model, VAE,\nand CLIP text encoder."
+      ],
+      "_meta": {
+        "title": "1. Stock: Model Loading"
+      }
+    },
+    {
+      "id": 3,
+      "type": "Note",
+      "pos": [
+        650,
+        200
+      ],
+      "size": [
+        350,
+        140
+      ],
+      "widgets_values": [
+        "STEP 2: AI-POWERED PROMPTING (PGFX -> STOCK)\nREPLACES: Manual CLIPTextEncode\n\nVisualThink generates a cinematic scene description.\nVisualInstruct converts it to structured JSON with\ncontent/style/camera/lighting/mood/palette/era/action keys.\nThe JSON feeds into CLIPTextEncode -> LTXVConditioning."
+      ],
+      "_meta": {
+        "title": "2. PGFX: Enhanced Prompting"
+      }
+    },
+    {
+      "id": 4,
+      "type": "Note",
+      "pos": [
+        1350,
+        200
+      ],
+      "size": [
+        350,
+        140
+      ],
+      "widgets_values": [
+        "STEP 3: PGFX ENHANCED SAMPLING\nREPLACES: LTXVBaseSampler\n\nPGFX_LTXVInContextSampler supports:\n- IC-LoRA guided video generation (guiding_latents)\n- Multi-stage denoising (start/end step control)\n- Optional keyframe image conditioning\n- AV model support (LTXAV NestedTensor)"
+      ],
+      "_meta": {
+        "title": "3. PGFX: Enhanced Sampler"
+      }
+    },
+    {
+      "id": 5,
+      "type": "Note",
+      "pos": [
+        1850,
+        200
+      ],
+      "size": [
+        300,
+        140
+      ],
+      "widgets_values": [
+        "STEP 4: PGFX POST-PROCESSING (OPTIONAL)\nEnhancements on top of stock nodes:\n\nPGFX_LTXVCorrectiveMask:\nFix noise mask for inpainted latents.\n\nPGFX_LTXVLatentUpsampler:\nUpscale latents before VAE decode."
+      ],
+      "_meta": {
+        "title": "4. PGFX: Post-Processing"
+      }
+    },
+    {
+      "id": 6,
+      "type": "Note",
+      "pos": [
+        2450,
+        200
+      ],
+      "size": [
+        250,
+        100
+      ],
+      "widgets_values": [
+        "STEP 5: DECODE & OUTPUT (STOCK)\nStandard VAEDecode and\nVHS_VideoCombine."
+      ],
+      "_meta": {
+        "title": "5. Stock: Output"
+      }
+    },
+    {
+      "id": 7,
+      "type": "UnetLoaderGGUF",
+      "pos": [
+        50,
+        350
+      ],
+      "size": [
+        320,
+        130
+      ],
+      "widgets_values": [
+        "ltx2.3\\LTX-2.3-22B-distilled-1.1-Q4_K_M.gguf",
+        "default"
+      ],
+      "_meta": {
+        "title": "Load LTXV Model (GGUF)"
+      }
+    },
+    {
+      "id": 8,
+      "type": "VAELoader",
+      "pos": [
+        400,
+        350
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "widgets_values": [
+        "ltx2.3\\ltx-2.3-22b-distilled_video_vae.safetensors"
+      ],
+      "_meta": {
+        "title": "Load VAE"
+      }
+    },
+    {
+      "id": 9,
+      "type": "LTXVGemmaCLIPModelLoader",
+      "pos": [
+        750,
+        350
+      ],
+      "size": [
+        450,
+        130
+      ],
+      "widgets_values": [
+        "ltx2.3\\ltx-2.3-22b-distilled_embeddings_connectors.safetensors",
+        "flux1-redux-dev.safetensors",
+        1024
+      ],
+      "_meta": {
+        "title": "Load CLIP Text Encoder"
+      }
+    },
+    {
+      "id": 10,
+      "type": "PromptCrafter_VisualThink",
+      "pos": [
+        650,
+        380
+      ],
+      "size": [
+        400,
+        280
+      ],
+      "widgets_values": [
+        "A serene Japanese garden in spring, cherry blossoms falling gently into a koi pond, soft morning light through bamboo leaves, a traditional wooden tea house in the background.",
+        "hf/Llama-3.2-3B-Instruct",
+        1,
+        120,
+        "Default (GPU)",
+        true,
+        "{}"
+      ],
+      "_meta": {
+        "title": "VisualThink: Generate Scene Concept"
+      }
+    },
+    {
+      "id": 11,
+      "type": "PromptCrafter_VisualInstruct",
+      "pos": [
+        650,
+        680
+      ],
+      "size": [
+        400,
+        280
+      ],
+      "widgets_values": [
+        "hf/Llama-3.2-3B-Instruct",
+        1,
+        120,
+        "Default (GPU)",
+        true,
+        "{}"
+      ],
+      "_meta": {
+        "title": "VisualInstruct: Extract Structured JSON"
+      },
+      "inputs": [
+        {
+          "name": "visual_think_output",
+          "type": "STRING",
+          "link": 1
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "CLIPTextEncode",
+      "pos": [
+        1100,
+        380
+      ],
+      "size": [
+        400,
+        100
+      ],
+      "widgets_values": [
+        ""
+      ],
+      "_meta": {
+        "title": "CLIPTextEncode (from PGFX prompt)"
+      },
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 2
+        },
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 3
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "CLIPTextEncode",
+      "pos": [
+        1100,
+        500
+      ],
+      "size": [
+        400,
+        100
+      ],
+      "widgets_values": [
+        "blurry, low quality, distorted, ugly, deformed, watermark, text, oversaturated"
+      ],
+      "_meta": {
+        "title": "CLIPTextEncode (negative prompt)"
+      },
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 4
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "LTXVConditioning",
+      "pos": [
+        1100,
+        630
+      ],
+      "size": [
+        400,
+        100
+      ],
+      "widgets_values": [
+        25.0
+      ],
+      "_meta": {
+        "title": "LTXV Conditioning"
+      },
+      "inputs": [
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 5
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 6
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "EmptyLTXVLatentVideo",
+      "pos": [
+        1100,
+        760
+      ],
+      "size": [
+        400,
+        140
+      ],
+      "widgets_values": [
+        768,
+        512,
+        97,
+        1
+      ],
+      "_meta": {
+        "title": "Empty Latent Video"
+      }
+    },
+    {
+      "id": 16,
+      "type": "ModelSamplingLTXV",
+      "pos": [
+        1550,
+        350
+      ],
+      "size": [
+        400,
+        130
+      ],
+      "widgets_values": [
+        2.05,
+        0.95
+      ],
+      "_meta": {
+        "title": "Model Sampling Config"
+      },
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 7
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "LTXVApplySTG",
+      "pos": [
+        1550,
+        510
+      ],
+      "size": [
+        400,
+        100
+      ],
+      "widgets_values": [
+        "14, 19"
+      ],
+      "_meta": {
+        "title": "Apply STG"
+      },
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 8
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "LTXVScheduler",
+      "pos": [
+        1550,
+        640
+      ],
+      "size": [
+        400,
+        150
+      ],
+      "widgets_values": [
+        20,
+        2.05,
+        0.95,
+        true,
+        0.1
+      ],
+      "_meta": {
+        "title": "Sigma Scheduler"
+      },
+      "inputs": [
+        {
+          "name": "latent",
+          "type": "LATENT",
+          "link": 9
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "KSamplerSelect",
+      "pos": [
+        1550,
+        820
+      ],
+      "size": [
+        400,
+        100
+      ],
+      "widgets_values": [
+        "euler"
+      ],
+      "_meta": {
+        "title": "Sampler Select"
+      }
+    },
+    {
+      "id": 20,
+      "type": "RandomNoise",
+      "pos": [
+        1550,
+        950
+      ],
+      "size": [
+        400,
+        100
+      ],
+      "widgets_values": [
+        0
+      ],
+      "_meta": {
+        "title": "Noise Source"
+      }
+    },
+    {
+      "id": 21,
+      "type": "STGGuiderAdvanced",
+      "pos": [
+        1550,
+        1080
+      ],
+      "size": [
+        450,
+        200
+      ],
+      "widgets_values": [
+        0.998,
+        true,
+        "1.0, 0.9933, 0.9850, 0.9767, 0.9008, 0.6180",
+        "8, 6, 6, 4, 3, 1",
+        "4, 4, 3, 2, 1, 0",
+        "1, 1, 1, 1, 1, 1",
+        "[29], [29], [29], [29], [29], [29]"
+      ],
+      "_meta": {
+        "title": "STG Guider Advanced"
+      },
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 10
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 11
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 12
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "PGFX_LTXVInContextSampler",
+      "pos": [
+        1550,
+        1310
+      ],
+      "size": [
+        500,
+        300
+      ],
+      "widgets_values": [
+        -1,
+        1.0,
+        0,
+        1000,
+        0,
+        1.0
+      ],
+      "_meta": {
+        "title": "PGFX LTXV In-Context Sampler"
+      },
+      "inputs": [
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 13
+        },
+        {
+          "name": "guider",
+          "type": "GUIDER",
+          "link": 14
+        },
+        {
+          "name": "sampler",
+          "type": "SAMPLER",
+          "link": 15
+        },
+        {
+          "name": "sigmas",
+          "type": "SIGMAS",
+          "link": 16
+        },
+        {
+          "name": "noise",
+          "type": "NOISE",
+          "link": 17
+        },
+        {
+          "name": "guiding_latents",
+          "type": "LATENT",
+          "link": 18
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "PGFX_LTXVCorrectiveMask",
+      "pos": [
+        2100,
+        350
+      ],
+      "size": [
+        400,
+        150
+      ],
+      "widgets_values": [
+        "enabled"
+      ],
+      "_meta": {
+        "title": "PGFX Corrective Mask"
+      },
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 19
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "PGFX_LTXVLatentUpsampler",
+      "pos": [
+        2100,
+        530
+      ],
+      "size": [
+        400,
+        150
+      ],
+      "_meta": {
+        "title": "PGFX Latent Upsampler"
+      },
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 20
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 21
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "VAEDecode",
+      "pos": [
+        2600,
+        350
+      ],
+      "size": [
+        400,
+        100
+      ],
+      "_meta": {
+        "title": "VAE Decode"
+      },
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 22
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 23
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "VHS_VideoCombine",
+      "pos": [
+        2600,
+        480
+      ],
+      "size": [
+        400,
+        300
+      ],
+      "widgets_values": [
+        8,
+        0,
+        "PGFX_Enhanced_Video",
+        "video/h264-mp4",
+        false,
+        true
+      ],
+      "_meta": {
+        "title": "Video Output"
+      },
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 24
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 25
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "Note",
+      "pos": [
+        50,
+        540
+      ],
+      "size": [
+        500,
+        200
+      ],
+      "widgets_values": [
+        "WHAT PGFX REPLACES IN THE STOCK PIPELINE\n==========================================\n\nSTOCK                          -> PGFX ENHANCED\n---------------------------------------------------\nCLIPTextEncode (manual prompt) -> VisualThink + VisualInstruct (AI-generated JSON)\nLTXVBaseSampler                -> PGFX_LTXVInContextSampler (IC-LoRA, multi-stage)\n(no mask fix)                  -> PGFX_LTXVCorrectiveMask (noise mask repair)\n(no upscale)                   -> PGFX_LTXVLatentUpsampler (latent upscaling)\n\nAll other nodes are standard ComfyUI stock nodes."
+      ],
+      "_meta": {
+        "title": "Stock vs PGFX Comparison"
+      }
+    }
+  ],
+  "links": [
+    [
+      1,
+      10,
+      0,
+      11,
+      0,
+      "STRING"
+    ],
+    [
+      2,
+      9,
+      0,
+      12,
+      1,
+      "CLIP"
+    ],
+    [
+      3,
+      11,
+      0,
+      12,
+      0,
+      "STRING"
+    ],
+    [
+      4,
+      9,
+      0,
+      13,
+      1,
+      "CLIP"
+    ],
+    [
+      5,
+      12,
+      0,
+      14,
+      0,
+      "CONDITIONING"
+    ],
+    [
+      6,
+      13,
+      0,
+      14,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      7,
+      7,
+      0,
+      16,
+      0,
+      "MODEL"
+    ],
+    [
+      8,
+      16,
+      0,
+      17,
+      0,
+      "MODEL"
+    ],
+    [
+      9,
+      15,
+      0,
+      18,
+      0,
+      "LATENT"
+    ],
+    [
+      10,
+      17,
+      0,
+      21,
+      0,
+      "MODEL"
+    ],
+    [
+      11,
+      14,
+      0,
+      21,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      12,
+      14,
+      1,
+      21,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      13,
+      8,
+      0,
+      22,
+      0,
+      "VAE"
+    ],
+    [
+      14,
+      21,
+      0,
+      22,
+      1,
+      "GUIDER"
+    ],
+    [
+      15,
+      19,
+      0,
+      22,
+      2,
+      "SAMPLER"
+    ],
+    [
+      16,
+      18,
+      0,
+      22,
+      3,
+      "SIGMAS"
+    ],
+    [
+      17,
+      20,
+      0,
+      22,
+      4,
+      "NOISE"
+    ],
+    [
+      18,
+      15,
+      0,
+      22,
+      5,
+      "LATENT"
+    ],
+    [
+      19,
+      22,
+      0,
+      23,
+      0,
+      "LATENT"
+    ],
+    [
+      20,
+      23,
+      0,
+      24,
+      0,
+      "LATENT"
+    ],
+    [
+      21,
+      8,
+      0,
+      24,
+      2,
+      "VAE"
+    ],
+    [
+      22,
+      24,
+      0,
+      25,
+      0,
+      "LATENT"
+    ],
+    [
+      23,
+      8,
+      0,
+      25,
+      1,
+      "VAE"
+    ],
+    [
+      24,
+      25,
+      0,
+      26,
+      0,
+      "IMAGE"
+    ],
+    [
+      25,
+      8,
+      0,
+      26,
+      9,
+      "VAE"
+    ]
+  ],
+  "version": 0.4
+}

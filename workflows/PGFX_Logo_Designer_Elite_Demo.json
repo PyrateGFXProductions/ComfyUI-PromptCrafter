@@ -1,0 +1,45 @@
+{
+  "last_node_id": 4,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "PGFX_LogoDesignerAgent",
+      "pos": [10, 100],
+      "size": [315, 450],
+      "widgets_values": ["A cyber-pirate skull logo with glowing neon circuitry.", "deepseek-r1", "llama3", 1, "AI DETERMINED", "AI DETERMINED", 1.0, 0.5, 0, 120, 0.7, 0, false, "Default (GPU)", true, "{}", 3, true, "None", true]
+    },
+    {
+      "id": 2,
+      "type": "PGFX_LogoDesignerStudio",
+      "pos": [350, 100],
+      "size": [315, 550],
+      "inputs": [
+        {"name": "base64_image_data", "type": "STRING", "link": 1},
+        {"name": "extra_instruction", "type": "STRING", "link": 2}
+      ],
+      "widgets_values": ["", "{}", "CYBER PIRATE", "vector", "simple", "none", "", "", "polished_gold", "none", "none", "none", 1.0, "none", 1.0, "none", 1.0, "creative", 1.0, "", 0, 1.0, 0.5, "conversational"]
+    },
+    {
+      "id": 3,
+      "type": "PGFX_ImageVectorizer",
+      "pos": [700, 100],
+      "size": [315, 350],
+      "inputs": [{"name": "image", "type": "IMAGE", "link": 3}],
+      "widgets_values": ["Clean Vector Logo (8 Colors)", "spline", 8, false, "stacked", 6, 16, 3]
+    },
+    {
+      "id": 4,
+      "type": "PreviewImage",
+      "pos": [1050, 100],
+      "size": [300, 300],
+      "inputs": [{"name": "images", "type": "IMAGE", "link": null}]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "STRING"],
+    [2, 1, 15, 2, 18, "STRING"],
+    [3, 2, 0, 3, 0, "IMAGE"]
+  ],
+  "version": 0.4
+}

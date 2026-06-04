@@ -336,7 +336,7 @@ class PromptCrafter_SRTCreator:
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "DICT", "DICT", "STRING")
     RETURN_NAMES = ("srt_output", "plain_text_output", "structured_script", "timed_segments_json_string", "translated_srt_output", "translated_plain_text_output", "SCREENPLAY", "CHARACTER_TRACK", "validation_report")
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Studio/02_Narrative"
+    CATEGORY = "☠️PGFX /Text"
 
     def _load_models(self, whisper_model_name, language, vad_method, debug_mode):
         """Loads and caches whisperx transcription and alignment models."""

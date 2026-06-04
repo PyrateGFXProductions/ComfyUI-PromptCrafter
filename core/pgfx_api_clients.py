@@ -34,8 +34,7 @@ except Exception:
 import threading
 import functools
 
-_MAX_OLLAMA_CONCURRENT_CALLS = 1   # set >1 only if you have a multi‑GPU server
-_ollama_semaphore = threading.Semaphore(_MAX_OLLAMA_CONCURRENT_CALLS)
+_ollama_semaphore = threading.Semaphore(config.MAX_CONCURRENT_LLM_THREADS)
 _LLM_RUNTIME_OVERRIDES = contextvars.ContextVar("pgfx_llm_runtime_overrides", default={})
 
 def _with_ollama_throttle(func):
@@ -1725,6 +1724,7 @@ class OllamaClient:
             msg = {"role": "user", "content": prompt}
             if images_b64: msg["images"] = images_b64
             payload["messages"] = [msg]
+            if format is not None: payload["format"] = format
         else:
             payload["prompt"] = prompt
             if images_b64: payload["images"] = images_b64
@@ -1761,7 +1761,7 @@ class OpenAICompatibleClient(OllamaClient):
         super().__init__(base_url)
         self.provider = provider_name
 
-    def query(self, model_id, prompt, images_b64=None, timeout=None, temperature=None, seed=None, max_tokens=None, **kwargs):
+    def query(self, model_id, prompt, images_b64=None, timeout=None, temperature=None, seed=None, max_tokens=None, format=None, **kwargs):
         # Use the timeout from the config if not provided explicitly
         if timeout is None:
             provider_config = config.LOCAL_SERVER_CONFIG.get(self.provider, {})
@@ -1771,11 +1771,11 @@ class OpenAICompatibleClient(OllamaClient):
         if max_tokens is None:
             max_tokens = config.DEFAULT_MAX_TOKENS
 
-        payload = self._build_payload("chat", model_id, prompt, images_b64, temperature, seed, max_tokens=max_tokens)
+        payload = self._build_payload("chat", model_id, prompt, images_b64, temperature, seed, max_tokens=max_tokens, format=format)
         ok, data_or_err, _ = self._make_request(url=f"{self.base_url}/v1/chat/completions", headers={}, payload=payload, timeout=timeout)
         return self._parse_response(data_or_err) if ok else (False, data_or_err)
 
-    def _build_payload(self, endpoint, model, prompt, images_b64, temperature=None, seed=None, max_tokens=None, **kwargs):
+    def _build_payload(self, endpoint, model, prompt, images_b64, temperature=None, seed=None, max_tokens=None, format=None, **kwargs):
         messages = []
         user_content = [{"type": "text", "text": prompt}]
         if images_b64:
@@ -1788,6 +1788,10 @@ class OpenAICompatibleClient(OllamaClient):
         if temperature is not None: payload["temperature"] = float(temperature)
         if seed is not None and int(seed) >= 0: payload["seed"] = int(seed)
         if max_tokens is not None: payload["max_tokens"] = int(max_tokens)
+        
+        if format == "json":
+            payload["response_format"] = {"type": "json_object"}
+            
         return payload
 
     def _parse_response(self, data):
@@ -1893,6 +1897,8 @@ def _reason_with_model(model, prompt, images=None, **kwargs):
         kwargs['prefer_chat'] = kwargs.pop('use_chat_api')
     kwargs.setdefault('prefer_chat', True)
     kwargs.setdefault('temperature', 0.0)
+    # Elite Optimization: Explicitly request JSON format from the API client.
+    kwargs.setdefault('format', 'json')
     
     ok, resp = query_model_auto(model, prompt, images=images, **kwargs)
     if not ok:

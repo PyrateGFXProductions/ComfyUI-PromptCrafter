@@ -1,0 +1,73 @@
+{
+  "last_node_id": 8,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Note",
+      "pos": [10, 10],
+      "size": [900, 190],
+      "widgets_values": ["☠️ PGFX DREAM JOURNAL VISUALIZER\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nTurn Raw Dream Notes into Cinematic Video — The subconscious becomes a movie.\n\nHOW IT WORKS:\n① Describe your dream in natural language → QnAThink expands it with dream-logic, emotional texture, sensory details\n② QnAInstruct formats the dream into structured scene descriptions (no shackles — let the dream's own logic guide the structure)\n③ VisualThink converts each scene into cinematic visual language — but preserves the DREAM'S surreal rules (gravity optional, time nonlinear)\n④ VisualInstruct extracts JSON with the dream's unique palette, impossible camera angles, impossible lighting\n⑤ KeyframePromptScheduler builds a nonlinear timeline matching the dream's temporal jumps\n⑥ LTXV InContext Sampler renders the dream sequence — no logical continuity required\n\nWHY THIS IS UNIQUE: Most video generation enforces narrative coherence. This pipeline EMBRACES dream logic — abrupt scene cuts, impossible geometry, emotional color shifts that change without explanation. The PGFX nodes' flexibility allows each stage to preserve surreal ambiguity rather than forcing real-world constraints."]
+    },
+    {
+      "id": 2,
+      "type": "PromptCrafter_QnAThink",
+      "pos": [50, 230],
+      "size": [380, 200],
+      "widgets_values": ["I dreamed I was walking through a library where the books were alive — they whispered secrets that rearranged the architecture around me. The floor became a river of stars, and I could breathe underwater. A fox in a waistcoat offered me a pocket watch that was melting like Dali's clocks. I took it, and suddenly I was falling upward into a sky made of stained glass.", "openai/gpt-4o", 120, "auto", true]
+    },
+    {
+      "id": 3,
+      "type": "PromptCrafter_QnAInstruct",
+      "pos": [480, 230],
+      "size": [380, 200],
+      "inputs": [{"name": "qna_think_output", "type": "STRING", "link": 1}],
+      "widgets_values": ["Split this dream into 3-5 visual scenes. For each scene, preserve the dream's sensory contradictions (e.g. 'water that feels like fire', 'silence louder than thunder'). List them as short paragraphs separated by '---' markers. Keep the dream's nonlinear timing.", "openai/gpt-4o", 120, "auto", true]
+    },
+    {
+      "id": 4,
+      "type": "PromptCrafter_VisualThink",
+      "pos": [910, 230],
+      "size": [380, 250],
+      "inputs": [{"name": "input_text", "type": "STRING", "link": 2}],
+      "widgets_values": ["openai/gpt-4o", 1, 120, "auto", true, "{}"]
+    },
+    {
+      "id": 5,
+      "type": "PromptCrafter_VisualInstruct",
+      "pos": [1340, 230],
+      "size": [380, 250],
+      "inputs": [{"name": "visual_think_output", "type": "STRING", "link": 3}],
+      "widgets_values": ["openai/gpt-4o", 1, 120, "auto", true, "{}"]
+    },
+    {
+      "id": 6,
+      "type": "KeyframePromptScheduler",
+      "pos": [1770, 230],
+      "size": [315, 150],
+      "inputs": [{"name": "schedule_json", "type": "STRING", "link": 4}],
+      "widgets_values": [0]
+    },
+    {
+      "id": 7,
+      "type": "Note",
+      "pos": [1770, 400],
+      "size": [315, 140],
+      "widgets_values": ["RENDER TARGET:\n→ PGFX_LTXVInContextSampler\n→ The KeyframePromptScheduler outputs frame-by-frame prompts\n→ VisualInstruct JSON's 'action' key drives surreal motion\n→ Each 'scene' from QnAInstruct becomes a keyframe block\n\nDREAM PARAMETERS:\n→ guiding_start_step=0, guiding_end_step=1\n→ No CFG — dreams don't follow rules"]
+    },
+    {
+      "id": 8,
+      "type": "Note",
+      "pos": [50, 500],
+      "size": [380, 180],
+      "widgets_values": ["STAGE ⑥: FORMATTER (optional)\nInsert PromptCrafter_Formatter between VisualInstruct and KeyframePromptScheduler to:\n→ Apply dream-logic template: 'A surreal {content}, {style}, dreamlike {mood}'\n→ Add temporal inconsistency suffixes: '...then time reverses...'\n→ Preserve paradox: do NOT resolve contradictions\n\nThe Formatter lets you inject the dream's specific surreal grammar into every keyframe."]
+    }
+  ],
+  "links": [
+    [1, 2, 0, 3, 0, "STRING"],
+    [2, 3, 0, 4, 0, "STRING"],
+    [3, 4, 0, 5, 0, "STRING"],
+    [4, 5, 0, 6, 0, "STRING"]
+  ],
+  "version": 0.4
+}

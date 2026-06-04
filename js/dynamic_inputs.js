@@ -28,7 +28,7 @@ const DYNAMIC_CREATOR_NODE_CONFIG = {
 const DYNAMIC_CREATOR_NODE_CLASSES = Object.keys(DYNAMIC_CREATOR_NODE_CONFIG);
 
 const DYNAMIC_SWITCHER_NODE_CLASSES = [
-    "PromptCrafter_ImageSwitcher",
+    "PGFX_UniversalSwitchBox",
 ];
 
 app.registerExtension({
@@ -38,89 +38,132 @@ app.registerExtension({
 
         // --- Handler for Switcher Nodes ---
         if (DYNAMIC_SWITCHER_NODE_CLASSES.includes(className)) {
-            
-            const updateImageSwitcherInputs = function(targetCount) {
+
+            const updateSwitcherInputs = function(targetCount) {
                 const count = parseInt(targetCount, 10);
                 if (isNaN(count)) return;
-                
-                const inputPrefix = "image_";
-                const currentInputs = this.inputs?.filter(input => /^image_\d+$/.test(input.name)) || [];
+
+                const inputPrefix = "input_";
+                const currentInputs = this.inputs?.filter(input => /^input_\d+$/.test(input.name)) || [];
                 let currentInputCount = currentInputs.length;
 
                 if (count < currentInputCount) {
                     for (let i = currentInputCount; i > count; i--) {
-                        this.removeInput(this.findInputSlot(`${inputPrefix}${i}`)); 
+                        const slot = this.findInputSlot(`${inputPrefix}${i}`);
+                        if (slot !== -1) this.removeInput(slot);
                     }
                 } else if (count > currentInputCount) {
                     for (let i = currentInputCount; i < count; i++) {
-                        this.addInput(`${inputPrefix}${i + 1}`, "IMAGE");
+                        this.addInput(`${inputPrefix}${i + 1}`, "*");
                     }
                 }
 
-                this.computeSize(); 
+                this.computeSize();
                 this.setDirtyCanvas(true, true);
             };
 
-            const addManualRefreshButton = function() {
-                const imageCountWidget = this.widgets?.find(w => w.name === "image_count");
-                if (!imageCountWidget) return;
+            const hookInputCountCallback = function(node) {
+                if (!node || !node.widgets) return;
+                const countWidget = node.widgets.find(w => w.name === "input_count");
+                if (!countWidget || countWidget.pgfx_switcher_hooked) return;
 
-                // Avoid adding multiple buttons
-                const existingButton = this.widgets?.find(w => w.name === "Manual Refresh");
-                if (existingButton) return;
-
-                this.addWidget("button", "Manual Refresh", null, () => {
-                    updateImageSwitcherInputs.call(this, imageCountWidget.value);
-                }, { serialize: false });
+                const origCb = countWidget.callback;
+                countWidget.callback = function(value, canvas, n) {
+                    if (origCb) origCb.call(this, value, canvas, n);
+                    updateSwitcherInputs.call(n || this.node, value);
+                    if (this.triggerDraw) this.triggerDraw();
+                    else if ((n || this.node) && (n || this.node).triggerDraw) (n || this.node).triggerDraw();
+                };
+                countWidget.pgfx_switcher_hooked = true;
             };
 
             const onCreated = nodeType.prototype.onCreated;
             nodeType.prototype.onCreated = function () {
                 onCreated?.apply(this, arguments);
-
-                // Force correct output configuration
-                if (this.outputs && this.outputs.length > 2) {
-                    // Keep only the first 2 outputs (IMAGE and INT)
-                    this.outputs = this.outputs.slice(0, 2);
-                }
-
-                // Delay button addition to ensure widgets are loaded
                 setTimeout(() => {
-                    addManualRefreshButton.call(this);
-                    const imageCountWidget = this.widgets?.find(w => w.name === "image_count");
-                    if (imageCountWidget) {
-                        updateImageSwitcherInputs.call(this, imageCountWidget.value);
-                    }
+                    const countWidget = this.widgets?.find(w => w.name === "input_count");
+                    if (countWidget) updateSwitcherInputs.call(this, countWidget.value);
+                    hookInputCountCallback(this);
                 }, 50);
             };
 
             const onConfigure = nodeType.prototype.onConfigure;
             nodeType.prototype.onConfigure = function() {
                 onConfigure?.apply(this, arguments);
-
-                // Force correct output configuration on load
-                if (this.outputs && this.outputs.length > 2) {
-                    this.outputs = this.outputs.slice(0, 2);
-                }
-
                 setTimeout(() => {
-                    addManualRefreshButton.call(this);
-                    const imageCountWidget = this.widgets?.find(w => w.name === "image_count");
-                    if (imageCountWidget) {
-                        updateImageSwitcherInputs.call(this, imageCountWidget.value);
-                    }
+                    const countWidget = this.widgets?.find(w => w.name === "input_count");
+                    if (countWidget) updateSwitcherInputs.call(this, countWidget.value);
+                    hookInputCountCallback(this);
                 }, 50);
             };
 
-            // Add this to ensure outputs are correct when node is executed
-            const onExecutionStart = nodeType.prototype.onExecutionStart;
-            nodeType.prototype.onExecutionStart = function() {
-                onExecutionStart?.apply(this, arguments);
-                
-                // Ensure we only have 2 outputs
-                if (this.outputs && this.outputs.length > 2) {
-                    this.outputs = this.outputs.slice(0, 2);
+            nodeType.prototype.onExecuted = function (message) {
+                if (message?.images) {
+                    const img = message.images[0];
+                    const url = `./view?filename=${encodeURIComponent(img.filename)}&type=${img.type}&subfolder=${encodeURIComponent(img.subfolder)}&t=${+new Date()}`;
+                    this._pgfxPreviewImg = new Image();
+                    this._pgfxPreviewImg.src = url;
+                    this._pgfxPreviewImg.onload = () => {
+                        this.setDirtyCanvas(true, true);
+                    };
                 }
+            };
+
+            nodeType.prototype.onDrawForeground = function (ctx) {
+                if (!this._pgfxPreviewImg || !this._pgfxPreviewImg.complete) return;
+
+                const PREVIEW_H = 180;
+                const PREVIEW_PAD = 10;
+
+                let widgetsBottomY = 0;
+                if (this.widgets) {
+                    for (const w of this.widgets) {
+                        if (w.type !== "hidden" && w.y !== undefined) {
+                            const h = w.computeSize ? w.computeSize()[1] : 20;
+                            widgetsBottomY = Math.max(widgetsBottomY, w.y + h);
+                        }
+                    }
+                }
+                if (widgetsBottomY === 0) widgetsBottomY = 60;
+
+                const drawW = this.size[0] - PREVIEW_PAD * 2;
+                const aspect = this._pgfxPreviewImg.naturalHeight / this._pgfxPreviewImg.naturalWidth;
+                const drawH = Math.min(drawW * aspect, PREVIEW_H);
+                const drawX = PREVIEW_PAD;
+                const drawY = widgetsBottomY + PREVIEW_PAD;
+
+                ctx.save();
+                ctx.fillStyle = "#09090b";
+                ctx.strokeStyle = "rgba(6,182,212,0.4)";
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(drawX - 2, drawY - 2, drawW + 4, drawH + 4, 6);
+                else ctx.rect(drawX - 2, drawY - 2, drawW + 4, drawH + 4);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(drawX, drawY, drawW, drawH, 4);
+                else ctx.rect(drawX, drawY, drawW, drawH);
+                ctx.clip();
+                ctx.drawImage(this._pgfxPreviewImg, drawX, drawY, drawW, drawH);
+                ctx.restore();
+
+                ctx.fillStyle = "rgba(6,182,212,0.7)";
+                ctx.font = "bold 9px monospace";
+                ctx.textAlign = "left";
+                ctx.fillText("SELECTED PREVIEW", drawX, drawY - 4);
+            };
+
+            const origComputeSize = nodeType.prototype.computeSize;
+            nodeType.prototype.computeSize = function(out) {
+                const s = origComputeSize ? origComputeSize.apply(this, arguments) : [this.size[0], 200];
+                if (this._pgfxPreviewImg && this._pgfxPreviewImg.complete) {
+                    const aspect = this._pgfxPreviewImg.naturalHeight / this._pgfxPreviewImg.naturalWidth;
+                    const previewHeight = Math.min((this.size[0] - 20) * aspect, 180);
+                    s[1] += previewHeight + 20;
+                }
+                return s;
             };
         }
 
@@ -271,13 +314,14 @@ app.registerExtension({
                  
                  if (!imageCountWidget.pgfx_hooked) {
                      const originalCallback = imageCountWidget.callback;
-                     imageCountWidget.callback = (value) => {
-                         if (originalCallback) originalCallback(value);
-                         updateNodeImageInputs.call(node, value);
+                     imageCountWidget.callback = function(value, canvas, node) {
+                         if (originalCallback) originalCallback.call(this, value, canvas, node);
+                         updateNodeImageInputs.call(node || this.node, value);
+                         if (this.triggerDraw) this.triggerDraw();
+                         else if (node && node.triggerDraw) node.triggerDraw();
                      };
                      imageCountWidget.pgfx_hooked = true;
                  }
-                 
                  // Trigger initial update
                  updateNodeImageInputs.call(node, imageCountWidget.value || 1);
             };

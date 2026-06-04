@@ -3,9 +3,32 @@ import re
 from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple
 
+# ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        import os
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
 
 BRIDGE_VERSION = "vrgdg_bridge_v1"
-BRIDGE_CATEGORY = "☠️PGFX🏴‍☠️ /Studio/Adapters"
+BRIDGE_CATEGORY = "☠️PGFX /Studio/Adapters"
 
 
 DEFAULT_SLANG_GLOSSARY = OrderedDict(
@@ -528,6 +551,7 @@ class PGFX_Studio_VRGDGSemanticBridge_V1:
     Versioned bridge adapter that turns PromptCrafter lyric + SRT outputs into
     VRGDG-ready lyric segments and a continuity-friendly scene SRT.
     """
+    DESCRIPTION = get_node_description("PGFX_Studio_VRGDGSemanticBridge_V1")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -847,6 +871,7 @@ class PGFX_Studio_VRGDGStoryGroupBridge_V1:
     exact story-group contract VRGDG prompt batchers expect, with extra
     continuity metadata attached.
     """
+    DESCRIPTION = get_node_description("PGFX_Studio_VRGDGStoryGroupBridge_V1")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1135,6 +1160,7 @@ class PGFX_Studio_VRGDGSchedulePromptMap_V1:
     Converts a PromptCrafter frame schedule into VRGDG's prompt1..promptN map
     using a scene SRT as the authoritative scene boundary contract.
     """
+    DESCRIPTION = get_node_description("PGFX_Studio_VRGDGSchedulePromptMap_V1")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1244,6 +1270,7 @@ class PGFX_Studio_VRGDGPromptPackageValidator_V1:
     Validates that the VRGDG bridge artifacts agree on scene count and emits
     normalized prompt maps so the MVC workflow does not silently drift.
     """
+    DESCRIPTION = get_node_description("PGFX_Studio_VRGDGPromptPackageValidator_V1")
 
     @classmethod
     def INPUT_TYPES(cls):

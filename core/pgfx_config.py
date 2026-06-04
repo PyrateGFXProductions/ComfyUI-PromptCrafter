@@ -34,6 +34,8 @@ _raw_llm_device = os.getenv("PGFX_LLM_DEVICE", "default").strip().lower()
 DEFAULT_LLM_DEVICE = "CPU" if _raw_llm_device in {"cpu", "host"} else "Default (GPU)"
 # Stateless by default to prevent cross-request conversational carryover.
 DEFAULT_LLM_STATELESS = _env_flag("PGFX_LLM_STATELESS", "1")
+# Allow users to run multiple LLM agents in parallel (useful for multi-GPU or powerful CPUs).
+MAX_CONCURRENT_LLM_THREADS = int(os.getenv("PGFX_MAX_LLM_THREADS", "1"))
 
 
 # --- Path and Global State Configuration ---

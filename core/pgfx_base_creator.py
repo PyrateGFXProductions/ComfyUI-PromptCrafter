@@ -40,13 +40,10 @@ from ..nodes import pgfx_deprecated_talent_director as PromptCrafter_TalentDirec
 class PromptCrafter_BaseCreator:
     # noqa
     _vrg_fallback_words = ["standing", "sitting", "laying", "resting", "waiting", "walking", "dancing", "looking", "thinking"]
+    _content_analysis_cache = {}
 
-    def __init__(self):
-        """Initialize base creator."""
-        self.talent_director = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector
-        self._content_analysis_cache = {}
-
-    def _llm_runtime_kwargs(self, run_config):
+    @classmethod
+    def _llm_runtime_kwargs(cls, run_config):
         if run_config is None:
             return {}
         return {
@@ -54,35 +51,41 @@ class PromptCrafter_BaseCreator:
             "reset_context": bool(getattr(run_config, "reset_context", getattr(config, "DEFAULT_LLM_STATELESS", True))),
         }
 
-    def _query_llm(self, model, prompt, run_config=None, images=None, **kwargs):
-        llm_kwargs = self._llm_runtime_kwargs(run_config)
+    @classmethod
+    def _query_llm(cls, model, prompt, run_config=None, images=None, **kwargs):
+        llm_kwargs = cls._llm_runtime_kwargs(run_config)
         llm_kwargs.update(kwargs)
         return api_clients.query_model_auto(model, prompt, images=images, **llm_kwargs)
 
-    def _reason_with_llm(self, model, prompt, run_config=None, images=None, **kwargs):
-        llm_kwargs = self._llm_runtime_kwargs(run_config)
+    @classmethod
+    def _reason_with_llm(cls, model, prompt, run_config=None, images=None, **kwargs):
+        llm_kwargs = cls._llm_runtime_kwargs(run_config)
         llm_kwargs.update(kwargs)
         return api_clients._reason_with_model(model, prompt, images=images, **llm_kwargs)
 
-    def _format_output_text(self, text, output_format, label="text"):
+    @staticmethod
+    def _format_output_text(text, output_format, label="text"):
         return text_io.format_text_payload(text, output_format, label=label)
 
-    def _format_schedule_output(self, schedule_text, output_format):
+    @staticmethod
+    def _format_schedule_output(schedule_text, output_format):
         formatted, err = text_io.format_schedule_text(schedule_text, output_format)
         if err:
             print(f"\033[91m[PromptCrafter] {err}\033[0m")
             return schedule_text
         return formatted
 
-    def _apply_output_formatting(self, prompt_text, schedule_text, output_target, output_format):
+    @classmethod
+    def _apply_output_formatting(cls, prompt_text, schedule_text, output_target, output_format):
         outputs = {
             "Prompt": prompt_text,
             "Schedule": schedule_text,
         }
-        formatted = self._apply_output_formatting_map(outputs, output_target, output_format, text_io.OUTPUT_TARGET_OPTIONS)
+        formatted = cls._apply_output_formatting_map(outputs, output_target, output_format, text_io.OUTPUT_TARGET_OPTIONS)
         return formatted.get("Prompt", prompt_text), formatted.get("Schedule", schedule_text)
 
-    def _apply_output_formatting_map(self, outputs, output_target, output_format, available_targets):
+    @classmethod
+    def _apply_output_formatting_map(cls, outputs, output_target, output_format, available_targets):
         if not outputs:
             return {}
         formatted = dict(outputs)
@@ -91,13 +94,14 @@ class PromptCrafter_BaseCreator:
             if target not in formatted:
                 continue
             if target == "Schedule":
-                formatted[target] = self._format_schedule_output(formatted[target], output_format)
+                formatted[target] = cls._format_schedule_output(formatted[target], output_format)
             else:
                 label = target.lower().replace(" ", "_")
-                formatted[target] = self._format_output_text(formatted[target], output_format, label=label)
+                formatted[target] = cls._format_output_text(formatted[target], output_format, label=label)
         return formatted
 
-    def _auto_save_outputs(self, outputs, auto_save_target, output_format, folder_path, filename_template, file_type, replacements):
+    @staticmethod
+    def _auto_save_outputs(outputs, auto_save_target, output_format, folder_path, filename_template, file_type, replacements):
         if not outputs or not auto_save_target:
             return
 
@@ -126,35 +130,38 @@ class PromptCrafter_BaseCreator:
             except Exception as e:
                 print(f"\033[91m[PromptCrafter] Auto-save failed for {target_name}: {e}\033[0m")
 
-    def _analyze_content_for_direction(self, content, content_type="text"):
-        """Placeholder for analysis. Returns empty dict."""
+    @classmethod
+    def _analyze_content_for_direction(cls, content, content_type="text"):
+        """Analyzes content. Returns empty dict."""
         cache_key = f"{hash(content)}_{content_type}"
-        if cache_key in self._content_analysis_cache:
-            return self._content_analysis_cache[cache_key]
+        if cache_key in cls._content_analysis_cache:
+            return cls._content_analysis_cache[cache_key]
 
-        analysis = self.talent_director.analyze_content_for_direction(content, content_type)
-        self._content_analysis_cache[cache_key] = analysis
+        analysis = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.analyze_content_for_direction(content, content_type)
+        cls._content_analysis_cache[cache_key] = analysis
         return analysis
 
-    def _enhance_prompt_with_talent_direction(self, prompt, original_content="", target_model="Generic Video"):
+    @classmethod
+    def _enhance_prompt_with_talent_direction(cls, prompt, original_content="", target_model="Generic Video"):
         """Placeholder for enhancement. Returns prompt as-is."""
         if not prompt:
             return prompt
 
         # Analyze the original content for direction
-        analysis = self._analyze_content_for_direction(original_content or prompt)
+        analysis = cls._analyze_content_for_direction(original_content or prompt)
 
         # Get recommended crew role
         recommended_role = analysis.get("recommended_approach", {}).get("primary_crew", "Creative Director")
 
         # Enhance with talent direction
-        enhanced_prompt = self.talent_director.enhance_prompt_with_expertise(
+        enhanced_prompt = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.enhance_prompt_with_expertise(
             prompt, analysis, recommended_role, target_model
         )
 
         return enhanced_prompt
 
-    def _generate_directed_prompts(self, content_list, target_model="Generic Video", content_type="text"):
+    @classmethod
+    def _generate_directed_prompts(cls, content_list, target_model="Generic Video", content_type="text"):
         """Generate prompts without talent direction."""
         enhanced_prompts = []
 
@@ -164,14 +171,14 @@ class PromptCrafter_BaseCreator:
                 continue
 
             # Analyze content
-            analysis = self._analyze_content_for_direction(content, content_type)
+            analysis = cls._analyze_content_for_direction(content, content_type)
 
             # Get recommended approach
             recommended_approach = analysis.get("recommended_approach", {})
             crew_role = recommended_approach.get("primary_crew", "Creative Director")
 
             # Enhance with talent direction
-            enhanced_prompt = self.talent_director.enhance_prompt_with_expertise(
+            enhanced_prompt = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.enhance_prompt_with_expertise(
                 content, analysis, crew_role, target_model
             )
 
@@ -179,13 +186,14 @@ class PromptCrafter_BaseCreator:
 
         return enhanced_prompts
 
-    def _create_directed_schedule(self, prompts, timing_data=None, target_model="Generic Video"):
+    @classmethod
+    def _create_directed_schedule(cls, prompts, timing_data=None, target_model="Generic Video"):
         """Create schedule with talent-directed prompts."""
         if not prompts:
             return "{}"
             
         # Enhance all prompts with talent direction
-        enhanced_prompts = self._generate_directed_prompts(prompts, target_model, "video")
+        enhanced_prompts = cls._generate_directed_prompts(prompts, target_model, "video")
 
         schedule = collections.OrderedDict()
         
@@ -229,12 +237,13 @@ class PromptCrafter_BaseCreator:
             prev = word.lower()
         return " ".join(cleaned)
 
-    def _vrg_enrich_lyrics(self, timed_segments):
+    @classmethod
+    def _vrg_enrich_lyrics(cls, timed_segments):
         if not timed_segments:
             return ""
 
         transcriptions = [seg[2] for seg in timed_segments]
-        safe_transcriptions = [t if t else random.choice(self._vrg_fallback_words) for t in transcriptions]
+        safe_transcriptions = [t if t else random.choice(cls._vrg_fallback_words) for t in transcriptions]
         enriched_transcriptions = []
 
         for i in range(len(safe_transcriptions)):
@@ -246,22 +255,23 @@ class PromptCrafter_BaseCreator:
             pieces.append(safe_transcriptions[i].strip())
 
             combined = " ".join(pieces).strip()
-            word_count = self._vrg_count_words(combined)
+            word_count = cls._vrg_count_words(combined)
 
             j = i + 1
             while word_count < 4 and j < len(safe_transcriptions):
                 combined += " " + safe_transcriptions[j].strip()
-                word_count = self._vrg_count_words(combined)
+                word_count = cls._vrg_count_words(combined)
                 j += 1
 
             if word_count < 4:
-                combined = random.choice(self._vrg_fallback_words) + " " + combined
+                combined = random.choice(cls._vrg_fallback_words) + " " + combined
 
-            enriched_transcriptions.append(self._vrg_collapse_repeats(combined.strip()))
+            enriched_transcriptions.append(cls._vrg_collapse_repeats(combined.strip()))
 
         return " | ".join(enriched_transcriptions)
         
-    def _describe_images(self, images_with_weights, run_config):
+    @classmethod
+    def _describe_images(cls, images_with_weights, run_config):
         """Generates descriptions for a list of images using a vision model with retry logic."""
         if not images_with_weights:
             return None, None, None
@@ -281,11 +291,11 @@ class PromptCrafter_BaseCreator:
             ok = False
             result_data = None
             
-            desc_prompt = self._build_image_description_prompt(persona, i + 1, run_config.language, run_config.safe_mode)
+            desc_prompt = cls._build_image_description_prompt(persona, i + 1, run_config.language, run_config.safe_mode)
 
             # --- Retry logic ---
             for attempt in range(max_retries + 1):
-                ok, result_data = self._reason_with_llm(
+                ok, result_data = cls._reason_with_llm(
                     describe_model, 
                     desc_prompt, 
                     run_config=run_config,
@@ -327,10 +337,11 @@ class PromptCrafter_BaseCreator:
 
         return full_context.strip(), all_descriptions, all_subjects
     
-    def _describe_one_image_with_persona(self, img, weight, idx, run_config):
+    @classmethod
+    def _describe_one_image_with_persona(cls, img, weight, idx, run_config):
         persona = run_config.style_profile.get("persona", "You are an expert art historian.")
-        desc_prompt = self._build_image_description_prompt(persona, idx, run_config.language, run_config.safe_mode)
-        ok, result_json = self._reason_with_llm(
+        desc_prompt = cls._build_image_description_prompt(persona, idx, run_config.language, run_config.safe_mode)
+        ok, result_json = cls._reason_with_llm(
             run_config.model, desc_prompt, images=[img], use_chat_api=run_config.use_chat_api,
             run_config=run_config,
             temperature=run_config.temperature, seed=run_config.seed, timeout=run_config.timeout,
@@ -343,7 +354,8 @@ class PromptCrafter_BaseCreator:
         else:
             return {"full_text": f"Image {idx} (Weight: {weight:.2f}): [Error describing image: {result_json}]", "primary_subject": ""}
 
-    def _build_image_description_prompt(self, persona, idx, language, safe_mode):
+    @staticmethod
+    def _build_image_description_prompt(persona, idx, language, safe_mode):
         safety_rule = f"\n{config.SAFE_MODE_RULE}" if safe_mode else ""
         return f"""{persona}
 Analyze Image {idx} and provide a detailed, one-paragraph description and identify the single primary subject.
@@ -358,7 +370,9 @@ Return ONLY a JSON object with two keys:
 - \"description\": (string) The full, one-paragraph description of the entire scene.
 
 The final output must be in {language} only.{safety_rule}"""
-    def _is_speech_prompt_request(self, user_text, run_config):
+
+    @classmethod
+    def _is_speech_prompt_request(cls, user_text, run_config):
         """Analyzes user text to determine if it's a request for a speech/dialogue prompt."""
         speech_keywords = ["speech prompt", "saying:", "exclaiming", "dialogue"]
         speech_tag_pattern = re.compile(r'<S>.*<E>', re.IGNORECASE | re.DOTALL)
@@ -381,7 +395,7 @@ The final output must be in {language} only.{safety_rule}"""
                 {{"is_lyrics_request": true}}
             ''').strip()
             
-            ok, result = self._query_llm(
+            ok, result = cls._query_llm(
                 run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, 
                 run_config=run_config,
                 seed=run_config.seed, debug_mode=run_config.debug_mode, 
@@ -393,17 +407,16 @@ The final output must be in {language} only.{safety_rule}"""
         
         return False
 
-    def _handle_speech_prompt_request(self, user_text, images_with_weights, run_config):
+    @classmethod
+    def _handle_speech_prompt_request(cls, user_text, images_with_weights, run_config, max_images=5):
             """Handles the specific case of generating a formatted speech prompt."""
             try:
                 print("\033[94m[PromptCrafter] Speech prompt format detected. Using specialized handler...\033[0m")
                 
-                num_images = getattr(self, "MAX_IMAGES", 5)
-                
                 if not images_with_weights:
-                    return ("Speech prompt generation requires an image to identify the subject.", None, None, None, None, None) + (None,) * num_images
+                    return ("Speech prompt generation requires an image to identify the subject.", None, None, None, None, None) + (None,) * max_images
 
-                describe_result = self._describe_images(images_with_weights, run_config)
+                describe_result = cls._describe_images(images_with_weights, run_config)
                 if describe_result is not None:
                     image_context, _, primary_subjects = describe_result
                 else:
@@ -433,7 +446,7 @@ The final output must be in {language} only.{safety_rule}"""
                     Return ONLY the final, formatted prompt string. Do not include any commentary.
                 ''').strip()
 
-                ok, final_prompt = self._query_llm(
+                ok, final_prompt = cls._query_llm(
                     run_config.model, prompt, prefer_chat=True, temperature=run_config.temperature,
                     run_config=run_config,
                     seed=run_config.seed, debug_mode=run_config.debug_mode,
@@ -441,7 +454,7 @@ The final output must be in {language} only.{safety_rule}"""
                 )
 
                 if not ok:
-                    return (f"Failed to generate speech prompt: {final_prompt}", None, None, None, None, None) + (None,) * num_images
+                    return (f"Failed to generate speech prompt: {final_prompt}", None, None, None, None, None) + (None,) * max_images
 
                 audcap_prompt = textwrap.dedent(f'''
                     You are an expert audio engineer. Analyze the following scene description and dialogue.
@@ -459,7 +472,7 @@ The final output must be in {language} only.{safety_rule}"""
                     Do not include the <AUDCAP> tags yourself.
                 ''').strip()
 
-                ok_aud, aud_desc = self._query_llm(
+                ok_aud, aud_desc = cls._query_llm(
                     run_config.model, audcap_prompt, prefer_chat=True, temperature=0.1, # Low temp for factual description
                     run_config=run_config,
                     seed=run_config.seed, debug_mode=run_config.debug_mode,
@@ -473,14 +486,14 @@ The final output must be in {language} only.{safety_rule}"""
                     print(f"\033[93m[PromptCrafter] Warning: Could not generate <AUDCAP> description. Returning speech prompt without it. Error: {aud_desc}\033[0m")
 
                 passthrough_images = [img for img, _ in images_with_weights]
-                passthrough_images.extend([None] * (num_images - len(passthrough_images)))
+                passthrough_images.extend([None] * (max_images - len(passthrough_images)))
                 
                 return (ovi_formatted_prompt, "", image_context, "", run_config.model, str(run_config.seed)) + tuple(passthrough_images)
             except Exception as e:
-                num_images = getattr(self, "MAX_IMAGES", 5)
-                return self._handle_creator_exception(e)
+                return cls._handle_creator_exception(e, max_images + 6)
 
-    def _is_lyrics_to_prompt_request(self, user_text, run_config):
+    @classmethod
+    def _is_lyrics_to_prompt_request(cls, user_text, run_config):
             """Analyzes user text to determine if it's a request for the multi-prompt lyric generator."""
             lyrics_keywords = ["lyrics:", "lyric-driven prompts", "lyric fragment", "[shot type]"]
             
@@ -498,7 +511,7 @@ The final output must be in {language} only.{safety_rule}"""
                     Respond with ONLY a JSON object: {{'is_lyrics_request': true/false}}
                 ''').strip()
                 
-                ok, result = self._reason_with_llm(
+                ok, result = cls._reason_with_llm(
                     run_config.model, prompt, use_chat_api=run_config.use_chat_api, temperature=0.0, 
                     run_config=run_config,
                     seed=run_config.seed, debug_mode=run_config.debug_mode, 
@@ -510,7 +523,8 @@ The final output must be in {language} only.{safety_rule}"""
             
             return False
 
-    def _build_style_and_composition_rules(self, mode, images, run_config, user_text, user_negative_prompt, image_context):
+    @classmethod
+    def _build_style_and_composition_rules(cls, mode, images, run_config, user_text, user_negative_prompt, image_context):
         """
         Analyzes style and composition to create a reusable set of rules for prompt generation.
         This is a helper for the scheduled mode's prompt generation.
@@ -541,7 +555,7 @@ The final output must be in {language} only.{safety_rule}"""
             Return ONLY the JSON object.
         """ ).strip()
 
-        ok, result = self._reason_with_llm(
+        ok, result = cls._reason_with_llm(
             run_config.model,
             analysis_prompt,
             run_config=run_config,
@@ -555,20 +569,15 @@ The final output must be in {language} only.{safety_rule}"""
         )
         return result if ok and isinstance(result, dict) else {}
 
-    def _handle_creator_exception(self, e):
+    @classmethod
+    def _handle_creator_exception(cls, e, num_returns=2):
         import traceback
         error_message = f"[PromptCrafter] Error: {e}"
         print(f"\033[91m{error_message}\n{traceback.format_exc()}\033[0m")
-        try:
-            rt = getattr(self, "RETURN_TYPES", None)
-            if rt is None:
-                rt = getattr(type(self), "RETURN_TYPES", None)
-            num_returns = len(rt) if rt else 2
-        except (AttributeError, TypeError):
-            num_returns = 2
         return (error_message,) + (None,) * (num_returns - 1)
 
-    def _collect_images_with_weights(self, **kwargs):
+    @staticmethod
+    def _collect_images_with_weights(**kwargs):
         """Collects all connected image tensors and their weights from the dynamic inputs."""
         images_with_weights = []
         image_count = kwargs.get("image_count", 1)
@@ -589,7 +598,8 @@ The final output must be in {language} only.{safety_rule}"""
                 images_with_weights.append((image, weight))
         return images_with_weights
 
-    def _prepare_run_parameters(self, prompt_type, temperature, max_length_words, original_temp, original_max_len): # noqa
+    @staticmethod
+    def _prepare_run_parameters(prompt_type, temperature, max_length_words, original_temp, original_max_len): # noqa
         if temperature == original_temp:
             if prompt_type == "Video": temperature = 0.4
 
@@ -598,11 +608,12 @@ The final output must be in {language} only.{safety_rule}"""
             elif prompt_type == "Video": max_length_words = 80
         return temperature, max_length_words
 
-    def _setup_config(self, mode, user_text, model, images_with_weights=None, **kwargs): # noqa
+    @classmethod
+    def _setup_config(cls, node_cls, mode, user_text, model, images_with_weights=None, **kwargs): # noqa
         if not model or "NO_MODELS_FOUND" in model or "OLLAMA_UNREACHABLE" in model:
             raise ValueError("No vision models found or Ollama is unreachable. Please install a vision model (e.g., 'ollama run llava') or configure a remote API key.")
 
-        input_types = getattr(type(self), "INPUT_TYPES", lambda: {"required": {}, "optional": {}})()
+        input_types = getattr(node_cls, "INPUT_TYPES", lambda: {"required": {}, "optional": {}})()
         original_temp = 0.2
         original_max_len = 0
         if "temperature" in input_types.get("required", {}):
@@ -613,7 +624,7 @@ The final output must be in {language} only.{safety_rule}"""
             max_len_config = input_types["required"]["max_length_words"]
             if isinstance(max_len_config, (tuple, list)) and len(max_len_config) > 1:
                 original_max_len = max_len_config[1].get("default", 0)
-        temperature, max_length_words = self._prepare_run_parameters(
+        temperature, max_length_words = cls._prepare_run_parameters(
             mode, kwargs.get('temperature'), kwargs.get('max_length_words'), original_temp, original_max_len
         )
         language = utils._detect_language(user_text)
@@ -657,7 +668,8 @@ The final output must be in {language} only.{safety_rule}"""
 
         return run_config
 
-    def _handle_creative_intent(self, mode, user_text, images_with_weights, run_config): # noqa
+    @classmethod
+    def _handle_creative_intent(cls, mode, user_text, images_with_weights, run_config): # noqa
         has_text = user_text and user_text.strip() and user_text.strip() != config.DEFAULT_PROMPT_TEXT
         has_images = bool(images_with_weights)
 
@@ -673,7 +685,7 @@ USER REQUEST ---
 {user_text}
 ---
 Respond with ONLY a JSON object: {{'requires_images': true/false}}""" .strip()
-                ok, result = self._reason_with_llm(
+                ok, result = cls._reason_with_llm(
                     run_config.model,
                     prompt,
                     run_config=run_config,
@@ -688,7 +700,7 @@ Respond with ONLY a JSON object: {{'requires_images': true/false}}""" .strip()
 
         elif has_images and not has_text:
             print("\033[94m[PromptCrafter] Images provided but no text. Engaging creative autopilot to generate instructions...\033[0m")
-            describe_result = self._describe_images(images_with_weights, run_config)
+            describe_result = cls._describe_images(images_with_weights, run_config)
             if describe_result:
                 image_context, _, _ = describe_result
             else:
@@ -702,7 +714,7 @@ Respond with ONLY a JSON object: {{'requires_images': true/false}}""" .strip()
 {image_context}
 ---
 Return ONLY the single-paragraph creative instruction. No commentary.""" .strip()
-            ok, new_instruction = self._query_llm(
+            ok, new_instruction = cls._query_llm(
                 run_config.model,
                 prompt,
                 run_config=run_config,
@@ -720,14 +732,15 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
 
         return None, None
 
-    def _handle_scheduled_mode(self, mode, user_text, images_with_weights, run_config, **kwargs): # noqa
+    @classmethod
+    def _handle_scheduled_mode(cls, mode, user_text, images_with_weights, run_config, **kwargs): # noqa
         images = [img for img, _ in images_with_weights]
-        describe_result = self._describe_images(images_with_weights, run_config)
+        describe_result = cls._describe_images(images_with_weights, run_config)
         if describe_result:
             image_context_for_all, _, primary_subjects_from_images = describe_result
         else:
             image_context_for_all, primary_subjects_from_images = "", []
-        style_rules = self._build_style_and_composition_rules(mode, images, run_config, user_text, "", image_context_for_all)
+        style_rules = cls._build_style_and_composition_rules(mode, images, run_config, user_text, "", image_context_for_all)
         user_negative_prompt = kwargs.get("negative_prompt", "")
         ai_negative_prompt = utils._generate_negative_prompt(user_text, run_config, user_negative_prompt="")
         parts = [p for p in [user_negative_prompt, ai_negative_prompt] if p and p.strip()]
@@ -737,10 +750,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             print("\033[94m[PromptCrafter] Multi-paragraph input detected. Using manual scene breaks.\033[0m")
             scenes = [p.strip() for p in user_text.split('\n\n') if p.strip()]
         else:
-            if not user_text or len(user_text.split()) < 20:
-                scenes = utils._generate_storyboard_from_instruction_with_ai(user_text, image_context_for_all, primary_subjects_from_images, run_config)
-            else:
-                scenes = utils._generate_storyboard_from_instruction_with_ai(user_text, image_context_for_all, primary_subjects_from_images, run_config)
+            scenes = utils._generate_storyboard_from_instruction_with_ai(user_text, image_context_for_all, primary_subjects_from_images, run_config)
 
         if not scenes:
             return ("", "AI failed to generate or split the text into a storyboard. Please try rephrasing your request or check the model.", "", "")
@@ -749,7 +759,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
 
         generated_prompts: list[str] = [""] * len(scenes)
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(scenes))) as executor:
-            future_to_index = {executor.submit(self._generate_prompt_for_scene, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, primary_subjects_from_images=primary_subjects_from_images, **kwargs): i for i, scene_text in enumerate(scenes)}
+            future_to_index = {executor.submit(cls._generate_prompt_for_scene, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, primary_subjects_from_images=primary_subjects_from_images, **kwargs): i for i, scene_text in enumerate(scenes)}
             for future in concurrent.futures.as_completed(future_to_index):
                 index = future_to_index[future]
                 try:
@@ -768,17 +778,18 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         target_model_format = kwargs.get("target_model_format", "Generic")
         if target_model_format != "Generic (SD1.5, SD2.1)":
             print(f"\033[94m[PromptCrafter] Applying '{target_model_format}' formatting to {len(generated_prompts)} scheduled scenes...\033[0m")
-            formatted_prompts = [self._format_prompt_for_target(p, target_model_format) if not p.startswith("[Error:") else p for p in generated_prompts]
+            formatted_prompts = [cls._format_prompt_for_target(p, target_model_format) if not p.startswith("[Error:") else p for p in generated_prompts]
             generated_prompts = formatted_prompts
 
         schedule_json = utils._create_schedule_from_items(generated_prompts, kwargs.get("max_frames", 240), 0, kwargs.get("interpolate_keyframes", True), kwargs.get("interpolation_frame_interval", 10))
                 
         return ("", schedule_json, image_context_for_all, base_negative_prompt)
 
-    def _generate_initial_draft(self, mode, user_instructions, user_context, image_context, 
+    @classmethod
+    def _generate_initial_draft(cls, mode, user_instructions, user_context, image_context, 
                           mandatory_tokens, images, run_config, primary_subjects_from_images=None):
         """Generate initial draft with talent direction enhancement."""
-        merge_prompt = self._build_initial_merge_prompt(mode, user_instructions, user_context, 
+        merge_prompt = cls._build_initial_merge_prompt(mode, user_instructions, user_context, 
                                                       image_context, mandatory_tokens, images, 
                                                       run_config, primary_subjects_from_images)
         
@@ -801,11 +812,11 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             if run_config.use_deep_think and refinements == 0:
                 print("\033[94m[PromptCrafter] Deep Think disabled by setting refinements to 0.\033[0m")
             generation_kwargs["debug_title"] = f"Initial {mode} Prompt"
-            ok, scene_prompt = self._query_llm(run_config.model, merge_prompt, run_config=run_config, **generation_kwargs)
+            ok, scene_prompt = cls._query_llm(run_config.model, merge_prompt, run_config=run_config, **generation_kwargs)
         
         if ok and scene_prompt:
             original_content = f"{user_instructions} {user_context}".strip()
-            enhanced_prompt = self._enhance_prompt_with_talent_direction(
+            enhanced_prompt = cls._enhance_prompt_with_talent_direction(
                 utils.TextCleaner.single_paragraph(scene_prompt), 
                 original_content, 
                 run_config.model
@@ -814,7 +825,8 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         else:
             return (False, f"Ollama error: {scene_prompt}")
 
-    def _format_prompt_for_target(self, prompt, target_format):
+    @staticmethod
+    def _format_prompt_for_target(prompt, target_format):
             prompt_text = str(prompt).strip().rstrip(',')
             
             if target_format == "Generic (SD1.5, SD2.1)": return prompt_text
@@ -825,7 +837,8 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             elif target_format in ("LTX-2 (Audio/Lip Sync/Retake)", "Generic Video (Wan, etc.)"): return prompt_text
             else: return prompt_text
 
-    def _generate_prompt_for_scene(self, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, primary_subjects_from_images=None, **kwargs): # noqa
+    @classmethod
+    def _generate_prompt_for_scene(cls, scene_text, mode, images_with_weights, image_context_for_all, style_rules, run_config, primary_subjects_from_images=None, **kwargs): # noqa
         if primary_subjects_from_images is None:
             primary_subjects_from_images = []
         elif isinstance(primary_subjects_from_images, str):
@@ -840,7 +853,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         if config.CACHE.has(cache_key):
             print(f"\033[94m[PromptCrafter] Using cached prompt for scene.\033[0m")
             cached_prompt = config.CACHE.get(cache_key)
-            return self._enhance_prompt_with_talent_direction(cached_prompt, scene_text, run_config.model)
+            return cls._enhance_prompt_with_talent_direction(cached_prompt, scene_text, run_config.model)
 
         images = [img for img, _ in images_with_weights]
         tok_ok, mandatory_tokens = utils._extract_mandatory_tokens_with_model(
@@ -851,39 +864,42 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             mandatory_tokens = {"primary": primary_subjects_from_images, "allowed_list": primary_subjects_from_images}
         if not tok_ok: 
             error_prompt = f"[Error extracting tokens for scene: {mandatory_tokens}]"
-            return self._enhance_prompt_with_talent_direction(error_prompt, scene_text, run_config.model)
+            return cls._enhance_prompt_with_talent_direction(error_prompt, scene_text, run_config.model)
 
-        ok_draft, draft_or_err = self._generate_initial_draft(
+        ok_draft, draft_or_err = cls._generate_initial_draft(
             mode, scene_text, "", image_context_for_all, mandatory_tokens, images, run_config, primary_subjects_from_images
         )
         
         if not ok_draft: 
             error_prompt = f"[Error generating draft for scene: {draft_or_err}]"
-            return self._enhance_prompt_with_talent_direction(error_prompt, scene_text, run_config.model)
+            return cls._enhance_prompt_with_talent_direction(error_prompt, scene_text, run_config.model)
             
-        scene_prompt = self._refine_image_video_prompt(
+        scene_prompt = cls._refine_image_video_prompt(
             draft_or_err, mode, mandatory_tokens, style_rules, run_config
         )
         
         new_positive, _ = utils._simplify_for_diffusion(scene_prompt, scene_text, run_config)
         
-        enhanced_positive = self._enhance_prompt_with_talent_direction(
+        enhanced_positive = cls._enhance_prompt_with_talent_direction(
             new_positive, scene_text, run_config.model
         )
         
         config.CACHE.set(cache_key, enhanced_positive)
         return enhanced_positive
 
-    def _get_adjusted_temperature(self, base_temp, creativity_level):
+    @staticmethod
+    def _get_adjusted_temperature(base_temp, creativity_level):
         multiplier = 1.0 + (creativity_level - 5) * 0.1
         adjusted_temp = base_temp * multiplier
         return max(0.0, min(1.5, adjusted_temp))
 
-    def _build_initial_merge_prompt(self, mode, user_text, user_negative_prompt, image_context, mandatory_tokens, images, run_config, all_primary_subjects):
+    @staticmethod
+    def _build_initial_merge_prompt(mode, user_text, user_negative_prompt, image_context, mandatory_tokens, images, run_config, all_primary_subjects):
         thought_process = thinking_process.ThoughtProcess(run_config=run_config, user_text=user_text, negative_prompt=user_negative_prompt, image_context=image_context, primary_subjects_from_images=all_primary_subjects, mode=mode)
         return thought_process._build_initial_merge_prompt(mode, user_text, user_negative_prompt, image_context, mandatory_tokens, images, run_config, all_primary_subjects)
 
-    def _build_refinement_prompt(self, current_prompt, mode, primary_items, secondary_items, style_rules, run_config, ask_for_json=False):
+    @staticmethod
+    def _build_refinement_prompt(current_prompt, mode, primary_items, secondary_items, style_rules, run_config, ask_for_json=False):
         """Build a refinement prompt for iterative prompt improvement."""
         style_inspiration = style_rules.get("inspiration", "") if style_rules else ""
         refinement_prompt = textwrap.dedent(f"""
@@ -903,13 +919,14 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         
         return refinement_prompt
 
-    def _refine_image_video_prompt(self, draft_prompt, mode, mandatory_tokens, style_rules, run_config):
+    @classmethod
+    def _refine_image_video_prompt(cls, draft_prompt, mode, mandatory_tokens, style_rules, run_config):
         current_prompt = draft_prompt
         primary_items_list = [re.sub(r'^ Electrochemical_cell_diagram.*', '', t) for t in (mandatory_tokens or {}).get("primary", [])]
         
         if not primary_items_list:
-            critique_prompt = self._build_refinement_prompt(current_prompt, mode, [], [], style_rules, run_config, ask_for_json=False)
-            ok, revised_prompt = self._query_llm(
+            critique_prompt = cls._build_refinement_prompt(current_prompt, mode, [], [], style_rules, run_config, ask_for_json=False)
+            ok, revised_prompt = cls._query_llm(
                 run_config.model, critique_prompt, prefer_chat=run_config.use_chat_api, 
                 run_config=run_config,
                 temperature=run_config.temperature, seed=run_config.seed, timeout=90, 
@@ -920,7 +937,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             refined_prompt = current_prompt
         
         if refined_prompt:
-            enhanced_prompt = self._enhance_prompt_with_talent_direction(
+            enhanced_prompt = cls._enhance_prompt_with_talent_direction(
                 refined_prompt, 
                 refined_prompt,
                 run_config.model
@@ -929,7 +946,8 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         else:
             return refined_prompt
 
-    def _analyze_lyrics_emotional_progression(self, lyrics_text, timed_segments):
+    @classmethod
+    def _analyze_lyrics_emotional_progression(cls, lyrics_text, timed_segments):
         """Analyze emotional progression throughout the lyrics."""
         if not lyrics_text: 
             return {}
@@ -938,7 +956,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         
         for i, line in enumerate(lines):
             if line.strip():
-                analysis = self._analyze_content_for_direction(line, "lyrics_line")
+                analysis = cls._analyze_content_for_direction(line, "lyrics_line")
                 emotional_tone = analysis.get("emotional_tone", "neutral")
                 
                 if timed_segments and i < len(timed_segments):
@@ -950,7 +968,8 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
                     
         return emotional_progression
 
-    def _get_timing_context_for_frame(self, frame_number, timed_segments):
+    @staticmethod
+    def _get_timing_context_for_frame(frame_number, timed_segments):
         """Get timing context for a specific frame."""
         if not timed_segments: 
             return {"scene_type": "middle", "position": "middle"}
@@ -972,7 +991,8 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
                 
         return {"scene_type": "middle", "position": "middle"}
 
-    def _enhance_schedule_with_talent_direction(self, schedule_json, original_content, target_model, timed_segments=None):
+    @classmethod
+    def _enhance_schedule_with_talent_direction(cls, schedule_json, original_content, target_model, timed_segments=None):
         """Enhance schedule with talent direction."""
         try:
             schedule_data = json_utils.extract_and_parse_json(schedule_json)
@@ -985,13 +1005,13 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             if timed_segments is None:
                 timed_segments = []
             
-            emotional_arc = self._analyze_lyrics_emotional_progression(original_content, timed_segments)
+            emotional_arc = cls._analyze_lyrics_emotional_progression(original_content, timed_segments)
             
             for frame, prompt in schedule_data.items():
                 if isinstance(prompt, str) and prompt.strip():
-                    timing_context = self._get_timing_context_for_frame(int(frame), timed_segments)
+                    timing_context = cls._get_timing_context_for_frame(int(frame), timed_segments)
                     
-                    enhanced_prompt = self._enhance_prompt_with_talent_direction(
+                    enhanced_prompt = cls._enhance_prompt_with_talent_direction(
                         prompt, original_content, target_model
                     )
                     

@@ -20,7 +20,7 @@ class PGFX_LLM_OutputSaver:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("combined_text",)
     FUNCTION = "run"
-    CATEGORY = "☠️PGFX🏴‍☠️ /LLM"
+    CATEGORY = "☠️PGFX /LLM"
 
     @classmethod
     def INPUT_TYPES(cls):

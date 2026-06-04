@@ -14,7 +14,7 @@ class BatchPromptProcessor:
     RETURN_TYPES = ("STRING",)
     OUTPUT_IS_LIST = (True,)
     FUNCTION = "process_batch"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Text"
 
     def process_batch(self, prepend_text, prompts, append_text, batch_size, start_index):
         prepend_text = prepend_text.strip()
@@ -54,7 +54,7 @@ class KeyframePromptScheduler:
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "get_prompt"
-    CATEGORY = f"☠️PGFX🏴‍☠️ /Utils"
+    CATEGORY = "☠️PGFX /Text"
 
     def get_prompt(self, keyframe_prompts, frame_number, prepend_text, append_text):
         import json

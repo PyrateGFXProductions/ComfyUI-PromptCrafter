@@ -1,0 +1,40 @@
+{
+  "last_node_id": 4,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [10, 100],
+      "size": [315, 315],
+      "widgets_values": ["example.png", "image"]
+    },
+    {
+      "id": 2,
+      "type": "PGFX_UniversalSwitchBox",
+      "pos": [400, 100],
+      "size": [315, 200],
+      "inputs": [{"name": "input_1", "type": "*", "link": 1}, {"name": "input_2", "type": "*", "link": null}],
+      "widgets_values": [2, "Auto-Detect (Priority)", 0]
+    },
+    {
+      "id": 3,
+      "type": "PreviewImage",
+      "pos": [750, 100],
+      "size": [300, 300],
+      "inputs": [{"name": "images", "type": "IMAGE", "link": 2}]
+    },
+    {
+      "id": 4,
+      "type": "Note",
+      "pos": [400, 350],
+      "size": [315, 100],
+      "widgets_values": ["AUTO-DETECT MODE:\nEven though Input 2 is disconnected, the Switch Box intelligently detects data on Input 1 and routes it instantly without a signal wire."]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "*"],
+    [2, 2, 0, 3, 0, "IMAGE"]
+  ],
+  "version": 0.4
+}

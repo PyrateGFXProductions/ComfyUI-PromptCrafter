@@ -9,12 +9,35 @@ from typing import Tuple, Dict, Any, List, Optional
 
 import torch
 
+# ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
 
 class PGFX_FilmProjectController:
     """
     PGFX Film - Project Controller
     Deterministic, stateless project initializer for film production workflows.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmProjectController")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -45,7 +68,7 @@ class PGFX_FilmProjectController:
     )
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Core"
+    CATEGORY = "☠️PGFX /Film"
 
     def execute(
         self,
@@ -144,6 +167,7 @@ class PGFX_FilmCharacterRegistry:
     PGFX Film - Ensemble Character Registry
     Strong Continuity Version - Deterministic, Stateless, JSON-based.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmCharacterRegistry")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -163,7 +187,7 @@ class PGFX_FilmCharacterRegistry:
     )
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Core"
+    CATEGORY = "☠️PGFX /Film"
 
     def execute(
         self,
@@ -230,6 +254,7 @@ class PGFX_FilmShotArchitect:
     PGFX Film - Structured Cinema Shot Architect
     Dynamic per-shot generator. Deterministic. Strong Continuity.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmShotArchitect")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -246,7 +271,7 @@ class PGFX_FilmShotArchitect:
     RETURN_NAMES = ("shot_config",)
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Core"
+    CATEGORY = "☠️PGFX /Film"
 
     def execute(
         self,
@@ -382,6 +407,7 @@ class PGFX_FilmSaveShotVideo:
     PGFX Film - Shot Video Saver
     Saves IMAGE frames to mp4 via ffmpeg pipe and outputs absolute path STRING.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmSaveShotVideo")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -397,7 +423,7 @@ class PGFX_FilmSaveShotVideo:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("clip_path",)
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Core"
+    CATEGORY = "☠️PGFX /Film"
 
     def execute(
         self,
@@ -472,6 +498,7 @@ class PGFX_FilmAudioLoader:
     PGFX Film - Audio Loader
     Loads an audio file from a string path into ComfyUI's AUDIO format.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmAudioLoader")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -485,7 +512,7 @@ class PGFX_FilmAudioLoader:
     RETURN_NAMES = ("audio",)
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Core"
+    CATEGORY = "☠️PGFX /Film"
 
     def execute(self, audio_path: str) -> Tuple[dict]:
         if not audio_path or not isinstance(audio_path, str):
@@ -513,6 +540,7 @@ class PGFX_FilmAssembler:
     PGFX Film - Video Assembler
     Stitches shots based on the PROJECT_CONFIG's completed_shots list.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmAssembler")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -532,7 +560,7 @@ class PGFX_FilmAssembler:
     RETURN_NAMES = ("final_video_path",)
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Assembly"
+    CATEGORY = "☠️PGFX /Film"
     OUTPUT_NODE = True
 
     def _resolve_project_dir(self, PROJECT_CONFIG: Dict[str, Any], shots: list) -> str:
@@ -794,6 +822,7 @@ class PGFX_FilmRenderProject:
     PGFX Film - Render Orchestrator
     Manages incremental file persistence for PGFX-driven projects.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmRenderProject")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -809,7 +838,7 @@ class PGFX_FilmRenderProject:
     RETURN_NAMES = ("PROJECT_CONFIG", "is_complete")
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Assembly"
+    CATEGORY = "☠️PGFX /Film"
 
     def _resolve_project_dir(
         self, PROJECT_CONFIG: Dict[str, Any], clip_path: str
@@ -921,6 +950,7 @@ class PGFX_FilmShotConfigExtractor:
     PGFX Film - Shot Config Extractor (Unified)
     Matched to legacy slot signature for drop-in workflow replacement.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmShotConfigExtractor")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -960,7 +990,7 @@ class PGFX_FilmShotConfigExtractor:
     )
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Assembly"
+    CATEGORY = "☠️PGFX /Film"
 
     def _entry_index(self, entry: Dict[str, Any], fallback: int = -1) -> int:
         try:
@@ -1423,6 +1453,7 @@ class PGFX_FilmAudioSegmenter:
     PGFX Film - Audio Segmenter
     Extracts the audio segment for a specific shot from the TIMING_MAP.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmAudioSegmenter")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1437,7 +1468,7 @@ class PGFX_FilmAudioSegmenter:
     RETURN_NAMES = ("AUDIO",)
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Assembly"
+    CATEGORY = "☠️PGFX /Film"
 
     def execute(
         self, TIMING_MAP: Dict[str, Any], shot_index: int
@@ -1460,6 +1491,7 @@ class PGFX_FilmAutoShotIndex:
     PGFX Film - Auto Shot Index
     Synchronizes with the PGFX Queue Manager to provide the current active shot index.
     """
+    DESCRIPTION = get_node_description("PGFX_FilmAutoShotIndex")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1476,7 +1508,7 @@ class PGFX_FilmAutoShotIndex:
     RETURN_NAMES = ("shot_index", "total_shots", "is_complete")
 
     FUNCTION = "execute"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Film/Assembly"
+    CATEGORY = "☠️PGFX /Film"
 
     def execute(
         self, PROJECT_CONFIG: Dict[str, Any], manual_override: int = -1

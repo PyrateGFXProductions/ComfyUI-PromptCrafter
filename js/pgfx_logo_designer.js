@@ -1,18 +1,35 @@
 console.log("[PGFX] Fixed Logo Studio Loaded");
 import { app } from "../../scripts/app.js";
 
-// Load Fabric.js from CDN dynamically if it hasn't been loaded yet
-const loadFabric = () => {
+// Load Fabric.js with local fallback and status reporting
+const loadFabric = (statusEl) => {
     return new Promise((resolve, reject) => {
         if (window.fabric) {
             resolve(window.fabric);
             return;
         }
-        const script = document.createElement("script");
-        script.src = "https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js";
-        script.onload = () => resolve(window.fabric);
-        script.onerror = reject;
-        document.head.appendChild(script);
+
+        const tryLoad = (src, isFallback = false) => {
+            if (statusEl) statusEl.textContent = isFallback ? "📂 Attempting Local Engine Fallback..." : "📦 Downloading Designer Engine (Fabric.js)...";
+            const script = document.createElement("script");
+            script.src = src;
+            script.onload = () => {
+                if (statusEl) statusEl.textContent = "✅ Engine Ready. Starting Canvas...";
+                resolve(window.fabric);
+            };
+            script.onerror = () => {
+                if (!isFallback) {
+                    // Try local fallback if CDN fails
+                    tryLoad("/extensions/ComfyUI-PromptCrafter/js/fabric.min.js", true);
+                } else {
+                    if (statusEl) statusEl.textContent = "❌ Failed to load Designer Engine. Check your internet connection.";
+                    reject(new Error("Failed to load Fabric.js."));
+                }
+            };
+            document.head.appendChild(script);
+        };
+
+        tryLoad("https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js");
     });
 };
 
@@ -79,14 +96,73 @@ const injectStyles = () => {
         }
         .pgfx-studio-sidebar {
             flex-shrink: 0;
-            width: 320px;
+            width: 300px;
             background: #18181b;
             border-right: 1px solid rgba(255,255,255,0.05);
-            padding: 20px;
+            padding: 16px;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 12px;
             overflow-y: auto;
+        }
+        .pgfx-studio-right-sidebar {
+            flex-shrink: 0;
+            width: 260px;
+            background: #18181b;
+            border-left: 1px solid rgba(255,255,255,0.05);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+        }
+        .pgfx-layers-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .pgfx-layer-item {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 6px;
+            padding: 8px 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .pgfx-layer-item:hover {
+            background: rgba(255,255,255,0.05);
+            border-color: rgba(255,255,255,0.1);
+        }
+        .pgfx-layer-item.active {
+            background: rgba(6, 182, 212, 0.1);
+            border-color: rgba(6, 182, 212, 0.4);
+        }
+        .pgfx-layer-name {
+            font-size: 11px;
+            font-weight: 600;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #d4d4d8;
+        }
+        .pgfx-layer-icon {
+            font-size: 12px;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+            cursor: pointer;
+            width: 18px;
+            text-align: center;
+        }
+        .pgfx-layer-icon:hover {
+            opacity: 1;
+            color: #06b6d4;
+        }
+        .pgfx-layer-icon.disabled {
+            opacity: 0.2;
         }
         .pgfx-studio-main {
             min-width: 0;
@@ -225,6 +301,63 @@ const injectStyles = () => {
         .hidden-file-input {
             display: none;
         }
+        #pgfx-studio-loading {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #111113;
+            z-index: 1000;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            color: #06b6d4;
+            font-weight: bold;
+        }
+        .pgfx-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(6, 182, 212, 0.1);
+            border-top: 4px solid #06b6d4;
+            border-radius: 50%;
+            animation: pgfx-spin 1s linear infinite;
+        }
+        #pgfx-context-menu {
+            position: fixed;
+            z-index: 20000;
+            background: #18181b;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            padding: 4px;
+            display: none;
+            flex-direction: column;
+            min-width: 160px;
+        }
+        .pgfx-menu-item {
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #d4d4d8;
+            cursor: pointer;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.2s;
+        }
+        .pgfx-menu-item:hover {
+            background: #06b6d4;
+            color: black;
+        }
+        .pgfx-menu-separator {
+            height: 1px;
+            background: rgba(255,255,255,0.05);
+            margin: 4px 0;
+        }
+        @keyframes pgfx-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     `;
     document.head.appendChild(style);
 };
@@ -304,103 +437,118 @@ class LogoStudioUI {
     }
 
     async open() {
-        await loadFabric();
         injectStyles();
-
         this.overlay.classList.add('active');
+        
+        // Show loading state
+        const loadingOverlay = document.getElementById('pgfx-studio-loading');
+        const loadingStatus = document.getElementById('pgfx-loading-status');
+        if (loadingOverlay) loadingOverlay.style.display = 'flex';
 
-        // Fetch fonts every time the studio opens to ensure fresh data
-        await this.fetchFontsFromServer();
+        try {
+            await loadFabric(loadingStatus);
+            if (loadingStatus) loadingStatus.textContent = "📂 Loading Design Data...";
+            
+            // Fetch fonts every time the studio opens to ensure fresh data
+            await this.fetchFontsFromServer();
 
-        if (!this.canvas) {
-            this.canvas = new fabric.Canvas('pgfx-design-canvas', {
-                width: 1024,
-                height: 1024,
-                backgroundColor: 'transparent',
-                preserveObjectStacking: true
-            });
-            this.pageBackgroundColor = '#000000';
+            if (!this.canvas) {
+                this.canvas = new fabric.Canvas('pgfx-design-canvas', {
+                    width: 1024,
+                    height: 1024,
+                    backgroundColor: 'transparent',
+                    preserveObjectStacking: true
+                });
+                this.pageBackgroundColor = '#000000';
 
-            // â”€â”€ Restore from saved JSON if available â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            if (this.jsonWidget.value && this.jsonWidget.value.startsWith('{')) {
-                try {
-                    const jsonData = JSON.parse(this.jsonWidget.value);
-                    if (jsonData.customFonts) {
-                        for (const font of jsonData.customFonts) {
-                            await this.loadFontIntoBrowser(font.name, font.url);
-                        }
-                    }
-                    this.canvas.loadFromJSON(jsonData, () => {
-                        const restoredBg = jsonData.pgfx_editor_background || jsonData.backgroundColor || jsonData.background || '#000000';
-                        this.pageBackgroundColor = restoredBg === 'transparent' ? '#000000' : restoredBg;       
-                        this.canvas.backgroundColor = 'transparent';
-                        this.targetWidth = jsonData.pgfx_canvas_width || 1024;       
-                        this.targetHeight = jsonData.pgfx_canvas_height || 1024;    
-
-                        // Sync UI boxes if they exist
-                        const widthInput = document.getElementById('pgfx-canvas-width');
-                        const heightInput = document.getElementById('pgfx-canvas-height');
-                        const presetSelect = document.getElementById('pgfx-canvas-preset');
-                        if (widthInput && heightInput) {
-                            widthInput.value = this.targetWidth;
-                            heightInput.value = this.targetHeight;
-                            
-                            const presetVal = `${this.targetWidth}x${this.targetHeight}`;
-                            if (presetSelect) {
-                                const optionExists = Array.from(presetSelect.options).some(opt => opt.value === presetVal);
-                                if (optionExists) {
-                                    presetSelect.value = presetVal;
-                                    widthInput.disabled = true;
-                                    heightInput.disabled = true;
-                                } else {
-                                    presetSelect.value = "custom";
-                                    widthInput.disabled = false;
-                                    heightInput.disabled = false;
-                                }
+                // ── Restore from saved JSON if available ──────────────────────
+                if (this.jsonWidget.value && this.jsonWidget.value.startsWith('{')) {
+                    try {
+                        const jsonData = JSON.parse(this.jsonWidget.value);
+                        if (jsonData.customFonts) {
+                            for (const font of jsonData.customFonts) {
+                                await this.loadFontIntoBrowser(font.name, font.url);
                             }
                         }
+                        this.canvas.loadFromJSON(jsonData, () => {
+                            const restoredBg = jsonData.pgfx_editor_background || jsonData.backgroundColor || jsonData.background || '#000000';
+                            this.pageBackgroundColor = restoredBg === 'transparent' ? '#000000' : restoredBg;       
+                            this.canvas.backgroundColor = 'transparent';
+                            this.targetWidth = jsonData.pgfx_canvas_width || 1024;       
+                            this.targetHeight = jsonData.pgfx_canvas_height || 1024;    
 
-                        this.canvas.renderAll();
+                            // Sync UI boxes if they exist
+                            const widthInput = document.getElementById('pgfx-canvas-width');
+                            const heightInput = document.getElementById('pgfx-canvas-height');
+                            const presetSelect = document.getElementById('pgfx-canvas-preset');
+                            if (widthInput && heightInput) {
+                                widthInput.value = this.targetWidth;
+                                heightInput.value = this.targetHeight;
+                                
+                                const presetVal = `${this.targetWidth}x${this.targetHeight}`;
+                                if (presetSelect) {
+                                    const optionExists = Array.from(presetSelect.options).some(opt => opt.value === presetVal);
+                                    if (optionExists) {
+                                        presetSelect.value = presetVal;
+                                        widthInput.disabled = true;
+                                        heightInput.disabled = true;
+                                    } else {
+                                        presetSelect.value = "custom";
+                                        widthInput.disabled = false;
+                                        heightInput.disabled = false;
+                                    }
+                                }
+                            }
+
+                            this.canvas.renderAll();
+                            this._syncBackgroundPicker();
+                            this.updateUIForSelection();
+                            this.refreshLayersPanel();
+                            this.fitCanvasToView();
+                            this.lastCanvasText = this._extractCanvasText();
+                            this._saveToHistory();
+                            this.scheduleNodeStateSync();
+                            if (loadingOverlay) loadingOverlay.style.display = 'none';
+                        });
+                    } catch (e) {
+                        console.error("[PGFX Studio] Error loading canvas JSON", e);
+                        this._addDefaultText();
                         this._syncBackgroundPicker();
-                        this.updateUIForSelection();
+                        this.refreshLayersPanel();
                         this.fitCanvasToView();
-                        this.lastCanvasText = this._extractCanvasText();
                         this._saveToHistory();
                         this.scheduleNodeStateSync();
-                    });
-                } catch (e) {
-                    console.error("[PGFX Studio] Error loading canvas JSON", e);
+                        if (loadingOverlay) loadingOverlay.style.display = 'none';
+                    }
+                } else {
+                    // ── No saved state: seed canvas from text_input if it has content ─
                     this._addDefaultText();
-                this.fitCanvasToView();
                     this._syncBackgroundPicker();
+                    this.refreshLayersPanel();
+                    this.setupEventHandlers();
                     this.fitCanvasToView();
+                    // Multi-pass fit to handle dynamic layout shifts
+                    setTimeout(() => this.fitCanvasToView(), 100);
+                    setTimeout(() => this.fitCanvasToView(), 300);
                     this._saveToHistory();
                     this.scheduleNodeStateSync();
+                    if (loadingOverlay) loadingOverlay.style.display = 'none';
                 }
-            } else {
-                // â”€â”€ No saved state: seed canvas from text_input if it has content â”€
-                this._addDefaultText();
-                this.fitCanvasToView();
-                this._syncBackgroundPicker();
-                this.fitCanvasToView();
-                this.setupEventHandlers();
-                // Automatically fit/zoom/center on first load
-                this.fitCanvasToView();
-                setTimeout(() => this.fitCanvasToView(), 50);
-                setTimeout(() => this.fitCanvasToView(), 150);
-                setTimeout(() => this.fitCanvasToView(), 300);
-            }
 
-            this.setupEventHandlers();
-        } else {
-            // Canvas already exists — if text_input changed since last open, update the primary text layer   
-            this._syncTextInputToCanvas();
-            this._syncBackgroundPicker();
-            this.fitCanvasToView();
-            setTimeout(() => this.fitCanvasToView(), 50);
-            setTimeout(() => this.fitCanvasToView(), 150);
-            setTimeout(() => this.fitCanvasToView(), 300);
-            this.scheduleNodeStateSync();
+                this.setupEventHandlers();
+            } else {
+                // Canvas already exists — if text_input changed since last open, update the primary text layer   
+                this._syncTextInputToCanvas();
+                this._syncBackgroundPicker();
+                this.refreshLayersPanel();
+                this.fitCanvasToView();
+                setTimeout(() => this.fitCanvasToView(), 100);
+                this.scheduleNodeStateSync();
+                if (loadingOverlay) loadingOverlay.style.display = 'none';
+            }
+        } catch (err) {
+            console.error("[PGFX Studio] Critical startup error:", err);
+            if (loadingStatus) loadingStatus.innerHTML = `<span style="color: #ef4444;">❌ Studio Failed to Start: ${err.message}</span><br><br><button onclick="window.location.reload()" class="pgfx-btn">Reload Page</button>`;
         }
     }
 
@@ -1066,11 +1214,55 @@ class LogoStudioUI {
         _valEl('pgfx-rotation-val', rotationVal + '\u00b0');
         _valEl('pgfx-skew-x-val', String(skewVal));
 
-        // Colors
-        if (active.fill) document.getElementById('pgfx-color-picker').value = active.fill;
-        if (active.stroke) document.getElementById('pgfx-stroke-picker').value = active.stroke;
+        // Colors & Fill Type
+        const fillTypeSelect = document.getElementById('pgfx-fill-type');
+        const gradientControls = document.getElementById('pgfx-fill-gradient-controls');
+        const solidRow = document.getElementById('pgfx-fill-solid-row');
+
+        if (active.fill && typeof active.fill === 'object' && active.fill.type) {
+            // Gradient
+            fillTypeSelect.value = active.fill.type;
+            gradientControls.style.display = 'flex';
+            solidRow.style.display = 'none';
+
+            if (active.fill.colorStops && active.fill.colorStops.length >= 2) {
+                document.getElementById('pgfx-gradient-start').value = active.fill.colorStops[0].color;
+                document.getElementById('pgfx-gradient-end').value = active.fill.colorStops[active.fill.colorStops.length - 1].color;
+            }
+            const angle = active.fill.pgfx_angle || 0;
+            document.getElementById('pgfx-gradient-angle').value = angle;
+            _valEl('pgfx-gradient-angle-val', angle + '°');
+        } else {
+            // Solid
+            fillTypeSelect.value = 'solid';
+            gradientControls.style.display = 'none';
+            solidRow.style.display = 'flex';
+            if (active.fill && typeof active.fill === 'string') {
+                document.getElementById('pgfx-color-picker').value = active.fill;
+            }
+        }
+
+        if (active.stroke) document.getElementById('pgfx-stroke-picker').value = typeof active.stroke === 'string' ? active.stroke : '#000000';
         document.getElementById('pgfx-stroke-width').value = strokeVal;
         _valEl('pgfx-stroke-width-val', String(strokeVal));
+
+        // Shadows
+        const shadowEnabled = document.getElementById('pgfx-shadow-enabled');
+        const shadowControls = document.getElementById('pgfx-shadow-controls');
+        if (active.shadow && active.shadow instanceof fabric.Shadow) {
+            shadowEnabled.checked = true;
+            shadowControls.style.display = 'flex';
+            document.getElementById('pgfx-shadow-color').value = active.shadow.color;
+            document.getElementById('pgfx-shadow-blur').value = active.shadow.blur;
+            document.getElementById('pgfx-shadow-offset-x').value = active.shadow.offsetX;
+            document.getElementById('pgfx-shadow-offset-y').value = active.shadow.offsetY;
+            _valEl('pgfx-shadow-blur-val', String(active.shadow.blur));
+            _valEl('pgfx-shadow-offset-x-val', String(active.shadow.offsetX));
+            _valEl('pgfx-shadow-offset-y-val', String(active.shadow.offsetY));
+        } else {
+            shadowEnabled.checked = false;
+            shadowControls.style.display = 'none';
+        }
 
         // Text specific
         if (active.type === 'i-text' || active.type === 'text') {
@@ -1088,19 +1280,339 @@ class LogoStudioUI {
             _valEl('pgfx-font-size-val', String(Math.round(sizeVal)));
             _valEl('pgfx-letter-spacing-val', String(Math.round(letterVal)));
             _valEl('pgfx-line-spacing-val', parseFloat(lineVal).toFixed(2));
+        }
+    }
 
-            // Alignment buttons visual state (optional enhancement)
-            const alignment = active.textAlign || 'center';
-            // Logic to highlight active alignment button could go here
+    updateGradient() {
+        const active = this.canvas.getActiveObject();
+        if (!active) return;
+
+        const type = document.getElementById('pgfx-fill-type').value;
+        if (type === 'solid') {
+            active.set('fill', document.getElementById('pgfx-color-picker').value);
+        } else {
+            const start = document.getElementById('pgfx-gradient-start').value;
+            const end = document.getElementById('pgfx-gradient-end').value;
+            const angle = parseInt(document.getElementById('pgfx-gradient-angle').value);
+            
+            // Convert angle to coords for Fabric
+            const angleRad = (angle * Math.PI) / 180;
+            const coords = {
+                x1: 0,
+                y1: 0,
+                x2: Math.cos(angleRad),
+                y2: Math.sin(angleRad)
+            };
+
+            const grad = new fabric.Gradient({
+                type: type,
+                coords: type === 'linear' ? {
+                    x1: 0, y1: 0,
+                    x2: active.width * Math.cos(angleRad),
+                    y2: active.height * Math.sin(angleRad)
+                } : {
+                    r1: 0, r2: active.width / 2,
+                    x1: active.width / 2, y1: active.height / 2,
+                    x2: active.width / 2, y2: active.height / 2
+                },
+                colorStops: [
+                    { offset: 0, color: start },
+                    { offset: 1, color: end }
+                ]
+            });
+            grad.pgfx_angle = angle; // Store for UI sync
+            active.set('fill', grad);
+        }
+        this.canvas.requestRenderAll();
+        this._saveToHistory();
+        this.scheduleNodeStateSync();
+    }
+
+    updateShadow() {
+        const active = this.canvas.getActiveObject();
+        if (!active) return;
+
+        const enabled = document.getElementById('pgfx-shadow-enabled').checked;
+        if (!enabled) {
+            active.set('shadow', null);
+        } else {
+            const color = document.getElementById('pgfx-shadow-color').value;
+            const blur = parseInt(document.getElementById('pgfx-shadow-blur').value);
+            const offsetX = parseInt(document.getElementById('pgfx-shadow-offset-x').value);
+            const offsetY = parseInt(document.getElementById('pgfx-shadow-offset-y').value);
+
+            active.set('shadow', new fabric.Shadow({
+                color: color,
+                blur: blur,
+                offsetX: offsetX,
+                offsetY: offsetY
+            }));
+        }
+        this.canvas.requestRenderAll();
+        this._saveToHistory();
+        this.scheduleNodeStateSync();
+    }
+
+    refreshLayersPanel() {
+        const list = document.getElementById('pgfx-layers-list');
+        const count = document.getElementById('pgfx-layer-count');
+        if (!list || !this.canvas) return;
+
+        list.innerHTML = '';
+        const objects = this.canvas.getObjects().filter(o => o.name !== 'node_control'); // Don't show technical helpers
+        
+        if (count) count.textContent = objects.length;
+
+        // Render from top to bottom (reverse order of Fabric's stack)
+        [...objects].reverse().forEach((obj, idx) => {
+            const item = document.createElement('div');
+            item.className = 'pgfx-layer-item';
+            if (this.canvas.getActiveObject() === obj || (obj.type === 'activeSelection' && obj.getObjects().includes(obj))) {
+                item.classList.add('active');
+            }
+
+            const visibleIcon = document.createElement('span');
+            visibleIcon.className = 'pgfx-layer-icon';
+            visibleIcon.innerHTML = obj.visible ? '👁️' : '🕶️';
+            visibleIcon.title = obj.visible ? 'Hide Layer' : 'Show Layer';
+            visibleIcon.onclick = (e) => {
+                e.stopPropagation();
+                obj.set('visible', !obj.visible);
+                this.canvas.requestRenderAll();
+                this.refreshLayersPanel();
+                this._saveToHistory();
+                this.scheduleNodeStateSync();
+            };
+
+            const lockIcon = document.createElement('span');
+            lockIcon.className = 'pgfx-layer-icon';
+            lockIcon.innerHTML = obj.selectable ? '🔓' : '🔒';
+            lockIcon.title = obj.selectable ? 'Lock Layer' : 'Unlock Layer';
+            lockIcon.onclick = (e) => {
+                e.stopPropagation();
+                const isLocked = !obj.selectable;
+                obj.set({
+                    selectable: isLocked,
+                    evented: isLocked,
+                    hasControls: isLocked,
+                    hasBorders: isLocked
+                });
+                this.canvas.requestRenderAll();
+                this.refreshLayersPanel();
+                this._saveToHistory();
+                this.scheduleNodeStateSync();
+            };
+
+            const name = document.createElement('span');
+            name.className = 'pgfx-layer-name';
+            const typeLabel = obj.type.charAt(0).toUpperCase() + obj.type.slice(1);
+            name.textContent = obj.name || `${typeLabel} Layer`;
+            
+            // Double click to rename
+            name.ondblclick = (e) => {
+                e.stopPropagation();
+                const newName = prompt("Rename Layer:", name.textContent);
+                if (newName !== null) {
+                    obj.set('name', newName);
+                    this.refreshLayersPanel();
+                    this._saveToHistory();
+                    this.scheduleNodeStateSync();
+                }
+            };
+
+            const upBtn = document.createElement('span');
+            upBtn.className = 'pgfx-layer-icon';
+            upBtn.innerHTML = '▲';
+            upBtn.title = 'Move Up';
+            upBtn.onclick = (e) => {
+                e.stopPropagation();
+                obj.bringForward();
+                this.refreshLayersPanel();
+                this._saveToHistory();
+                this.scheduleNodeStateSync();
+            };
+
+            const downBtn = document.createElement('span');
+            downBtn.className = 'pgfx-layer-icon';
+            downBtn.innerHTML = '▼';
+            downBtn.title = 'Move Down';
+            downBtn.onclick = (e) => {
+                e.stopPropagation();
+                obj.sendBackwards();
+                this.refreshLayersPanel();
+                this._saveToHistory();
+                this.scheduleNodeStateSync();
+            };
+
+            item.onclick = () => {
+                this.canvas.setActiveObject(obj);
+                this.canvas.requestRenderAll();
+                // refreshLayersPanel will be called by selection:created/updated
+            };
+
+            item.appendChild(visibleIcon);
+            item.appendChild(lockIcon);
+            item.appendChild(name);
+            item.appendChild(upBtn);
+            item.appendChild(downBtn);
+            list.appendChild(item);
+        });
+    }
+
+    async sendToAgent() {
+        const active = this.canvas.getActiveObject();
+        if (!active) {
+            alert("Please select a design element to describe to the AI Agent.");
+            return;
+        }
+
+        const btn = document.getElementById('pgfx-send-agent-btn');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = "🤖 Packaging...";
+        btn.disabled = true;
+
+        try {
+            const getFillInfo = (fill) => {
+                if (!fill) return "none";
+                if (typeof fill === 'string') return fill;
+                if (fill.type) {
+                    const stops = fill.colorStops.map(s => s.color).join(' to ');
+                    return `${fill.type} gradient (${stops})`;
+                }
+                return "complex";
+            };
+
+            const type = active.type.charAt(0).toUpperCase() + active.type.slice(1);
+            const name = active.name || `${type} Layer`;
+            const fill = getFillInfo(active.fill);
+            const stroke = active.stroke ? `${active.strokeWidth}px ${active.stroke}` : "none";
+            const opacity = Math.round((active.opacity || 1) * 100) + "%";
+            
+            let description = `Selected Element: ${name}\n- Type: ${type}\n- Fill: ${fill}\n- Stroke: ${stroke}\n- Opacity: ${opacity}`;
+            
+            if (active.type.includes('text')) {
+                description += `\n- Text Content: "${active.text}"\n- Font: ${active.fontFamily}`;
+            }
+
+            // Append to extra_instruction widget
+            const currentExtra = this.jsonWidget.value || "{}";
+            let extraData = {};
+            try {
+                extraData = JSON.parse(currentExtra);
+            } catch(e) {}
+
+            extraData.agent_focus = {
+                target_layer: name,
+                properties: description,
+                timestamp: Date.now()
+            };
+
+            // Also update the visible extra_instruction if the user has a prompt they want to add
+            const userRefinement = prompt(`describe what the AI should do with the "${name}"?`, "Make this element more detailed...");
+            if (userRefinement) {
+                extraData.freeform_extra = (extraData.freeform_extra || "") + `\nRegarding "${name}": ${userRefinement}`;
+            }
+
+            this.jsonWidget.value = JSON.stringify(extraData);
+            
+            btn.innerHTML = "✅ Sent to Agent";
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }, 2000);
+
+            // Force a sync so the node sees the change
+            this.applyCanvasStateToNode();
+
+        } catch (err) {
+            console.error("[PGFX Studio] Error sending to agent:", err);
+            btn.innerHTML = "❌ Error";
+            btn.disabled = false;
         }
     }
 
     setupEventHandlers() {
         const commitCanvasChange = () => {
             this.canvas.renderAll();
+            this.refreshLayersPanel();
             this._saveToHistory();
             this.scheduleNodeStateSync();
         };
+
+        // --- CONTEXT MENU ---
+        const ctxMenu = document.getElementById('pgfx-context-menu');
+        this.canvas.on('mouse:down', (opt) => {
+            if (opt.e.button === 2) { // Right click
+                const active = this.canvas.getActiveObject();
+                if (active) {
+                    ctxMenu.style.display = 'flex';
+                    ctxMenu.style.left = opt.e.clientX + 'px';
+                    ctxMenu.style.top = opt.e.clientY + 'px';
+                }
+            } else {
+                ctxMenu.style.display = 'none';
+            }
+        });
+
+        document.getElementById('pgfx-ctx-clone').onclick = () => {
+            document.getElementById('pgfx-clone').click();
+            ctxMenu.style.display = 'none';
+        };
+        document.getElementById('pgfx-ctx-group').onclick = () => {
+            document.getElementById('pgfx-group-btn').click();
+            ctxMenu.style.display = 'none';
+        };
+        document.getElementById('pgfx-ctx-ungroup').onclick = () => {
+            document.getElementById('pgfx-ungroup-btn').click();
+            ctxMenu.style.display = 'none';
+        };
+        document.getElementById('pgfx-ctx-lock').onclick = () => {
+            const active = this.canvas.getActiveObject();
+            if (active) {
+                const isLocked = !active.selectable;
+                active.set({
+                    selectable: isLocked,
+                    evented: isLocked,
+                    hasControls: isLocked,
+                    hasBorders: isLocked
+                });
+                commitCanvasChange();
+            }
+            ctxMenu.style.display = 'none';
+        };
+        document.getElementById('pgfx-ctx-hide').onclick = () => {
+            const active = this.canvas.getActiveObject();
+            if (active) {
+                active.set('visible', !active.visible);
+                commitCanvasChange();
+            }
+            ctxMenu.style.display = 'none';
+        };
+        document.getElementById('pgfx-ctx-delete').onclick = () => {
+            const active = this.canvas.getActiveObject();
+            if (active) {
+                this.canvas.remove(active);
+                commitCanvasChange();
+            }
+            ctxMenu.style.display = 'none';
+        };
+        document.getElementById('pgfx-ctx-agent').onclick = () => {
+            this.sendToAgent();
+            ctxMenu.style.display = 'none';
+        };
+
+        // Hide context menu on scroll or resize
+        window.addEventListener('scroll', () => ctxMenu.style.display = 'none');
+        window.addEventListener('resize', () => ctxMenu.style.display = 'none');
+        this.overlay.onclick = (e) => {
+            if (!ctxMenu.contains(e.target)) ctxMenu.style.display = 'none';
+        };
+
+        // Disable native context menu on canvas
+        this.canvas.upperCanvasEl.oncontextmenu = (e) => e.preventDefault();
+
+        // Elite Bridge
+        document.getElementById('pgfx-send-agent-btn').onclick = () => this.sendToAgent();
 
         // --- ADD ELEMENTS ---
         document.getElementById('pgfx-add-text').onclick = () => {
@@ -1179,7 +1691,7 @@ class LogoStudioUI {
             commitCanvasChange();
         };
 
-        // --- INTERACTION (ZOOM & PAN) ---
+        // --- INTERACTION (ZOOM & PAN & SNAPPING) ---
         this.canvas.on('mouse:wheel', (opt) => {
             const delta = opt.e.deltaY;
             let zoom = this.canvas.getZoom();
@@ -1189,6 +1701,31 @@ class LogoStudioUI {
             this.canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
             opt.e.preventDefault();
             opt.e.stopPropagation();
+        });
+
+        this.canvas.on('object:moving', (options) => {
+            if (document.getElementById('pgfx-snap-grid').checked) {
+                const gridSize = 10;
+                options.target.set({
+                    left: Math.round(options.target.left / gridSize) * gridSize,
+                    top: Math.round(options.target.top / gridSize) * gridSize
+                });
+            }
+        });
+
+        this.canvas.on('object:scaling', (options) => {
+            if (document.getElementById('pgfx-snap-grid').checked) {
+                const gridSize = 10;
+                const target = options.target;
+                const w = target.width * target.scaleX;
+                const h = target.height * target.scaleY;
+                const snapW = Math.round(w / gridSize) * gridSize;
+                const snapH = Math.round(h / gridSize) * gridSize;
+                target.set({
+                    scaleX: snapW / target.width,
+                    scaleY: snapH / target.height
+                });
+            }
         });
 
         this.canvas.on('mouse:down', (opt) => {
@@ -1323,6 +1860,13 @@ class LogoStudioUI {
         };
 
         // --- STYLING ---
+        document.getElementById('pgfx-fill-type').onchange = (e) => {
+            const type = e.target.value;
+            document.getElementById('pgfx-fill-solid-row').style.display = type === 'solid' ? 'flex' : 'none';
+            document.getElementById('pgfx-fill-gradient-controls').style.display = type === 'solid' ? 'none' : 'flex';
+            this.updateGradient();
+        };
+
         document.getElementById('pgfx-color-picker').oninput = (e) => {
             const active = this.canvas.getActiveObject();
             if (active) {
@@ -1334,6 +1878,15 @@ class LogoStudioUI {
                 commitCanvasChange();
             }
         };
+
+        ['pgfx-gradient-start', 'pgfx-gradient-end', 'pgfx-gradient-angle'].forEach(id => {
+            document.getElementById(id).oninput = () => {
+                if (id === 'pgfx-gradient-angle') {
+                    document.getElementById('pgfx-gradient-angle-val').textContent = document.getElementById(id).value + '°';
+                }
+                this.updateGradient();
+            };
+        });
 
         document.getElementById('pgfx-stroke-picker').oninput = (e) => {
             const active = this.canvas.getActiveObject();
@@ -1356,6 +1909,21 @@ class LogoStudioUI {
                 commitCanvasChange();
             }
         };
+
+        // Shadows
+        document.getElementById('pgfx-shadow-enabled').onchange = (e) => {
+            document.getElementById('pgfx-shadow-controls').style.display = e.target.checked ? 'flex' : 'none';
+            this.updateShadow();
+        };
+
+        ['pgfx-shadow-color', 'pgfx-shadow-blur', 'pgfx-shadow-offset-x', 'pgfx-shadow-offset-y'].forEach(id => {
+            document.getElementById(id).oninput = () => {
+                const val = document.getElementById(id).value;
+                const readout = document.getElementById(id + '-val');
+                if (readout) readout.textContent = val;
+                this.updateShadow();
+            };
+        });
 
         document.getElementById('pgfx-bg-picker').oninput = (e) => {
             this.pageBackgroundColor = e.target.value;
@@ -1480,10 +2048,14 @@ class LogoStudioUI {
             const active = this.canvas.getActiveObject();
             if (active) {
                 if (active.type === 'activeSelection') {
+                    // Relative alignment within selection
+                    const objects = active.getObjects();
                     const center = active.getCenterPoint();
-                    const offset = (this.targetWidth / 2) - center.x;
-                    active.set({ left: active.left + offset });
+                    objects.forEach(obj => {
+                        obj.set({ left: 0 }); // Local center within group
+                    });
                 } else {
+                    // Align to canvas center
                     const centerPoint = active.getCenterPoint();
                     const offset = (this.targetWidth / 2) - centerPoint.x;
                     active.set({ left: active.left + offset });
@@ -1496,10 +2068,13 @@ class LogoStudioUI {
             const active = this.canvas.getActiveObject();
             if (active) {
                 if (active.type === 'activeSelection') {
-                    const center = active.getCenterPoint();
-                    const offset = (this.targetHeight / 2) - center.y;
-                    active.set({ top: active.top + offset });
+                    // Relative alignment within selection
+                    const objects = active.getObjects();
+                    objects.forEach(obj => {
+                        obj.set({ top: 0 }); // Local center within group
+                    });
                 } else {
+                    // Align to canvas center
                     const centerPoint = active.getCenterPoint();
                     const offset = (this.targetHeight / 2) - centerPoint.y;
                     active.set({ top: active.top + offset });
@@ -1609,13 +2184,27 @@ class LogoStudioUI {
         };
 
         // Selection and modification events
-        this.canvas.on('selection:created', () => this.updateUIForSelection());
-        this.canvas.on('selection:updated', () => this.updateUIForSelection());
+        this.canvas.on('selection:created', () => {
+            this.updateUIForSelection();
+            this.refreshLayersPanel();
+        });
+        this.canvas.on('selection:updated', () => {
+            this.updateUIForSelection();
+            this.refreshLayersPanel();
+        });
+        this.canvas.on('selection:cleared', () => {
+            this.refreshLayersPanel();
+        });
+        this.canvas.on('object:added', () => {
+            this.refreshLayersPanel();
+        });
         this.canvas.on('object:modified', () => {
+            this.refreshLayersPanel();
             this._saveToHistory();
             this.scheduleNodeStateSync();
         });
         this.canvas.on('object:removed', () => {
+            this.refreshLayersPanel();
             this._saveToHistory();
             this.scheduleNodeStateSync();
         });
@@ -1964,6 +2553,10 @@ class LogoStudioUI {
             overlay.id = 'pgfx-studio-overlay';
             overlay.innerHTML = `
                 <div class="pgfx-studio-container">
+                    <div id="pgfx-studio-loading">
+                        <div class="pgfx-spinner"></div>
+                        <div id="pgfx-loading-status" style="font-size: 14px; letter-spacing: 1px; text-transform: uppercase; text-align: center;">Initializing Studio...</div>
+                    </div>
                     <div class="pgfx-studio-header">
                         <div class="pgfx-studio-title">
                             <span style="font-size: 24px;">🎨</span> PGFX Logo Designer Studio
@@ -1985,6 +2578,10 @@ class LogoStudioUI {
                             <!-- CANVAS SETTINGS -->
                             <div class="pgfx-input-group">
                                 <label class="pgfx-label">Canvas Properties</label>
+                                <div class="pgfx-row" style="justify-content: space-between;">
+                                    <span style="font-size: 11px; color:#aaa;">Snap to Grid</span>
+                                    <input type="checkbox" id="pgfx-snap-grid" style="cursor: pointer;">
+                                </div>
                                 <div class="pgfx-row">
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Preset</span>       
                                     <select id="pgfx-canvas-preset" class="pgfx-select" style="flex: 1;">
@@ -2108,11 +2705,39 @@ class LogoStudioUI {
 
                             <!-- STYLING & STROKE -->
                             <div class="pgfx-input-group">
-                                <label class="pgfx-label">Coloring & Stroke</label>
-                                <div class="pgfx-row" style="justify-content: space-between;">
+                                <label class="pgfx-label">Fill & Stroke</label>
+                                <div class="pgfx-row">
+                                    <span style="font-size: 11px; color:#aaa; width: 60px;">Fill Type</span>
+                                    <select id="pgfx-fill-type" class="pgfx-select" style="flex: 1;">
+                                        <option value="solid">Solid Color</option>
+                                        <option value="linear">Linear Gradient</option>
+                                        <option value="radial">Radial Gradient</option>
+                                    </select>
+                                </div>
+                                
+                                <!-- SOLID FILL -->
+                                <div id="pgfx-fill-solid-row" class="pgfx-row" style="justify-content: space-between;">
                                     <span style="font-size: 11px; color:#aaa;">Fill Color</span>
                                     <input type="color" id="pgfx-color-picker" value="#ffffff" style="cursor: pointer; background: none; border: none;">
                                 </div>
+
+                                <!-- GRADIENT FILL (Hidden by default) -->
+                                <div id="pgfx-fill-gradient-controls" style="display: none; flex-direction: column; gap: 8px;">
+                                    <div class="pgfx-row" style="justify-content: space-between;">
+                                        <span style="font-size: 11px; color:#aaa;">Start Color</span>
+                                        <input type="color" id="pgfx-gradient-start" value="#ffffff" style="cursor: pointer; background: none; border: none;">
+                                    </div>
+                                    <div class="pgfx-row" style="justify-content: space-between;">
+                                        <span style="font-size: 11px; color:#aaa;">End Color</span>
+                                        <input type="color" id="pgfx-gradient-end" value="#06b6d4" style="cursor: pointer; background: none; border: none;">
+                                    </div>
+                                    <div class="pgfx-row">
+                                        <span style="font-size: 11px; color:#aaa; width: 60px;">Angle</span>
+                                        <input type="range" id="pgfx-gradient-angle" min="0" max="360" value="0" style="flex: 1;">
+                                        <span id="pgfx-gradient-angle-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">0°</span>
+                                    </div>
+                                </div>
+
                                 <div class="pgfx-row" style="justify-content: space-between;">
                                     <span style="font-size: 11px; color:#aaa;">Stroke Color</span>
                                     <input type="color" id="pgfx-stroke-picker" value="#000000" style="cursor: pointer; background: none; border: none;">
@@ -2121,6 +2746,36 @@ class LogoStudioUI {
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Stroke</span>       
                                     <input type="range" id="pgfx-stroke-width" min="0" max="100" value="0" style="flex: 1;">
                                     <span id="pgfx-stroke-width-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">0</span>
+                                </div>
+                            </div>
+
+                            <!-- EFFECTS & DEPTH -->
+                            <div class="pgfx-input-group">
+                                <label class="pgfx-label">Effects & Depth</label>
+                                <div class="pgfx-row" style="justify-content: space-between;">
+                                    <span style="font-size: 11px; color:#aaa;">Drop Shadow</span>
+                                    <input type="checkbox" id="pgfx-shadow-enabled" style="cursor: pointer;">
+                                </div>
+                                <div id="pgfx-shadow-controls" style="display: none; flex-direction: column; gap: 8px;">
+                                    <div class="pgfx-row" style="justify-content: space-between;">
+                                        <span style="font-size: 11px; color:#aaa;">Color</span>
+                                        <input type="color" id="pgfx-shadow-color" value="#000000" style="cursor: pointer; background: none; border: none;">
+                                    </div>
+                                    <div class="pgfx-row">
+                                        <span style="font-size: 11px; color:#aaa; width: 60px;">Blur</span>
+                                        <input type="range" id="pgfx-shadow-blur" min="0" max="100" value="10" style="flex: 1;">
+                                        <span id="pgfx-shadow-blur-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">10</span>
+                                    </div>
+                                    <div class="pgfx-row">
+                                        <span style="font-size: 11px; color:#aaa; width: 60px;">Offset X</span>
+                                        <input type="range" id="pgfx-shadow-offset-x" min="-100" max="100" value="5" style="flex: 1;">
+                                        <span id="pgfx-shadow-offset-x-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">5</span>
+                                    </div>
+                                    <div class="pgfx-row">
+                                        <span style="font-size: 11px; color:#aaa; width: 60px;">Offset Y</span>
+                                        <input type="range" id="pgfx-shadow-offset-y" min="-100" max="100" value="5" style="flex: 1;">
+                                        <span id="pgfx-shadow-offset-y-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">5</span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -2284,7 +2939,34 @@ class LogoStudioUI {
                                 <canvas id="pgfx-design-canvas"></canvas>
                             </div>
                         </div>
+                        <div class="pgfx-studio-right-sidebar">
+                            <div class="pgfx-input-group" style="flex: 1; display: flex; flex-direction: column;">
+                                <label class="pgfx-label">
+                                    Layers
+                                    <span id="pgfx-layer-count" style="font-weight: normal; opacity: 0.6;">0</span>
+                                </label>
+                                <div id="pgfx-layers-list" class="pgfx-layers-list" style="flex: 1; overflow-y: auto; margin-top: 8px;">
+                                    <!-- Populated dynamically -->
+                                </div>
+                            </div>
+                            <div class="pgfx-input-group">
+                                <label class="pgfx-label">Elite Bridge</label>
+                                <button id="pgfx-send-agent-btn" class="pgfx-btn pgfx-btn-primary" title="Package selected object properties and send to the AI Agent for intelligent refinement.">🤖 Send to Agent</button>
+                            </div>
+                        </div>
                     </div>
+                </div>
+                <div id="pgfx-context-menu">
+                    <div class="pgfx-menu-item" id="pgfx-ctx-clone">👯 Duplicate</div>
+                    <div class="pgfx-menu-item" id="pgfx-ctx-group">📦 Group</div>
+                    <div class="pgfx-menu-item" id="pgfx-ctx-ungroup">📂 Ungroup</div>
+                    <div class="pgfx-menu-separator"></div>
+                    <div class="pgfx-menu-item" id="pgfx-ctx-lock">🔒 Lock / Unlock</div>
+                    <div class="pgfx-menu-item" id="pgfx-ctx-hide">👁️ Hide / Show</div>
+                    <div class="pgfx-menu-separator"></div>
+                    <div class="pgfx-menu-item" id="pgfx-ctx-agent" style="color: #06b6d4;">🤖 Send to Agent</div>
+                    <div class="pgfx-menu-separator"></div>
+                    <div class="pgfx-menu-item" id="pgfx-ctx-delete" style="color: #ef4444;">🗑️ Delete</div>
                 </div>
             `;
             document.body.appendChild(overlay);
@@ -2438,8 +3120,8 @@ app.registerExtension({
             const presetWidget = getWidget("preset");
             const origCallback = presetWidget.callback;
 
-            presetWidget.callback = function (v) {
-                if (origCallback) origCallback.call(this, v);
+            presetWidget.callback = function (v, canvas, node) {
+                if (origCallback) origCallback.call(this, v, canvas, node);
 
                 let s = {}; // State object for new values
 

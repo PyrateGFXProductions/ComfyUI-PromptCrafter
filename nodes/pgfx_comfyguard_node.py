@@ -19,7 +19,7 @@ class PGFX_ComfyGuard_Shield:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("status_report", "cuda_summary")
     FUNCTION = "get_status"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Utils/Security"
+    CATEGORY = "☠️PGFX /Security"
     OUTPUT_NODE = True
 
     def get_status(self, signal=None):

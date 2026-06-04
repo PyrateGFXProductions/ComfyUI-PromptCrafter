@@ -4,6 +4,29 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import re
 
+# ------------------------------------------------------------------------------------
+# Helper function to read node descriptions from HELP.md
+# ------------------------------------------------------------------------------------
+def get_node_description(node_name):
+    """Parses HELP.md and extracts the description for a given node class name."""
+    try:
+        help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
+        if not os.path.exists(help_path):
+            return f"Help file not found for {node_name}."
+
+        with open(help_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Match either ## `NodeName` or ## `NodeName` (Alternate Name)
+        pattern = re.compile(rf"##\s*`({node_name})(?:`|\s*\(.*?\)`)\n(.*?)(?=\n##\s*`|\Z)", re.DOTALL)
+        match = pattern.search(content)
+
+        if match:
+            return match.group(2).strip()
+        return f"No description found in HELP.md for {node_name}."
+    except Exception as e:
+        return f"Error reading help file: {e}"
+
 def parse_srt_to_segments(srt_content):
     """Converts an SRT formatted string into a list of timed segments."""
     segments = []
@@ -23,7 +46,7 @@ def parse_srt_to_segments(srt_content):
     return segments
 
 class PromptCrafter_SubtitleStyler:
-    DESCRIPTION = "Burns subtitles onto video frames using timed text data and customizable styling."
+    DESCRIPTION = get_node_description("PromptCrafter_SubtitleStyler")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -61,7 +84,7 @@ class PromptCrafter_SubtitleStyler:
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "burn_subtitles"
-    CATEGORY = "☠️PGFX🏴‍☠️ /Video"
+    CATEGORY = "☠️PGFX /Video"
 
     def burn_subtitles(self, images, fps, font_name, font_size, font_color, position_y, align, stroke_width, stroke_color, meta_dict=None, srt_content=None):
         

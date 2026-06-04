@@ -145,15 +145,34 @@ class ThoughtProcess:
             "reset_context": bool(getattr(self.run_config, "reset_context", getattr(config, "DEFAULT_LLM_STATELESS", True))),
         }
 
+    def _is_reasoning_model(self, model_name):
+        """Detects if the model is a specialized reasoning model (like DeepSeek-R1)."""
+        reasoning_keywords = ["deepseek-r1", "reasoning", "thought", "thinking", "o1-", "o3-"]
+        return any(kw in str(model_name).lower() for kw in reasoning_keywords)
+
+    def _wrap_reasoning_prompt(self, prompt, model_name):
+        """Wraps the prompt in a thought trigger for reasoning models."""
+        if self._is_reasoning_model(model_name):
+            return textwrap.dedent(f"""
+                <thought>
+                Identify the specific PGFX node context. Analyze the visual and narrative constraints. 
+                Ensure the output matches the requested schema exactly.
+                </thought>
+                {prompt}
+            """).strip()
+        return prompt
+
     def _query_model(self, model, prompt, images=None, **kwargs):
         llm_kwargs = self._llm_runtime_kwargs()
         llm_kwargs.update(kwargs)
-        return api_clients.query_model_auto(model, prompt, images=images, **llm_kwargs)
+        wrapped_prompt = self._wrap_reasoning_prompt(prompt, model)
+        return api_clients.query_model_auto(model, wrapped_prompt, images=images, **llm_kwargs)
 
     def _reason_with_model(self, model, prompt, images=None, **kwargs):
         llm_kwargs = self._llm_runtime_kwargs()
         llm_kwargs.update(kwargs)
-        return api_clients._reason_with_model(model, prompt, images=images, **llm_kwargs)
+        wrapped_prompt = self._wrap_reasoning_prompt(prompt, model)
+        return api_clients._reason_with_model(model, wrapped_prompt, images=images, **llm_kwargs)
 
     def _collect_images_with_weights(self, image_count=1, image_weights_json="{}"):
         """Collects all connected image tensors and their weights from the dynamic inputs."""
@@ -251,8 +270,25 @@ class ThoughtProcess:
         print("\033[95m[PromptCrafter-Research] Workflow initiated...\033[0m")
         try:
             llm_model = self._qna_agent_triage_request()
-            
+
             context, raw_context, context_source = self._qna_agent_gather_context()
+
+            # Elite Optimization: Summarize history if it exceeds 75% of a safe window (approx 1500 words)
+            current_history = self.qna_history_in.strip() if self.qna_history_in and not self.qna_clear_history else ""
+            if len(current_history.split()) > 1500:
+                print(f"\033[94m[QnA-Agent] History is long ({len(current_history.split())} words). Summarizing for context efficiency...\033[0m")
+                summary_prompt = textwrap.dedent(f"""
+                    Summarize the following conversation history into a concise "State Summary". 
+                    Capture key subjects, previous decisions, and the current narrative state.
+                    Keep it under 400 words.
+
+                    CONVERSATION HISTORY:
+                    {current_history}
+                """).strip()
+                ok, summary = self._query_model(llm_model, summary_prompt, temperature=0.3)
+                if ok:
+                    current_history = f"[PREVIOUS CONVERSATION SUMMARY]:\n{summary}\n"
+                    print("\033[92m[QnA-Agent] History successfully condensed.\033[0m")
 
             briefing_context = self._qna_agent_summarize_context(
                 context, raw_context, context_source, llm_model
@@ -260,9 +296,9 @@ class ThoughtProcess:
             summarized_query = self._qna_agent_summarize_query(llm_model)
 
             response_text, updated_history = self._qna_agent_formulate_answer(
-                llm_model, briefing_context, summarized_query
+                llm_model, briefing_context, summarized_query, history_override=current_history
             )
-            
+
             self.state["qna_response"] = response_text
             self.state["qna_history_out"] = updated_history
             print("\033[95m[PromptCrafter-Research] QnA response complete.\033[0m")
@@ -273,7 +309,6 @@ class ThoughtProcess:
             import traceback
             traceback.print_exc()
             return f"An error occurred: {e}", self.state.get("qna_history_out", "")
-
     def _run_lyrics_chain_of_command(self):
         """
         [Team Lead: Executive Producer]
@@ -711,6 +746,13 @@ class ThoughtProcess:
 
             **VISUAL CATEGORIES TO GENERATE:**
             `character_description`, `song_theme_style`, `environment`, `lighting`, `camera_motion`, `physical_interaction`, `facial_expression`, `shots`, `outfit_rules`, `character_visibility`.
+
+            **FEW-SHOT EXAMPLES FOR STYLE PATTERN:**
+            Example Input (Lyrics: "The cold rain falls on the neon streets"):
+            - environment: rainy urban alley, slick asphalt, neon-lit corner, steam from vents...
+            - lighting: flickering neon blue, harsh streetlamp, wet reflections, deep shadows...
+            - camera_motion: slow dolly in, low angle tilt, handheld jitter, static tracking...
+            - outfit_rules: black trenchcoat, leather gloves, soaked denim, heavy boots...
 
             **STRICT RULES:**
             -   `character_description` MUST be a direct, factual description of the person in the `Image Context`.
@@ -1231,10 +1273,16 @@ Return ONLY the final, refined prompt.
             return f"SUBJECT:\n{self.qna_subject}\n\nINSTRUCTION:\n{final_user_text}"
         return final_user_text
 
-    def _qna_agent_formulate_answer(self, llm_model, briefing_context, summarized_query):
+    def _qna_agent_formulate_answer(self, llm_model, briefing_context, summarized_query, history_override=None):
         """Agent 4: Constructs the final prompt and queries the LLM for the answer."""
         print("\033[94m[QnA-Agent 4] Formulating final answer...\033[0m")
-        history_text = self.qna_history_in.strip() if self.qna_history_in and not self.qna_clear_history else ""
+        
+        # Use history_override if provided (e.g. summarized history)
+        if history_override is not None:
+            history_text = history_override
+        else:
+            history_text = self.qna_history_in.strip() if self.qna_history_in and not self.qna_clear_history else ""
+            
         safety_rule = f"\n\n{config.SAFE_MODE_RULE}" if self.qna_safe_mode else ""
         history_section = f"CONVERSATION HISTORY (for context):\n{history_text}\n\n" if history_text else ""
         context_section = f"ADDITIONAL CONTEXT (for this query only):\n{briefing_context}\n\n" if briefing_context else ""
@@ -1275,7 +1323,10 @@ Return ONLY the final, refined prompt.
         if not (stripped_response.startswith('{') and stripped_response.endswith('}')) and not (stripped_response.startswith('[') and stripped_response.endswith(']')):
             response_text = utils.TextCleaner.single_paragraph(response_text)
         new_history_entry = f"User: {summarized_query}\nAssistant: {response_text}"
-        updated_history = f"{history_text}\n{new_history_entry}".strip() if history_text else new_history_entry
+        
+        # We always append to the REAL history for the output, even if we used a summary for the prompt
+        actual_history = self.qna_history_in.strip() if self.qna_history_in and not self.qna_clear_history else ""
+        updated_history = f"{actual_history}\n{new_history_entry}".strip() if actual_history else new_history_entry
         
         return response_text, updated_history
 

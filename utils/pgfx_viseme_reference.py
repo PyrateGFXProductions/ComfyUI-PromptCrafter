@@ -250,7 +250,7 @@ class PGFX_ScriptGuidedVisemes:
     def INPUT_TYPES(s):
         return {"required": {"audio_meta": ("DICT", {}), "fps": ("INT", {"default": 25, "min": 1, "max": 60}), "coarticulation_profile": (list(COARTICULATION_PROFILES.keys()), {"default": "Singing"}), "debug": ("BOOLEAN", {"default": False}), "image_width": ("INT", {"default": 512, "min": 64, "max": 2048, "step": 64}), "image_height": ("INT", {"default": 512, "min": 64, "max": 2048, "step": 64}), "max_frames": ("INT", {"default": 0, "min": 0, "max": 99999, "step": 1}), "scene_index": ("INT", {"default": 0, "min": 0, "max": 100}), "draw_style": (["Dots", "Outline", "Filled Outline"], {"default": "Filled Outline"}), "dot_color": ("STRING", {"default": "white"}), "line_color": ("STRING", {"default": "white"}), "fill_color": ("STRING", {"default": "black"}), "dot_size": ("INT", {"default": 3, "min": 1, "max": 20}), "line_thickness": ("INT", {"default": 2, "min": 1, "max": 20}), "emotion_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1}),}, "optional": {"face_template": ("IMAGE", {}), "speechbrain_model_base_path": ("STRING", {"default": "", "multiline": False}),}}
 
-    CATEGORY = "☠️PGFX🏴‍☠️ /PromptCrafter/Utils"
+    CATEGORY = "☠️PGFX /PromptCrafter/Utils"
     RETURN_TYPES = ("IMAGE", "STRING", "BOOLEAN", "STRING",)
     RETURN_NAMES = ("control_images", "phoneme_debug_text", "is_silent", "instrumental_cue",)
     FUNCTION = "execute"
