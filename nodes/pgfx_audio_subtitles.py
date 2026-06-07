@@ -90,8 +90,8 @@ class PromptCrafter_SubtitleStyler:
         
         # 1. Determine subtitle source and parse it
         timed_segments = []
-        if meta_dict and "word_segments" in meta_dict:
-            word_segments = meta_dict.get("word_segments", [])
+        alignment_result = meta_dict.get("alignment_result", {}) if meta_dict else {}
+        word_segments = alignment_result.get("word_segments", meta_dict.get("word_segments", []))
             if word_segments:
                 print(f"[SubtitleStyler] Using 'meta_dict' with {len(word_segments)} word segments.")
                 # Group words into lines for display. A simple heuristic is used here.

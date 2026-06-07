@@ -28,14 +28,14 @@ from . import pgfx_api_clients as api_clients
 from . import pgfx_config as config
 from . import pgfx_thinking_engine as thinking_process
 from .profiles import pgfx_style_profiles as style_profiles
-from .profiles import pgfx_organization_profiles as organization_profiles
-from .profiles import pgfx_captioner_profiles as captioner_profiles
-from .profiles import pgfx_captioner_profiles as captioner
 
 from ..utils import pgfx_utils as utils
 from ..utils import pgfx_json_utils as json_utils
 from ..utils import pgfx_text_io as text_io
-from ..nodes import pgfx_deprecated_talent_director as PromptCrafter_TalentDirector
+try:
+    from ..nodes import pgfx_deprecated_talent_director as PromptCrafter_TalentDirector
+except ImportError:
+    PromptCrafter_TalentDirector = None
 
 class PromptCrafter_BaseCreator:
     # noqa
@@ -137,7 +137,7 @@ class PromptCrafter_BaseCreator:
         if cache_key in cls._content_analysis_cache:
             return cls._content_analysis_cache[cache_key]
 
-        analysis = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.analyze_content_for_direction(content, content_type)
+        analysis = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.analyze_content_for_direction(content, content_type) if PromptCrafter_TalentDirector else {"recommended_approach": {}}
         cls._content_analysis_cache[cache_key] = analysis
         return analysis
 
@@ -153,10 +153,12 @@ class PromptCrafter_BaseCreator:
         # Get recommended crew role
         recommended_role = analysis.get("recommended_approach", {}).get("primary_crew", "Creative Director")
 
-        # Enhance with talent direction
-        enhanced_prompt = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.enhance_prompt_with_expertise(
-            prompt, analysis, recommended_role, target_model
-        )
+        if PromptCrafter_TalentDirector:
+            enhanced_prompt = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.enhance_prompt_with_expertise(
+                prompt, analysis, recommended_role, target_model
+            )
+        else:
+            enhanced_prompt = prompt
 
         return enhanced_prompt
 
@@ -178,9 +180,12 @@ class PromptCrafter_BaseCreator:
             crew_role = recommended_approach.get("primary_crew", "Creative Director")
 
             # Enhance with talent direction
-            enhanced_prompt = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.enhance_prompt_with_expertise(
-                content, analysis, crew_role, target_model
-            )
+            if PromptCrafter_TalentDirector:
+                enhanced_prompt = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.enhance_prompt_with_expertise(
+                    content, analysis, crew_role, target_model
+                )
+            else:
+                enhanced_prompt = content or ""
 
             enhanced_prompts.append(enhanced_prompt)
 
@@ -922,7 +927,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
     @classmethod
     def _refine_image_video_prompt(cls, draft_prompt, mode, mandatory_tokens, style_rules, run_config):
         current_prompt = draft_prompt
-        primary_items_list = [re.sub(r'^ Electrochemical_cell_diagram.*', '', t) for t in (mandatory_tokens or {}).get("primary", [])]
+        primary_items_list = [(t or "") for t in (mandatory_tokens or {}).get("primary", [])]
         
         if not primary_items_list:
             critique_prompt = cls._build_refinement_prompt(current_prompt, mode, [], [], style_rules, run_config, ask_for_json=False)

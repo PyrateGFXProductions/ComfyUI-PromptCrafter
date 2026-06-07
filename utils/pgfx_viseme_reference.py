@@ -237,7 +237,7 @@ VISEME_TO_LANDMARK_MAP = {
     "EE": [(CX-0.20, CY-0.01), (CX-0.15, CY-0.02), (CX-0.07, CY-0.02), (CX+0.00, CY-0.02), (CX+0.07, CY-0.02), (CX+0.15, CY-0.02), (CX+0.20, CY-0.01), (CX+0.15, CY+0.02), (CX+0.07, CY+0.02), (CX+0.00, CY+0.02), (CX-0.07, CY+0.02), (CX-0.15, CY+0.02), (CX-0.15, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.15, CY-0.01), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01)],
     "OO": [(CX-0.08, CY-0.02), (CX-0.06, CY-0.04), (CX-0.03, CY-0.05), (CX+0.00, CY-0.05), (CX+0.03, CY-0.05), (CX+0.06, CY-0.04), (CX+0.08, CY-0.02), (CX+0.06, CY-0.04), (CX+0.03, CY+0.05), (CX+0.00, CY+0.05), (CX-0.03, CY+0.05), (CX-0.06, CY+0.04), (CX-0.05, CY-0.02), (CX-0.03, CY-0.03), (CX+0.00, CY-0.03), (CX+0.03, CY-0.03), (CX+0.05, CY-0.02), (CX+0.03, CY+0.03), (CX+0.00, CY+0.03), (CX-0.03, CY+0.03)],
     "S_L": [(CX-0.18, CY-0.01), (CX-0.14, CY-0.02), (CX-0.07, CY-0.02), (CX+0.00, CY-0.02), (CX+0.07, CY-0.02), (CX+0.14, CY-0.02), (CX+0.18, CY-0.01), (CX+0.14, CY+0.02), (CX+0.07, CY+0.02), (CX+0.00, CY+0.02), (CX-0.07, CY+0.02), (CX-0.14, CY+0.02), (CX-0.14, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.14, CY-0.01), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01)],
-    "DENTAL": [(CX-0.17, CY-0.02), (CX-0.13, CY-0.03), (CX-0.07, CY-0.03), (CX+0.00, CY-0.03), (CX+0.07, CY-0.03), (CX+0.13, CY-0.03), (CX+0.17, CY-0.02), (CX+0.13, CY+0.03), (CX+0.07, CY+0.03), (CX+0.00, CY+0.03), (CX-0.07, CY+0.03), (CX-0.13, CY+0.03), (CX-0.13, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.13, CY-0.01), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01), (CX-0.07, CY+0.00), (CX-0.04, CY+0.00), (CX+0.00, CY+0.00), (CX+0.04, CY+0.00), (CX+0.07, CY+0.00)],
+    "DENTAL": [(CX-0.17, CY-0.02), (CX-0.13, CY-0.03), (CX-0.07, CY-0.03), (CX+0.00, CY-0.03), (CX+0.07, CY-0.03), (CX+0.13, CY-0.03), (CX+0.17, CY-0.02), (CX+0.13, CY+0.03), (CX+0.07, CY+0.03), (CX+0.00, CY+0.03), (CX-0.07, CY+0.03), (CX-0.13, CY+0.03), (CX-0.13, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.13, CY-0.01), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01)],
     "LABIODENTAL": [(CX-0.17, CY-0.02), (CX-0.13, CY-0.03), (CX-0.07, CY-0.03), (CX+0.00, CY-0.03), (CX+0.07, CY-0.03), (CX+0.13, CY-0.03), (CX+0.17, CY-0.02), (CX+0.13, CY+0.02), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01), (CX-0.13, CY+0.02), (CX-0.13, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.13, CY-0.01), (CX+0.07, CY-0.00), (CX+0.00, CY-0.00), (CX-0.07, CY-0.00)],
 }
 PHONEME_TO_VISEME_MAP = {'SIL': 'SIL', 'F': 'LABIODENTAL', 'V': 'LABIODENTAL', 'TH': 'DENTAL', 'DH': 'DENTAL', 'P': 'SIL', 'B': 'SIL', 'M': 'SIL', 'AA': 'AA', 'AE': 'AA', 'AH': 'AA', 'AO': 'AA', 'AW': 'AA', 'AY': 'AA', 'IY': 'EE', 'IH': 'EE', 'EH': 'EE', 'EY': 'EE', 'OW': 'OO', 'OY': 'OO', 'UW': 'OO', 'UH': 'OO', 'L': 'S_L', 'S': 'S_L', 'Z': 'S_L', 'R': 'OO', 'W': 'OO', 'Y': 'EE', 'CH': 'S_L', 'JH': 'S_L', 'SH': 'S_L', 'ZH': 'S_L', 'G': 'AA', 'K': 'AA', 'NG': 'AA', 'N': 'S_L', 'HH': 'AA'}
@@ -248,7 +248,7 @@ class PGFX_ScriptGuidedVisemes:
 
     @classmethod
     def INPUT_TYPES(s):
-        return {"required": {"audio_meta": ("DICT", {}), "fps": ("INT", {"default": 25, "min": 1, "max": 60}), "coarticulation_profile": (list(COARTICULATION_PROFILES.keys()), {"default": "Singing"}), "debug": ("BOOLEAN", {"default": False}), "image_width": ("INT", {"default": 512, "min": 64, "max": 2048, "step": 64}), "image_height": ("INT", {"default": 512, "min": 64, "max": 2048, "step": 64}), "max_frames": ("INT", {"default": 0, "min": 0, "max": 99999, "step": 1}), "scene_index": ("INT", {"default": 0, "min": 0, "max": 100}), "draw_style": (["Dots", "Outline", "Filled Outline"], {"default": "Filled Outline"}), "dot_color": ("STRING", {"default": "white"}), "line_color": ("STRING", {"default": "white"}), "fill_color": ("STRING", {"default": "black"}), "dot_size": ("INT", {"default": 3, "min": 1, "max": 20}), "line_thickness": ("INT", {"default": 2, "min": 1, "max": 20}), "emotion_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1}),}, "optional": {"face_template": ("IMAGE", {}), "speechbrain_model_base_path": ("STRING", {"default": "", "multiline": False}),}}
+        return {"required": {"audio_meta": ("DICT", {}), "fps": ("INT", {"default": 25, "min": 1, "max": 60}), "coarticulation_profile": (list(COARTICULATION_PROFILES.keys()), {"default": "Singing"}), "debug": ("BOOLEAN", {"default": False}), "image_width": ("INT", {"default": 512, "min": 64, "max": 2048, "step": 64}), "image_height": ("INT", {"default": 512, "min": 64, "max": 2048, "step": 64}), "max_frames": ("INT", {"default": 0, "min": 0, "max": 99999, "step": 1}), "scene_index": ("INT", {"default": 0, "min": 0, "max": 100}), "draw_style": (["Dots", "Outline", "Filled Outline"], {"default": "Filled Outline"}), "dot_color": ("STRING", {"default": "white"}), "line_color": ("STRING", {"default": "white"}), "fill_color": ("STRING", {"default": "black"}), "dot_size": ("INT", {"default": 3, "min": 1, "max": 20}), "line_thickness": ("INT", {"default": 2, "min": 1, "max": 20}), "emotion_intensity": ("STRING", {"default": "1.0", "multiline": False}),}, "optional": {"face_template": ("IMAGE", {}), "speechbrain_model_base_path": ("STRING", {"default": "", "multiline": False}),}}
 
     CATEGORY = "☠️PGFX /PromptCrafter/Utils"
     RETURN_TYPES = ("IMAGE", "STRING", "BOOLEAN", "STRING",)
@@ -256,9 +256,13 @@ class PGFX_ScriptGuidedVisemes:
     FUNCTION = "execute"
 
     def execute(self, audio_meta, fps, coarticulation_profile, debug, image_width, image_height, max_frames, scene_index, draw_style, dot_color, line_color, fill_color, dot_size, line_thickness, emotion_intensity, face_template=None, speechbrain_model_base_path="", **kwargs):
+        try:
+            emotion_intensity = float(emotion_intensity)
+        except (ValueError, TypeError):
+            emotion_intensity = 1.0
         default_image_output = torch.zeros(1, image_height, image_width, 3, dtype=torch.float32, device="cpu")
         batch_size = kwargs.get('batch_size', 16)
-        full_phoneme_debug_string = "Silent audio detected. Viseme generation skipped."
+        full_phoneme_debug_string = ""
         
         if debug: 
             print(f"--- [PGFX Visemes] EXECUTION START (Scene Index: {scene_index}) ---")
@@ -416,7 +420,10 @@ class PGFX_ScriptGuidedVisemes:
                  exact_end = int(scene_end_abs * sample_rate)
                  if exact_start < waveform.shape[-1]:
                      exact_chunk = waveform[..., exact_start:exact_end]
-                     if exact_chunk.abs().max() < 0.001:
+                     chunk_max = exact_chunk.abs().max()
+                     if isinstance(chunk_max, torch.Tensor) and chunk_max.numel() > 1:
+                         chunk_max = chunk_max.max()
+                     if exact_chunk.numel() > 0 and chunk_max < 0.001:
                          is_silent_scene = True
             
             # --- CRITICAL FIX: SCRIPT PRIORITY OVER SILENCE ---
@@ -504,5 +511,5 @@ class PGFX_ScriptGuidedVisemes:
             cleanup_emotion_model()
             gc.collect()
 
-NODE_CLASS_MAPPINGS = {"PGFX_ScriptGuidedVisemes": PGFX_ScriptGuidedVisemes}
-NODE_DISPLAY_NAME_MAPPINGS = {"PGFX_ScriptGuidedVisemes": "☠️PGFX Script-Guided Visemes"}
+# NOTE: NODE_CLASS_MAPPINGS / NODE_DISPLAY_NAME_MAPPINGS for PGFX_ScriptGuidedVisemes
+# are in pgfx_viseme_nodes.py to avoid duplicate registration.

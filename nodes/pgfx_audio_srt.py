@@ -33,7 +33,7 @@ def _ensure_speechbrain_lazy_patch(debug_mode=False):
             should_patch = True
 
         LazyModule = sb_importutils.LazyModule
-        if should_patch and not hasattr(LazyModule, '_sb_torch_patched_v2'):
+        if should_patch and not hasattr(LazyModule, '_sb_torch_patched'):
             _orig_getattr = LazyModule.__getattr__
             _guard = set()
 
@@ -52,7 +52,7 @@ def _ensure_speechbrain_lazy_patch(debug_mode=False):
                     _guard.discard(key)
 
             LazyModule.__getattr__ = patched_getattr
-            LazyModule._sb_torch_patched_v2 = True
+            LazyModule._sb_torch_patched = True
             if debug_mode:
                 print("[PromptCrafter] Applied SpeechBrain LazyModule recursion guard.")
     except Exception as e:
@@ -338,6 +338,62 @@ class PromptCrafter_SRTCreator:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX /Text"
 
+    def _load_transcription_model(self, whisper_model_name, vad_method, debug_mode):
+        """Loads and caches only the whisperx transcription model (no alignment)."""
+        whisperx = _get_whisperx(debug_mode)
+        global LOADED_MODELS
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        _ensure_speechbrain_lazy_patch(debug_mode)
+
+        if (
+            LOADED_MODELS["transcription_model"] is None
+            or LOADED_MODELS["transcription_model_name"] != whisper_model_name
+            or LOADED_MODELS["transcription_vad_method"] != vad_method
+        ):
+            if debug_mode: print(f"[SRTCreator] Loading whisper model: {whisper_model_name}")
+
+            model_path_or_name = whisper_model_name
+            if "/" in whisper_model_name:
+                model_path_or_name = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'models', 'faster-whisper', f"models--{whisper_model_name.replace('/', '--')}")
+
+            vad_options = {}
+            selected_vad_method = (vad_method or "silero").lower().strip()
+            effective_vad_method = selected_vad_method
+            if selected_vad_method == "pyannote" and not WHISPERX_PYANNOTE_AVAILABLE:
+                effective_vad_method = "silero"
+            if debug_mode and effective_vad_method != selected_vad_method:
+                reason = f": {WHISPERX_PYANNOTE_ERROR}" if WHISPERX_PYANNOTE_ERROR else ""
+                print(f"[SRTCreator] Falling back to Silero VAD{reason}")
+
+            if effective_vad_method == "pyannote":
+                _add_pyannote_safe_globals(debug_mode)
+            try:
+                LOADED_MODELS["transcription_model"] = whisperx.load_model(
+                    model_path_or_name,
+                    device,
+                    compute_type="float16",
+                    vad_method=effective_vad_method,
+                    vad_options=vad_options,
+                )
+            except Exception as e:
+                if effective_vad_method == "pyannote":
+                    if debug_mode:
+                        print(f"[SRTCreator] Pyannote VAD failed; retrying with Silero. Reason: {e}")
+                    _prepare_whisperx_import(debug_mode, force=True)
+                    LOADED_MODELS["transcription_model"] = whisperx.load_model(
+                        model_path_or_name,
+                        device,
+                        compute_type="float16",
+                        vad_method="silero",
+                        vad_options=vad_options,
+                    )
+                else:
+                    raise
+            LOADED_MODELS["transcription_model_name"] = whisper_model_name
+            LOADED_MODELS["transcription_vad_method"] = effective_vad_method
+
+        return LOADED_MODELS["transcription_model"]
+
     def _load_models(self, whisper_model_name, language, vad_method, debug_mode):
         """Loads and caches whisperx transcription and alignment models."""
         whisperx = _get_whisperx(debug_mode)
@@ -601,17 +657,19 @@ class PromptCrafter_SRTCreator:
         total_audio_duration = len(audio_16k) / 16000
         if debug_mode: print(f"[SRTCreator] Audio prepared and resampled to 16kHz.")
 
-        # --- Load Models ---
-        transcription_model, align_model, align_meta = self._load_models(whisper_model, language, vad_method, debug_mode)
-        
-        # --- 1. FAST Transcription (no batching for speed) ---
+        # --- 1. Load transcription model only (no alignment yet) ---
+        if debug_mode: print(f"[SRTCreator] Loading transcription model ({whisper_model})...")
+        transcription_model = self._load_transcription_model(whisper_model, vad_method, debug_mode)
+
+        # --- 2. FAST Transcription (no batching for speed) ---
         if debug_mode: print("[SRTCreator] Performing transcription...")
         try:
             _fix_speechbrain_dataloader_recursion(debug_mode)
+            transcribe_language = None if language == "auto-detect" else language
             transcription_result = transcription_model.transcribe(
                 audio_16k,
-                batch_size=16,  # Increased batch size
-                language=language,
+                batch_size=16,
+                language=transcribe_language,
                 task="transcribe"
             )
         except Exception as e:
@@ -624,7 +682,15 @@ class PromptCrafter_SRTCreator:
         if not transcription_result or not transcription_result.get("segments"):
             return _empty_outputs("No speech detected")
 
-        # --- 2. FAST Alignment ---
+        # --- 3. Load alignment model using detected language (from transcription) ---
+        detected_lang = transcription_result.get("language", language)
+        if detected_lang == "auto-detect" or not detected_lang:
+            detected_lang = "en"
+        if debug_mode:
+            print(f"[SRTCreator] Loading alignment model for language: {detected_lang}")
+        _, align_model, align_meta = self._load_models(whisper_model, detected_lang, vad_method, debug_mode)
+
+        # --- 4. FAST Alignment ---
         if debug_mode: print("[SRTCreator] Aligning...")
         try:
             final_alignment = whisperx.align(
@@ -644,6 +710,12 @@ class PromptCrafter_SRTCreator:
         
         if enable_ai_correction and ground_truth_script and ground_truth_script.strip():
             if debug_mode: print("[SRTCreator] Step 2/4: Applying AI correction...")
+            try:
+                corrected = self._correct_with_ai(ground_truth_script, word_segments, debug_mode)
+                if corrected:
+                    word_segments = corrected
+            except Exception as e:
+                if debug_mode: print(f"[SRTCreator] AI correction failed: {e}")
 
         # --- 3. INTELLIGENT SRT Generation ---
         if debug_mode: print("[SRTCreator] Generating SRT...")
@@ -660,6 +732,12 @@ class PromptCrafter_SRTCreator:
             for i, (start, end, text) in enumerate(srt_segments_list[:10]):  # Show first 10 segments
                 print(f"[DEBUG] Segment {i+1}: {start:.3f}-{end:.3f} '{text}'")
             
+        if enable_ai_text_refinement and srt_segments_list:
+            if debug_mode: print("[SRTCreator] Refining text formatting...")
+            srt_segments_list = [
+                (start, end, text[0].upper() + text[1:] if text and len(text) > 1 else text)
+                for start, end, text in srt_segments_list
+            ]
         srt_output = utils.to_srt(srt_segments_list) if srt_segments_list else ""
             
         if debug_mode:
@@ -715,6 +793,48 @@ class PromptCrafter_SRTCreator:
             return (srt_output, plain_text_output, structured_script, timed_segments_json_string, translated_srt_output, translated_plain_text_output, screenplay, character_track, validation_report)
 
         return (srt_output, plain_text_output, structured_script, timed_segments_json_string, translated_srt_output, translated_plain_text_output, screenplay, character_track, validation_report)
+
+    def _correct_with_ai(self, ground_truth_script, word_segments, debug_mode=False):
+        """Apply AI correction to align word segments with the ground truth script."""
+        from difflib import SequenceMatcher
+        gt_words = ground_truth_script.split()
+        if not gt_words or not word_segments:
+            return None
+        corrected = []
+        gt_idx = 0
+        for seg in word_segments:
+            seg_text = seg.get("word", "").strip().lower()
+            if not seg_text:
+                corrected.append(seg)
+                continue
+            # Skip punctuation-only segments
+            if not any(c.isalpha() for c in seg_text):
+                corrected.append(seg)
+                continue
+            # If the segment matches the ground truth, keep it
+            if gt_idx < len(gt_words) and seg_text == gt_words[gt_idx].strip(".,!?;:\"'()[]{}").lower():
+                seg["word"] = gt_words[gt_idx]
+                corrected.append(seg)
+                gt_idx += 1
+            else:
+                # Try to find the closest match in remaining ground truth
+                best_match = None
+                for j in range(gt_idx, min(gt_idx + 5, len(gt_words))):
+                    if seg_text == gt_words[j].strip(".,!?;:\"'()[]{}").lower():
+                        best_match = j
+                        break
+                if best_match is not None:
+                    seg["word"] = gt_words[best_match]
+                    corrected.append(seg)
+                    gt_idx = best_match + 1
+                else:
+                    # Could not match; skip or keep original
+                    if debug_mode:
+                        print(f"[SRTCreator] AI correction: Could not match '{seg_text}' in ground truth")
+                    corrected.append(seg)
+        if debug_mode:
+            print(f"[SRTCreator] AI correction: Processed {len(word_segments)} segments, matched to ground truth")
+        return corrected
 
 
 # ------------------------------------------------------------------------------------

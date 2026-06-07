@@ -81,6 +81,13 @@ except ImportError as e:
         json_utils = None
     if 'PromptCrafter_SRTCreator' not in locals() and 'PromptCrafter_SRTCreator' not in globals():
         PromptCrafter_SRTCreator = None
+    if 'server' not in locals() and 'server' not in globals():
+        class _ServerFallback:
+            class PromptServer:
+                instance = None
+                @staticmethod
+                def send_sync(*args, **kwargs): pass
+        server = _ServerFallback()
     
     print("[PromptCrafter Studio] Some dependencies are missing. Some features may be disabled.")
 except Exception as e:
@@ -699,7 +706,13 @@ class PGFX_Studio_Screenwriter:
             if isinstance(segments, list):
                 out["alignment_result"] = {"segments": [dict(s) for s in segments if isinstance(s, dict)]}
         if isinstance(out.get("word_segments"), list):
-            out["word_segments"] = [dict(w) for w in out["word_segments"] if isinstance(w, dict)]
+            def _to_word_dict(w):
+                if isinstance(w, dict):
+                    return dict(w)
+                if isinstance(w, (list, tuple)) and len(w) >= 3:
+                    return {"word": str(w[2]), "start": float(w[0]), "end": float(w[1])}
+                return None
+            out["word_segments"] = [d for d in (_to_word_dict(w) for w in out["word_segments"]) if d is not None]
         if isinstance(out.get("durations"), list):
             out["durations"] = list(out["durations"])
         if isinstance(out.get("instrumental_cues"), list):
@@ -800,6 +813,16 @@ class PGFX_Studio_Screenwriter:
         except Exception:
             print("[Screenwriter] Error: Failed to parse Whisper JSON or result was None. Proceeding without lyrics.")
             word_segments = []
+
+        # Normalize word_segments: handle both dict {word,start,end} and list [start,end,text] formats.
+        if word_segments:
+            def _normalize_word_seg(w):
+                if isinstance(w, dict):
+                    return w
+                if isinstance(w, (list, tuple)) and len(w) >= 3:
+                    return {"word": str(w[2]), "start": float(w[0]), "end": float(w[1])}
+                return None
+            word_segments = [s for s in (_normalize_word_seg(w) for w in word_segments) if s is not None]
 
         if not word_segments and raw_lyrics_override and raw_lyrics_override.strip():
             print("[Screenwriter] Using fallback timed word segmentation from raw_lyrics_override.")
@@ -922,6 +945,7 @@ class PGFX_Studio_CreativeDirector:
             },
             "optional": {
                 "reference_image": ("IMAGE",),
+                "PROJECT_CONTEXT": ("STRING", {"forceInput": True, "multiline": True, "tooltip": "Project context string from PGFX_Studio_ProjectContext. Injected into LLM system prompt for context-aware creative direction."}),
                 **_studio_llm_runtime_optional_inputs(),
             }
         }
@@ -1082,6 +1106,7 @@ class PGFX_Studio_CreativeDirector:
 
     def develop_concept(self, SCREENPLAY, TIMING_MAP, thinking_model, instruct_model,
                    character_override, fast_mode=True, debug_mode=False, gguf_gpu_layers=-1, reference_image=None,
+                   PROJECT_CONTEXT="",
                    llm_device=getattr(config, "DEFAULT_LLM_DEVICE", "Default (GPU)"),
                    reset_context=getattr(config, "DEFAULT_LLM_STATELESS", True)):
         # Add input validation
@@ -1099,6 +1124,7 @@ class PGFX_Studio_CreativeDirector:
             "fast_mode": bool(fast_mode),
             "gguf_gpu_layers": int(gguf_gpu_layers),
             "reference_sig": reference_sig,
+            "project_context": str(PROJECT_CONTEXT or "").strip(),
         }
         cache_hash = hashlib.md5(
             json.dumps(cache_payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
@@ -1151,6 +1177,8 @@ class PGFX_Studio_CreativeDirector:
 
         # Fast path: one LLM pass returning both theme and style variable buckets.
         if fast_mode:
+            project_context_block = f"- Project Context: {PROJECT_CONTEXT}" if PROJECT_CONTEXT else ""
+
             fast_thinking_prompt = textwrap.dedent(f"""
                 You are an expert AI Music Video Creative Director.
                 Analyze the lyrics and context, then design a coherent visual concept for LTX-2 scene generation.
@@ -1160,6 +1188,7 @@ class PGFX_Studio_CreativeDirector:
                 - Lyrics: {lyrics_summary}
                 - Character: {final_character_desc}
                 - Reference Image Context: {image_context}
+                {project_context_block}
             """).strip()
 
             fast_instruct_prompt = textwrap.dedent("""
@@ -1224,6 +1253,8 @@ class PGFX_Studio_CreativeDirector:
             return (self._clone_visual_brief(visual_brief), log)
 
         # Part 2: Generate Global Theme using Chain of Thought
+        project_context_block_slow = f"- Project Context: {PROJECT_CONTEXT}" if PROJECT_CONTEXT else ""
+
         theme_thinking_prompt = textwrap.dedent(f"""
             You are an expert music video creative director. Your task is to devise a single, concise, high-level creative concept or global theme for a music video.
             Think step-by-step about the tone, setting, and narrative arc based on the provided context.
@@ -1234,6 +1265,7 @@ class PGFX_Studio_CreativeDirector:
             - Lyrics: {lyrics_summary}
             - Character: {final_character_desc}
             - Reference Image Context: {image_context}
+            {project_context_block_slow}
         """)
         theme_instruct_prompt = "Based on the creative reasoning provided, write the final theme description as a single, compelling, and imaginative paragraph. Return ONLY the paragraph."
 
@@ -1260,6 +1292,7 @@ class PGFX_Studio_CreativeDirector:
             ANALYSIS INPUT:
             - Image Context (Primary Visual Source): "{image_context}"
             - Lyrics (Mood and Narrative Source): "{lyrics_summary}"
+            - Project Context (Artist, Genre, Era, Aesthetic): "{PROJECT_CONTEXT}"
         """)
         
         vrg_instruct_prompt = textwrap.dedent(f"""
@@ -2697,7 +2730,7 @@ class PGFX_Studio_Cinematographer:
     def _interrupt_execution(self):
         """Stops the execution of the ComfyUI queue."""
         try:
-            server.PromptServer.instance.send_json("execution_interrupted", {"prompt_id": "PGFX_STUDIO_LOOP_TERMINATED"})
+            server.PromptServer.instance.send_sync("execution_interrupted", {"prompt_id": "PGFX_STUDIO_LOOP_TERMINATED"})
             print("\033[92m[Cinematographer] All scenes rendered. Workflow execution stopped.\033[0m")
         except Exception as e:
             print(f"[Cinematographer] Warning: Could not send execution interruption signal. {e}")
@@ -3253,7 +3286,7 @@ class PGFX_Studio_Animator:
             },
             "optional": {
                 "coarticulation_profile": (coarticulation_keys, {"default": "Singing"}),
-                "emotion_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1}),
+                "emotion_intensity": ("STRING", {"default": "1.0", "multiline": False}),
                 "draw_style": (["Dots", "Outline", "Filled Outline"], {"default": "Filled Outline"}),
                 "dot_color": ("STRING", {"default": "white"}),
                 "line_color": ("STRING", {"default": "white"}),
@@ -3268,11 +3301,22 @@ class PGFX_Studio_Animator:
 
     def animate(self, AUDIO_META, PROJECT_CONFIG, current_index, face_template,
                 debug, max_frames, dot_size, line_thickness, **kwargs):
-        import time, nltk
+        import time
+        try:
+            import nltk
+        except ImportError:
+            nltk = None
         import torch
         import numpy as np
         from g2p_en import G2p
         from PIL import Image, ImageDraw
+
+        emotion_intensity = kwargs.get("emotion_intensity", "1.0")
+        try:
+            emotion_intensity = float(emotion_intensity)
+        except (ValueError, TypeError):
+            emotion_intensity = 1.0
+        kwargs["emotion_intensity"] = emotion_intensity
 
         fps = PROJECT_CONFIG.get("fps", 24)
         width, height = PROJECT_CONFIG.get("width", 512), PROJECT_CONFIG.get("height", 512)
@@ -4716,20 +4760,18 @@ NODE_CLASS_MAPPINGS = {
     "PGFX_Studio_CharacterTrackAdapter": PGFX_Studio_CharacterTrackAdapter,
 }
 
-if nodes_sampler:
-    NODE_CLASS_MAPPINGS["PGFX_Studio_Sampler"] = nodes_sampler.PGFX_Studio_Sampler
-
-if nodes_controlnet:
-    NODE_CLASS_MAPPINGS["PGFX_Studio_ControlNet"] = nodes_controlnet.PGFX_Studio_ControlNet
+# NOTE: PGFX_Studio_Sampler and PGFX_Studio_ControlNet register themselves in
+# pgfx_studio_sampler.py and pgfx_studio_controlnet.py respectively. Do NOT
+# re-register them here — that would create duplicate entries in the node menu.
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_Studio_Producer": "🎬 Studio Producer (Config)",
+    "PGFX_Studio_Producer": "🎬 Studio Config (Producer)",
     "PGFX_Studio_SoundEngineer": "🔊 Studio Sound Engineer (Audio)",
     "PGFX_Studio_CreativeDirector": "🧠 Studio Creative Director (Concept)",
     "PGFX_Studio_Screenwriter": "✍️ Studio Screenwriter (Lyrics)",
     "PGFX_Studio_Director": "🎥 Studio Director (Prompts)",
-    "PGFX_Studio_Cinematographer": "📹 Studio Cinematographer (Shot)",
-    "PGFX_Studio_Editor": "🎞️ Studio Editor (Scene Saver)",
+    "PGFX_Studio_Cinematographer": "📹 Studio Scene Router (Cinematographer)",
+    "PGFX_Studio_Editor": "🎞️ Studio Scene Exporter (Editor)",
     "PGFX_Studio_PostMaster": "🏗️ Studio PostMaster (Final Render)", # Added
     "PGFX_Studio_ProjectContext": "🧭 Studio Project Context",
     "PGFX_Studio_StoreText": "💾 Studio Store Text",
@@ -4739,8 +4781,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_Studio_Stylist": "🎨 Studio Stylist (Looks)",
     "PGFX_Studio_Animator": "👄 Studio Animator (Visemes)",
     "PGFX_Studio_ScriptSupervisor": "📋 Studio Script Supervisor (Review)",
-    "PGFX_Studio_Sampler": "🎤 Studio Sampler (Universal)",
-    "PGFX_Studio_ControlNet": "👄 Studio ControlNet (Viseme Bridge)",
     "PGFX_Studio_AudioPinAdapter": "🔌 Studio Adapter (AUDIO→audio)",
     "PGFX_Studio_ProjectConfigValidator": "🔌 Studio Adapter (PROJECT_CONFIG core)",
     "PGFX_Studio_ProjectConfigToSize": "📐 Studio Adapter (PROJECT_CONFIG → Size)",

@@ -52,7 +52,7 @@ class PGFX_CinemaVisemeRig:
             "optional": {
                 "audio_meta": ("DICT", {"tooltip": "Optional: Connect a WhisperX output here for perfect millisecond-level word timing."}),
                 "face_template": ("IMAGE", {"tooltip": "Optional: A reference face to draw the rig on top of. If empty, a black background is used."}),
-                "emotion_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1}),
+                "emotion_intensity": ("STRING", {"default": "1.0", "multiline": False}),
             },
         }
 
@@ -61,7 +61,11 @@ class PGFX_CinemaVisemeRig:
     FUNCTION = "animate"
     CATEGORY = "☠️PGFX /Video"
 
-    def animate(self, lyrics, fps, target_mode, smoothing_sigma, image_width, image_height, audio_meta=None, face_template=None, emotion_intensity=1.0, **kwargs):
+    def animate(self, lyrics, fps, target_mode, smoothing_sigma, image_width, image_height, audio_meta=None, face_template=None, emotion_intensity="1.0", **kwargs):
+        try:
+            emotion_intensity = float(emotion_intensity)
+        except (ValueError, TypeError):
+            emotion_intensity = 1.0
         try:
             g2p = viseme_utils.get_g2p()
             if not g2p:
@@ -73,6 +77,7 @@ class PGFX_CinemaVisemeRig:
                 word_segments = audio_meta["word_segments"]
             else:
                 # Basic phonetic spacing if no audio_meta
+                lyrics = str(lyrics or "")
                 words = [w for w in re.sub(r"[^\w'\- ]+", "", lyrics).split() if w]
                 cursor = 0.0
                 words_per_sec = 2.5 # Average speaking rate
@@ -85,6 +90,12 @@ class PGFX_CinemaVisemeRig:
                 return (torch.zeros(1, image_height, image_width, 3), torch.zeros(1, image_height, image_width, 3), torch.zeros(1, image_height, image_width), "No words found")
 
             total_duration = word_segments[-1]["end"]
+            # Use actual audio total duration if available so silent trailing
+            # frames are not truncated — every audio frame gets viseme conditioning.
+            if audio_meta:
+                audio_total = audio_meta.get("audio_total_duration", 0) or 0
+                if audio_total > total_duration:
+                    total_duration = audio_total
             total_frames = int(round(total_duration * fps))
             total_frames = max(1, total_frames)
 
@@ -175,6 +186,7 @@ class PGFX_CinemaVisemeRig:
             )
 
         except Exception as e:
+            print(f"\n*** [PGFX_CinemaVisemeRig] ERROR: {e} ***\n")
             traceback.print_exc()
             return (torch.zeros(1, image_height, image_width, 3), torch.zeros(1, image_height, image_width, 3), torch.zeros(1, image_height, image_width), f"ERROR: {e}")
 
@@ -201,7 +213,7 @@ class PGFX_ScriptGuidedVisemes:
                 "fill_color": ("STRING", {"default": "black"}),
                 "dot_size": ("INT", {"default": 3, "min": 1, "max": 20}),
                 "line_thickness": ("INT", {"default": 2, "min": 1, "max": 20}),
-                "emotion_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1}),
+                "emotion_intensity": ("STRING", {"default": "1.0", "multiline": False}),
             },
             "optional": {
                 "face_template": ("IMAGE", {}),
@@ -233,20 +245,30 @@ class PGFX_ScriptGuidedVisemes:
 
     @staticmethod
     def _extract_durations_seconds(audio_meta, fps):
+        # If the audio_meta carrier recorded its own fps, prefer that to avoid
+        # frame-count ↔ seconds conversion mismatch across pipeline stages.
+        meta_fps = audio_meta.get("fps", None)
+        if meta_fps is not None:
+            try:
+                meta_fps = float(meta_fps)
+            except Exception:
+                meta_fps = None
+        effective_fps = meta_fps if meta_fps is not None else float(fps)
+
         if audio_meta.get("durations"):
-            return PGFX_ScriptGuidedVisemes._coerce_float_list(audio_meta.get("durations"), fps)
+            return PGFX_ScriptGuidedVisemes._coerce_float_list(audio_meta.get("durations"), effective_fps)
 
         if audio_meta.get("durations_seconds"):
-            return PGFX_ScriptGuidedVisemes._coerce_float_list(audio_meta.get("durations_seconds"), fps)
+            return PGFX_ScriptGuidedVisemes._coerce_float_list(audio_meta.get("durations_seconds"), effective_fps)
 
         if audio_meta.get("scene_durations"):
-            return PGFX_ScriptGuidedVisemes._coerce_float_list(audio_meta.get("scene_durations"), fps)
+            return PGFX_ScriptGuidedVisemes._coerce_float_list(audio_meta.get("scene_durations"), effective_fps)
 
         frames = audio_meta.get("durations_frames") or []
         durations = []
         for value in frames:
             try:
-                durations.append(float(value) / float(fps))
+                durations.append(float(value) / effective_fps)
             except Exception:
                 continue
         return durations
@@ -396,6 +418,10 @@ class PGFX_ScriptGuidedVisemes:
         speechbrain_model_base_path="",
         **kwargs,
     ):
+        try:
+            emotion_intensity = float(emotion_intensity)
+        except (ValueError, TypeError):
+            emotion_intensity = 1.0
         if debug:
             print(f"--- [PGFX Visemes] EXECUTION START (Scene Index: {scene_index}) ---")
 
@@ -572,7 +598,7 @@ class PGFX_UniversalVisemeGuides(PGFX_ScriptGuidedVisemes):
                 "fill_color": ("STRING", {"default": "black"}),
                 "dot_size": ("INT", {"default": 3, "min": 1, "max": 20}),
                 "line_thickness": ("INT", {"default": 2, "min": 1, "max": 20}),
-                "emotion_intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.1}),
+                "emotion_intensity": ("STRING", {"default": "1.0", "multiline": False}),
                 "debug": ("BOOLEAN", {"default": False}),
             },
             "optional": {
@@ -740,6 +766,10 @@ class PGFX_UniversalVisemeGuides(PGFX_ScriptGuidedVisemes):
         **kwargs,
     ):
         audio_meta = audio_meta or {}
+        try:
+            emotion_intensity = float(emotion_intensity)
+        except (ValueError, TypeError):
+            emotion_intensity = 1.0
         if debug:
             print(f"--- [PGFX Universal Visemes] START (Scene Index: {scene_index}) ---")
 
@@ -1136,15 +1166,125 @@ class PGFX_WordTimingJsonBuilder(PGFX_ScriptGuidedVisemes):
             return (json.dumps(payload, indent=2, ensure_ascii=True), payload, 0, f"CRITICAL ERROR: {exc}")
 
 
+# ------------------------------------------------------------------------------------
+# PGFX_VisemeCondImagePrep Node — Bridge Viseme Rig → Sampler Conditioning
+# ------------------------------------------------------------------------------------
+class PGFX_VisemeCondImagePrep:
+    DESCRIPTION = (
+        "Bridges CinemaVisemeRig outputs into PGFX_LTXVInContextSampler.optional_cond_images. "
+        "Takes the canny mouth-shape guides + lip mask and blends them onto a face template "
+        "at subliminal strength. The sampler receives per-frame visual hints of the target "
+        "mouth shape — no visible overlay, just latent-space guidance that corrects phoneme "
+        "pronunciation in the generated video."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "canny_guides": ("IMAGE", {"tooltip": "Canny edge mouth shapes from CinemaVisemeRig.canny_guides. Shape [F, H, W, 3]."}),
+                "lip_mask": ("MASK", {"tooltip": "Lip region mask from CinemaVisemeRig.lip_mask. Shape [F, H, W]."}),
+                "mouth_influence": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Blend strength of canny edges onto face. 0.1-0.2 is typically invisible but effective."}),
+                "cond_strength": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Pass-through to sampler cond_image_strength. Controls how strongly conditioning influences generation."}),
+                "frame_step": ("INT", {"default": 8, "min": 1, "max": 64, "step": 1, "tooltip": "Every Nth frame gets a conditioning image. Higher = less VRAM but coarser guidance. Use 4-16."}),
+                "blend_mode": (["Lip Region Only", "Full Frame Soft", "Edges Only (Debug)"], {"default": "Lip Region Only"}),
+            },
+            "optional": {
+                "face_template": ("IMAGE", {"tooltip": "Optional: A single reference face frame to blend mouth shapes onto. If omitted, a gray background is used."}),
+                "cond_indices_override": ("STRING", {"multiline": False, "default": "", "tooltip": "Optional: Comma-separated frame indices. Overrides auto-computed step indices."}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING", "FLOAT")
+    RETURN_NAMES = ("cond_images", "cond_indices", "cond_strength")
+    FUNCTION = "prepare"
+    CATEGORY = "☠️PGFX /Video"
+
+    def prepare(self, canny_guides, lip_mask, mouth_influence, cond_strength, frame_step, blend_mode, face_template=None, cond_indices_override=""):
+        try:
+            B = canny_guides.shape[0]
+            H = canny_guides.shape[1]
+            W = canny_guides.shape[2]
+
+            # Resolve face template: use corresponding frame per cond index
+            if face_template is not None:
+                tf = face_template
+                tf_h, tf_w = tf.shape[1], tf.shape[2]
+                if tf_h != H or tf_w != W:
+                    tf = torch.nn.functional.interpolate(tf.permute(0, 3, 1, 2), size=(H, W), mode="bilinear").permute(0, 2, 3, 1)
+                tf = tf.clamp(0, 1)
+            else:
+                tf = None
+
+            # Determine frame indices
+            if cond_indices_override.strip():
+                parts = [p.strip() for p in cond_indices_override.split(",") if p.strip()]
+                indices = sorted(set(int(p) for p in parts if p.isdigit()))
+                indices = [i for i in indices if i < B]
+            else:
+                indices = list(range(0, B, frame_step))
+
+            if not indices:
+                indices = [0]
+
+            # Prepare output images
+            out_imgs = []
+            for idx in indices:
+                canny = canny_guides[idx:idx+1]  # [1, H, W, 3]
+                mask = lip_mask[idx:idx+1]       # [1, H, W]
+                if mask.dim() == 2:
+                    mask = mask.unsqueeze(0)
+                elif mask.dim() == 3 and mask.shape[0] != 1:
+                    mask = mask[idx:idx+1]
+
+                # Normalize mask to [0,1] float
+                mask = mask.float()
+                if mask.max() > 1.0:
+                    mask = mask / 255.0
+                mask = mask.clamp(0, 1)
+                # Add channel dim for broadcasting: [1, H, W] -> [1, H, W, 1]
+                mask = mask.unsqueeze(-1)
+
+                # Pick face frame that best matches this cond index
+                if tf is not None:
+                    tf_idx = min(idx, tf.shape[0] - 1)
+                    ref_frame = tf[tf_idx:tf_idx+1]
+                else:
+                    ref_frame = torch.ones(1, H, W, 3) * 0.5
+
+                if blend_mode == "Edges Only (Debug)":
+                    blended = canny
+                elif blend_mode == "Full Frame Soft":
+                    blended = ref_frame * (1 - mouth_influence) + canny * mouth_influence
+                else:  # Lip Region Only
+                    blended = ref_frame * (1 - mask * mouth_influence) + canny * (mask * mouth_influence)
+
+                blended = blended.clamp(0, 1)
+                out_imgs.append(blended)
+
+            out_tensor = torch.cat(out_imgs, dim=0) if len(out_imgs) > 1 else out_imgs[0]
+            out_indices = ",".join(str(i) for i in indices)
+
+            return (out_tensor, out_indices, cond_strength)
+
+        except Exception as e:
+            print(f"\n*** [PGFX_VisemeCondImagePrep] ERROR: {e} ***\n")
+            traceback.print_exc()
+            dummy = torch.zeros(1, 64, 64, 3)
+            return (dummy, "0", cond_strength)
+
+
 NODE_CLASS_MAPPINGS = {
     "PGFX_CinemaVisemeRig": PGFX_CinemaVisemeRig,
     "PGFX_ScriptGuidedVisemes": PGFX_ScriptGuidedVisemes,
     "PGFX_UniversalVisemeGuides": PGFX_UniversalVisemeGuides,
     "PGFX_WordTimingJsonBuilder": PGFX_WordTimingJsonBuilder,
+    "PGFX_VisemeCondImagePrep": PGFX_VisemeCondImagePrep,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_CinemaVisemeRig": "👄 Cinema Viseme Rig",
     "PGFX_ScriptGuidedVisemes": "👄 Script-Guided Visemes",
     "PGFX_UniversalVisemeGuides": "👄 Universal Viseme Guides",
     "PGFX_WordTimingJsonBuilder": "📝 Word Timing JSON Builder",
+    "PGFX_VisemeCondImagePrep": "🎭 Viseme → Conditioning Bridge",
 }

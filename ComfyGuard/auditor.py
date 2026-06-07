@@ -1,6 +1,7 @@
 import torch
 import subprocess
 import sys
+from pathlib import Path
 
 class ComfyGuardAuditor:
     def __init__(self):

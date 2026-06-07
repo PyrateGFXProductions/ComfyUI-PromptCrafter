@@ -49,5 +49,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_ComfyGuard_Shield": "🛡️ ComfyGuard Shield",
+    "PGFX_ComfyGuard_Shield": "🩺 ComfyGuard Health Check",
 }

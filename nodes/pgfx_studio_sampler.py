@@ -5,6 +5,7 @@ import comfy.samplers
 import comfy.sample
 import comfy.utils
 from comfy.model_management import get_torch_device
+from nodes import common_ksampler
 
 # ------------------------------------------------------------------------------------
 # Universal Audio-Driven Sampler
@@ -123,7 +124,7 @@ class PGFX_Studio_Sampler:
         # The model object itself contains all the necessary information about
         # its architecture, and common_ksampler routes to the correct sampler.
         try:
-            return comfy.samplers.common_ksampler(
+            return common_ksampler(
                 model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=denoise
             )
         except Exception as e:
@@ -138,5 +139,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_Studio_Sampler": "🎤 Studio Sampler (Universal)"
+    "PGFX_Studio_Sampler": "🎛️ Studio Sampler (Universal)"
 }

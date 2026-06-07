@@ -439,13 +439,9 @@ class PGFXTextEncodeAceStepAudio15Advanced:
                 patches.apply_acestep_patches()
                 print("|-- Stability: Official ACE-Step patches applied.")
             except ImportError:
-                # Try alternative import path
-                try:
-                    import custom_nodes.comfyui_ryanonyheinside.nodes.acestep.patches as patches
-                    patches.apply_acestep_patches()
-                    print("|-- Stability: Official ACE-Step patches applied (via custom_nodes path).")
-                except:
-                    pass
+                pass
+            except Exception:
+                pass
         except Exception as e:
             print(f"|-- Stability: Patch application skipped ({str(e)})")
 
@@ -708,7 +704,9 @@ class PGFXTextEncodeAceStepAudio15Advanced:
         noise_level = max(0.0, min(1.0, noise_level))
         
         # 1. ENCODE SINGLE PATH (Standard ACE-Step Execution)
-        tokens = clip.tokenize(prompt_text, **tokenize_kwargs)
+        accepted_keys = {"lyrics", "bpm", "duration", "timesignature", "language", "keyscale", "seed", "generate_audio_codes", "cfg_scale", "temperature", "top_p", "top_k", "min_p", "task_type", "track_name", "caption_negative"}
+        safe_kwargs = {k: v for k, v in tokenize_kwargs.items() if k in accepted_keys and v is not None}
+        tokens = clip.tokenize(prompt_text, **safe_kwargs)
         cond = clip.encode_from_tokens_scheduled(tokens)
         h = cond[0][0] # Prompt Embeddings
         c_device = h.device

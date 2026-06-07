@@ -252,9 +252,23 @@ API_THROTTLE = textwrap.dedent(
                 return func(*args, **kwargs)
         return wrapper
 
-    # Apply the decorator to the public entry points.
-    query_model_auto = _with_ollama_throttle(query_model_auto)
-    _reason_with_model = _with_ollama_throttle(_reason_with_model)
+    # Apply the decorator to the public entry points (guarded against NameError on import).
+    for _name in ("query_model_auto", "_reason_with_model"):
+        if _name in locals() or _name in globals():
+            _fn = locals().get(_name) or globals().get(_name)
+            if _fn is not None:
+                import functools
+                @functools.wraps(_fn)
+                def _make_wrapped(fn=_fn):
+                    def wrapped(*args, **kwargs):
+                        with _ollama_semaphore:
+                            return fn(*args, **kwargs)
+                    return wrapped
+                _wrapped = _make_wrapped()
+                if _name in locals():
+                    locals()[_name] = _wrapped
+                if _name in globals():
+                    globals()[_name] = _wrapped
     """
 )
 

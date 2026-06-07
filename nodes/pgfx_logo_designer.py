@@ -71,6 +71,21 @@ DEFAULT_LIBRARY = {
         "neon": {"description": "bright illuminated neon tubing", "usage_count": 0},
         "crystal": {"description": "cut translucent crystal facets", "usage_count": 0},
         "concrete": {"description": "cast concrete with gritty texture", "usage_count": 0},
+        "enamel_painted": {"description": "glossy vitreous enamel coating with mirror-hard finish", "usage_count": 0},
+        "jade": {"description": "polished translucent green jadeite with soft inner glow", "usage_count": 0},
+        "oxidized_copper": {"description": "verdigris patina on weathered aged copper", "usage_count": 0},
+        "hammered_brass": {"description": "wrought brass with visible hand-hammered indentations", "usage_count": 0},
+        "porcelain": {"description": "fine translucent white ceramic with delicate glossy sheen", "usage_count": 0},
+        "titanium_anodized": {"description": "gradient color-shifting anodized titanium surface", "usage_count": 0},
+        "cashmere": {"description": "soft brushed luxury wool textile with gentle surface nap", "usage_count": 0},
+        "crocodile_embossed": {"description": "exotic reptile leather with raised scaled texture", "usage_count": 0},
+        "moonstone": {"description": "opalescent feldspar with floating blue adularescence", "usage_count": 0},
+        "lacquer_red": {"description": "deep crimson urushi lacquer with piano-gloss reflection", "usage_count": 0},
+        "stained_glass": {"description": "translucent colored glass panels with lead came framework", "usage_count": 0},
+        "malachite": {"description": "banded bright green carbonate mineral with concentric rings", "usage_count": 0},
+        "damascus_steel": {"description": "pattern welded steel with wavy layered grain structure", "usage_count": 0},
+        "charred_wood": {"description": "yakisugi burnt cedar with crackled black textured surface", "usage_count": 0},
+        "plaster_fresco": {"description": "aged lime plaster with mineral pigment embedded in substrate", "usage_count": 0},
     },
     "decorations": {
         "none": {"description": "", "usage_count": 0},
@@ -91,6 +106,18 @@ DEFAULT_LIBRARY = {
         "glowing_circuitry": {"description": "interwoven with glowing cyberpunk circuitry", "usage_count": 0},
         "filigree_silver": {"description": "ornate delicate silver filigree work", "usage_count": 0},
         "tattoo_style": {"description": "ornamental tattoo flourishes and flash-art accents", "usage_count": 0},
+        "celtic_knotwork": {"description": "interwoven decorative celtic knot patterns across the surface", "usage_count": 0},
+        "mandala_pattern": {"description": "intricate radial geometric mandala ornamentation", "usage_count": 0},
+        "henna_tattoo": {"description": "delicate mehndi-style organic flowing pattern work", "usage_count": 0},
+        "watercolor_wash": {"description": "soft diffused transparent watercolor paint splashes", "usage_count": 0},
+        "gilded_accents": {"description": "raised decorative details highlighted with burnished gold leaf", "usage_count": 0},
+        "embossed_pattern": {"description": "raised relief repeating texture pressed into the surface", "usage_count": 0},
+        "origami_folds": {"description": "precise geometric folded paper crease patterns", "usage_count": 0},
+        "enamel_cloisonne": {"description": "vibrant colored enamel cells separated by fine wire partitions", "usage_count": 0},
+        "scrollwork": {"description": "ornate flowing ornamental scroll and vine motifs", "usage_count": 0},
+        "mosaic_tiles": {"description": "small colored glass tile tessellation in geometric patterns", "usage_count": 0},
+        "feathered_edges": {"description": "soft organic feather-like transitional border treatment", "usage_count": 0},
+        "lace_overlay": {"description": "delicate intricate lace textile pattern draped over the surface", "usage_count": 0},
     },
     "actions": {
         "none": {"description": "static design pose", "usage_count": 0},
@@ -105,6 +132,18 @@ DEFAULT_LIBRARY = {
         "glitching": {"description": "corrupted by digital glitch artifacts", "usage_count": 0},
         "cracked": {"description": "fractured with visible structural cracking", "usage_count": 0},
         "corroded": {"description": "eroded by corrosion and oxidation", "usage_count": 0},
+        "petrifying": {"description": "slowly turning to stone from the base upward", "usage_count": 0},
+        "crystallizing": {"description": "sprouting sharp geometric crystal growths across the surface", "usage_count": 0},
+        "rusting": {"description": "rapid oxidation corrosion spreading like a stain", "usage_count": 0},
+        "fossilizing": {"description": "being compressed and preserved as a sedimentary fossil", "usage_count": 0},
+        "fracturing": {"description": "cracking in radial spiderweb fracture patterns", "usage_count": 0},
+        "blooming": {"description": "flowers and organic vegetation sprouting from the surface", "usage_count": 0},
+        "sublimating": {"description": "transitioning directly from solid into ethereal vapor", "usage_count": 0},
+        "unraveling": {"description": "woven threads pulling loose and coming apart at the edges", "usage_count": 0},
+        "imploding": {"description": "collapsing inward with violent radial compression", "usage_count": 0},
+        "pixelating": {"description": "breaking apart into blocky digital pixel fragments", "usage_count": 0},
+        "regrowing": {"description": "self-repairing with organic fibrous regrowth across damaged areas", "usage_count": 0},
+        "tarnishing": {"description": "developing dark oxidation patina spreading across the surface", "usage_count": 0},
     },
     "environments": {
         "none": {"description": "a clean studio environment", "usage_count": 0},
@@ -125,6 +164,21 @@ DEFAULT_LIBRARY = {
         "concrete_wall": {"description": "a gritty urban concrete wall backdrop", "usage_count": 0},
         "white_studio": {"description": "a pure white professional studio backdrop", "usage_count": 0},
         "black_void": {"description": "an infinite black cinematic void", "usage_count": 0},
+        "steampunk_workshop": {"description": "a victorian brass and copper machinery workshop with steam vents", "usage_count": 0},
+        "bioluminescent_cave": {"description": "an underground cavern lit by glowing bio-luminescent organisms", "usage_count": 0},
+        "cherry_blossom_garden": {"description": "a serene japanese garden with drifting pink petals", "usage_count": 0},
+        "crystal_cavern": {"description": "a vast underground chamber of towering geometric crystal formations", "usage_count": 0},
+        "sunset_beach": {"description": "a golden hour beach landscape with gentle rolling waves", "usage_count": 0},
+        "cathedral_interior": {"description": "a grand gothic cathedral with light streaming through stained glass", "usage_count": 0},
+        "neon_casino": {"description": "a vibrant vegas-style casino exterior with cascading neon signs", "usage_count": 0},
+        "greenhouse_jungle": {"description": "a lush overgrown glass botanical greenhouse with tropical foliage", "usage_count": 0},
+        "underwater_ruins": {"description": "sunken ancient architecture draped in coral and drifting sea life", "usage_count": 0},
+        "desert_night": {"description": "a clear moonlit desert with expansive star-filled night sky", "usage_count": 0},
+        "zen_garden": {"description": "a raked sand meditation garden with carefully placed stones", "usage_count": 0},
+        "carnival_midway": {"description": "a colorful nighttime carnival with bright amusement ride lights", "usage_count": 0},
+        "temple_ruins": {"description": "ancient overgrown temple ruins being reclaimed by jungle", "usage_count": 0},
+        "ballroom_elegant": {"description": "a grand chandelier-lit ballroom with gold trim and mirrored walls", "usage_count": 0},
+        "alleyway_rain": {"description": "a narrow wet urban alleyway reflecting neon at night", "usage_count": 0},
     },
     "atmospherics": {
         "none": {"description": "", "usage_count": 0},
@@ -149,6 +203,16 @@ DEFAULT_LIBRARY = {
         "galaxy": {"description": "galactic atmospheric color", "usage_count": 0},
         "abstract_shapes": {"description": "abstract surrounding graphic shapes", "usage_count": 0},
         "matrix_code": {"description": "falling digital code patterns", "usage_count": 0},
+        "fireflies": {"description": "glowing bioluminescent floating insects drifting gently", "usage_count": 0},
+        "embers": {"description": "rising glowing embers and warm floating ash particles", "usage_count": 0},
+        "petals": {"description": "delicate flower petals drifting and swirling on a breeze", "usage_count": 0},
+        "fireworks": {"description": "distant colorful exploding firework bursts", "usage_count": 0},
+        "aurora_borealis": {"description": "flowing curtains of colored atmospheric polar light", "usage_count": 0},
+        "rippling_water": {"description": "gentle water surface caustics and ripple light reflections", "usage_count": 0},
+        "holographic_projections": {"description": "flickering translucent holographic data display artifacts", "usage_count": 0},
+        "stardust": {"description": "fine sparkling cosmic particle trails suspended in air", "usage_count": 0},
+        "cobwebs": {"description": "delicate hanging spider silk strands catching the light", "usage_count": 0},
+        "rainbow_prism": {"description": "spectral light refraction casting rainbow color dispersion", "usage_count": 0},
     },
     "styles": {
         "flat_vector": {"description": "professional clean flat vector illustration", "usage_count": 0},
@@ -157,6 +221,16 @@ DEFAULT_LIBRARY = {
         "3d_render": {"description": "physically based 3D render depth and lighting", "usage_count": 0},
         "tattoo_art": {"description": "bold illustrative tattoo artistry with dark linework", "usage_count": 0},
         "sticker_decal": {"description": "clean die-cut sticker with a white border", "usage_count": 0},
+        "watercolor": {"description": "soft diffuse watercolor painting with paper grain texture", "usage_count": 0},
+        "oil_painting": {"description": "thick impasto oil painting with visible directional brushstrokes", "usage_count": 0},
+        "pop_art": {"description": "bold comic-book style with halftone dots and saturated color", "usage_count": 0},
+        "art_deco": {"description": "luxurious geometric 1920s art deco with gold and chrome accents", "usage_count": 0},
+        "minimal_modern": {"description": "clean sparse scandinavian minimalism with generous negative space", "usage_count": 0},
+        "woodcut": {"description": "bold carved woodblock print with thick outlines and textured ink", "usage_count": 0},
+        "pixel_art": {"description": "retro 8-bit video game pixel grid rendering", "usage_count": 0},
+        "japanese_woodblock": {"description": "traditional ukiyo-e style with flat color fields and flowing linework", "usage_count": 0},
+        "graffiti": {"description": "urban street art style with spray paint overspray and marker textures", "usage_count": 0},
+        "baroque": {"description": "dramatic 17th century ornate style with deep chiaroscuro shadow", "usage_count": 0},
     },
 }
 
@@ -478,7 +552,17 @@ def _summarize_canvas_json(canvas_json_text):
         focus_layer = agent_focus.get("target_layer")
         focus_props = agent_focus.get("properties")
         if focus_layer and focus_props:
-            summary["layout_summary"] += f"\nCRITICAL AGENT FOCUS: User is currently refining the layer \"{focus_layer}\". Details: {focus_props}"
+            summary["layout_summary"] += f'\nCRITICAL AGENT FOCUS: User is currently refining the layer "{focus_layer}". Details: {focus_props}'
+
+    # Check for 3D extrusion settings from viewport
+    pgfx_3d = data.get("pgfx_3d_settings")
+    if isinstance(pgfx_3d, dict):
+        summary["has_3d_extrusion"] = True
+        summary["extrusion_depth"] = _safe_int(pgfx_3d.get("depth"), 20)
+        summary["extrusion_material"] = _normalize_key(pgfx_3d.get("material", ""))
+        summary["extrusion_bevel"] = bool(pgfx_3d.get("bevel_enabled", True))
+    else:
+        summary["has_3d_extrusion"] = False
 
     return summary
 
@@ -783,6 +867,16 @@ def _style_render_phrase(output_intent, style_mode):
         "3d_render": "physically based 3D logo rendering with dimensional depth",
         "tattoo_art": "bold tattoo-flash inspired illustrative rendering (isolated graphic design, NOT on human skin)",
         "sticker_decal": "clean sticker or decal presentation with strong silhouette separation",
+        "watercolor": "soft diffuse watercolor painting style with paper grain texture and flowing pigment",
+        "oil_painting": "thick impasto oil painting with visible directional brushstrokes on canvas",
+        "pop_art": "bold pop art style with halftone dot gradients and vibrant comic-book colors",
+        "art_deco": "luxurious geometric 1920s art deco styling with metallic gold and chrome accents",
+        "minimal_modern": "clean sparse scandinavian modernism with generous negative space and restrained palette",
+        "woodcut": "bold carved woodblock print style with thick outlines and textured ink relief",
+        "pixel_art": "retro 8-bit pixel art rendering with blocky square pixel grid resolution",
+        "japanese_woodblock": "traditional ukiyo-e woodblock style with flat color fields and flowing sumi-e linework",
+        "graffiti": "urban street art style with spray paint overspray, drips, and marker textures",
+        "baroque": "dramatic 17th century baroque style with deep chiaroscuro and rich ornamental detail",
     }
     base = style_map.get(style_key, DesignLibrary.description("styles", style_key))
     if intent == "vector":
@@ -980,6 +1074,22 @@ def _build_logo_prompt(kwargs):
         material_bits = [m for m in material_bits if "tattoo" not in m.lower()]
         decoration_bits = [d for d in decoration_bits if "tattoo" not in d.lower() and "flash-art" not in d.lower()]
 
+    # --- 3D EXTRUSION CONTEXT ---
+    # When the 3D Viewport was used to extrude the design, inject descriptive language
+    has_3d = canvas_summary.get("has_3d_extrusion", False)
+    extrusion_desc = ""
+    if has_3d:
+        depth = canvas_summary.get("extrusion_depth", 20)
+        mat_key = canvas_summary.get("extrusion_material", "")
+        mat_desc = DesignLibrary.description("materials", mat_key) if mat_key else ""
+        bevel = canvas_summary.get("extrusion_bevel", True)
+        parts = [f"3D extruded logo with {depth}px depth"]
+        if bevel:
+            parts.append("beveled edges")
+        if mat_desc:
+            parts.append(mat_desc)
+        extrusion_desc = ", ".join(parts)
+
     # --- PROMPT ASSEMBLY ---
     # Branches on prompt_style: "conversational" (natural prose) or "object_list" (token list)
     prompt_style = str(kwargs.get("prompt_style", "conversational") or "conversational").lower()
@@ -1019,6 +1129,10 @@ def _build_logo_prompt(kwargs):
             tokens.append(f"background: {background_phrase}")
         elif effective_bg_mode == "simple":
             tokens.append("clean solid background")
+
+        # 3D extrusion
+        if extrusion_desc:
+            tokens.append(extrusion_desc)
 
         # Freeform
         if freeform_extra:
@@ -1075,22 +1189,26 @@ def _build_logo_prompt(kwargs):
         if scene_interaction:
             prompt += f" {scene_interaction}."
 
-        # 4. Background
+        # 4. 3D extrusion
+        if extrusion_desc:
+            prompt += f" {extrusion_desc}."
+
+        # 5. Background
         if effective_bg_mode in ("preset", "custom") and background_phrase:
             prompt += f" Set the background to: {background_phrase}."
         elif effective_bg_mode == "simple":
             prompt += " Keep a clean solid background."
         # effective_bg_mode == "none" -> no background instruction
 
-        # 5. Freeform extra instructions
+        # 7. Freeform extra instructions
         if freeform_extra:
             prompt += f" {freeform_extra}."
 
-        # 6. Geometry / flair directives
+        # 8. Geometry / flair directives
         prompt += f" {_geometry_instruction(kwargs.get('geometry_adherence', 1.0))}"
         prompt += f" {_flair_instruction(kwargs.get('creative_flair', 0.5))}"
 
-        # 7. Intensity and quality
+        # 9. Intensity and quality
         prompt += f" {intensity_phrase}"
         prompt += " Preserve the original position, layout, and text exactly."
 
@@ -1264,7 +1382,7 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
         image_context = ""
         llm_images = [img for img, _ in images_with_weights if img is not None]
         if llm_images:
-            run_config = self._setup_config("Image", user_prompt, thinking_model, **clean_kwargs)
+            run_config = self._setup_config(PGFX_LogoDesignerAgent, "Image", user_prompt, thinking_model, **clean_kwargs)
             
             # Inject a context-aware persona based on the user's specific choices
             intent_str = output_intent_override if output_intent_override != "AI DETERMINED" else "general graphic design"

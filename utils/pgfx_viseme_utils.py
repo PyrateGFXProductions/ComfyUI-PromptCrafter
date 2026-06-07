@@ -15,12 +15,19 @@ def get_g2p():
     if _G2P_INSTANCE is None:
         try:
             import nltk
-            # Ensure required NLTK data is present
-            for data in ['cmudict', 'averaged_perceptron_tagger']:
+            g2p_resources = [
+                ('corpora', 'cmudict'),
+                ('taggers', 'averaged_perceptron_tagger'),
+                ('taggers', 'averaged_perceptron_tagger_eng'),
+            ]
+            for subdir, data in g2p_resources:
                 try:
-                    nltk.data.find(f'corpora/{data}' if data == 'cmudict' else f'taggers/{data}')
+                    nltk.data.find(f'{subdir}/{data}')
                 except LookupError:
-                    nltk.download(data, quiet=True)
+                    try:
+                        nltk.download(data, quiet=True)
+                    except Exception:
+                        pass
             _G2P_INSTANCE = G2p()
         except Exception as e:
             print(f"[PromptCrafter] Error initializing G2p: {e}")
@@ -36,7 +43,7 @@ VISEME_TO_LANDMARK_MAP = {
     "EE": [(CX-0.20, CY-0.01), (CX-0.15, CY-0.02), (CX-0.07, CY-0.02), (CX+0.00, CY-0.02), (CX+0.07, CY-0.02), (CX+0.15, CY-0.02), (CX+0.20, CY-0.01), (CX+0.15, CY+0.02), (CX+0.07, CY+0.02), (CX+0.00, CY+0.02), (CX-0.07, CY+0.02), (CX-0.15, CY+0.02), (CX-0.15, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.15, CY-0.01), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01)],
     "OO": [(CX-0.08, CY-0.02), (CX-0.06, CY-0.04), (CX-0.03, CY-0.05), (CX+0.00, CY-0.05), (CX+0.03, CY-0.05), (CX+0.06, CY-0.04), (CX+0.08, CY-0.02), (CX+0.06, CY-0.04), (CX+0.03, CY+0.05), (CX+0.00, CY+0.05), (CX-0.03, CY+0.05), (CX-0.06, CY+0.04), (CX-0.05, CY-0.02), (CX-0.03, CY-0.03), (CX+0.00, CY-0.03), (CX+0.03, CY-0.03), (CX+0.05, CY-0.02), (CX+0.03, CY+0.03), (CX+0.00, CY+0.03), (CX-0.03, CY+0.03)],
     "S_L": [(CX-0.18, CY-0.01), (CX-0.14, CY-0.02), (CX-0.07, CY-0.02), (CX+0.00, CY-0.02), (CX+0.07, CY-0.02), (CX+0.14, CY-0.02), (CX+0.18, CY-0.01), (CX+0.14, CY+0.02), (CX+0.07, CY+0.02), (CX+0.00, CY+0.02), (CX-0.07, CY+0.02), (CX-0.14, CY+0.02), (CX-0.14, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.14, CY-0.01), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01)],
-    "DENTAL": [(CX-0.17, CY-0.02), (CX-0.13, CY-0.03), (CX-0.07, CY-0.03), (CX+0.00, CY-0.03), (CX+0.07, CY-0.03), (CX+0.13, CY-0.03), (CX+0.17, CY-0.02), (CX+0.13, CY+0.03), (CX+0.07, CY+0.03), (CX+0.00, CY+0.03), (CX-0.07, CY+0.03), (CX-0.13, CY+0.03), (CX-0.13, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.13, CY-0.01), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01), (CX-0.07, CY+0.00), (CX-0.04, CY+0.00), (CX+0.00, CY+0.00), (CX+0.04, CY+0.00), (CX+0.07, CY+0.00)],
+    "DENTAL": [(CX-0.17, CY-0.02), (CX-0.13, CY-0.03), (CX-0.07, CY-0.03), (CX+0.00, CY-0.03), (CX+0.07, CY-0.03), (CX+0.13, CY-0.03), (CX+0.17, CY-0.02), (CX+0.13, CY+0.03), (CX+0.07, CY+0.03), (CX+0.00, CY+0.03), (CX-0.07, CY+0.03), (CX-0.13, CY+0.03), (CX-0.13, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.13, CY-0.01), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01)],
     "LABIODENTAL": [(CX-0.17, CY-0.02), (CX-0.13, CY-0.03), (CX-0.07, CY-0.03), (CX+0.00, CY-0.03), (CX+0.07, CY-0.03), (CX+0.13, CY-0.03), (CX+0.17, CY-0.02), (CX+0.13, CY+0.02), (CX+0.07, CY+0.01), (CX+0.00, CY+0.01), (CX-0.07, CY+0.01), (CX-0.13, CY+0.02), (CX-0.13, CY-0.01), (CX-0.07, CY-0.01), (CX+0.00, CY-0.01), (CX+0.07, CY-0.01), (CX+0.13, CY-0.01), (CX+0.07, CY-0.00), (CX+0.00, CY-0.00), (CX-0.07, CY-0.00)],
     "O_SH": [(CX-0.15, CY-0.01), (CX-0.12, CY-0.03), (CX-0.06, CY-0.04), (CX+0.00, CY-0.04), (CX+0.06, CY-0.04), (CX+0.12, CY-0.03), (CX+0.15, CY-0.01), (CX+0.12, CY+0.04), (CX+0.06, CY+0.06), (CX+0.00, CY+0.06), (CX-0.06, CY+0.06), (CX-0.12, CY+0.04), (CX-0.11, CY-0.01), (CX-0.06, CY-0.02), (CX+0.00, CY-0.02), (CX+0.06, CY-0.02), (CX+0.11, CY-0.01), (CX+0.06, CY+0.03), (CX+0.00, CY+0.03), (CX-0.06, CY+0.03)],
 }

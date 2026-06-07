@@ -238,7 +238,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     auto_save_file_type = profile.get("auto_save_file_type", auto_save_file_type)
             
             images_with_weights = self._collect_images_with_weights(**kwargs)
-            initial_run_config = self._setup_config(pipeline_mode, user_text, model, images_with_weights=images_with_weights, **kwargs)
+            initial_run_config = self._setup_config(PromptCrafter_VisualCreator, pipeline_mode, user_text, model, images_with_weights=images_with_weights, **kwargs)
             
             # --- DUAL-MODEL CHAIN PATH ---
             if thinking_model and instruct_model and "None" not in thinking_model and "None" not in instruct_model:
@@ -393,7 +393,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     return (error,) + (None,) * (len(self.RETURN_TYPES) - 1)
                 final_user_text = new_user_text or user_text
                 
-                run_config = self._setup_config(pipeline_mode, final_user_text, model, images_with_weights=images_with_weights, **kwargs)
+                run_config = self._setup_config(PromptCrafter_VisualCreator, pipeline_mode, final_user_text, model, images_with_weights=images_with_weights, **kwargs)
                 
                 passthrough_images = [img for img, _ in images_with_weights]
                 passthrough_images.extend([None] * (self.MAX_IMAGES - len(passthrough_images)))
@@ -714,7 +714,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                 user_text = f"SUBJECT:\n{subject}\n\nINSTRUCTION:\n{instruction}"
 
             images_with_weights = self._collect_images_with_weights(**kwargs)
-            run_config = self._setup_config("Lyrics", user_text, model, images_with_weights=images_with_weights, **kwargs)
+            run_config = self._setup_config(PromptCrafter_LyricsCreator, "Lyrics", user_text, model, images_with_weights=images_with_weights, **kwargs)
             format_profile = kwargs.get("format_profile", "Custom")
             output_target = kwargs.get("output_target", "Schedule")
             output_format = kwargs.get("output_format", "Plain Text")
@@ -746,6 +746,10 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     if audio_path:
                         try:
                             try:
+                                try:
+                                    torchaudio.set_audio_backend("soundfile")
+                                except Exception:
+                                    pass
                                 waveform, sample_rate = torchaudio.load(audio_path)
                             except Exception as e:
                                 if librosa:
@@ -759,9 +763,18 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                             audio_data = {"waveform": waveform.unsqueeze(0) if waveform.ndim == 2 else waveform, "sample_rate": sample_rate}
                             srt_node = pgfx_srt_creator.PromptCrafter_SRTCreator()
                             srt_res = srt_node.execute(
-                                audio_data, kwargs.get("whisper_model", "large-v3"), 
-                                kwargs.get("whisper_language", "en"), False, instruct_model, 
-                                False, False, kwargs.get("debug_mode", False)
+                                audio_data,
+                                kwargs.get("whisper_model", "large-v3"),
+                                kwargs.get("whisper_language", "en"),
+                                "silero",
+                                bool(instruct_model),
+                                instruct_model or "large-v3",
+                                False,
+                                kwargs.get("debug_mode", False),
+                                5.0,
+                                False,
+                                False,
+                                ground_truth_script="",
                             )
                             
                             lyrics_srt = srt_res[0]
@@ -823,9 +836,10 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     Return ONLY the JSON object.
                 """).strip()
 
+                instruct_timeout = 0 if str(instruct_model).lower().startswith("gguf/") else run_config.timeout
                 ok_instruct, result_data = api_clients._reason_with_model(
                     instruct_model, instruct_prompt, images=[], use_chat_api=True,
-                    temperature=0.0, seed=run_config.seed, timeout=0,
+                    temperature=0.0, seed=run_config.seed, timeout=instruct_timeout,
                     llm_device=run_config.llm_device, reset_context=run_config.reset_context,
                     debug_mode=kwargs.get('debug_mode', False), debug_title="Dual-Model Stage 2: Instructor (Lyrics)"
                 )
@@ -1003,8 +1017,8 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_VisualCreator": "✨ Visual Creator",
-    "PromptCrafter_LyricsCreator": "🎤 Lyrics Creator",
-    "PromptCrafter_VisualCreatorEasy": "✨ Easy Visual Creator",
-    "PromptCrafter_LyricsCreatorEasy": "🎤 Easy Lyrics Creator",
+    "PromptCrafter_VisualCreator": "✨ Image → Prompt",
+    "PromptCrafter_LyricsCreator": "🎤 Lyrics → Prompt",
+    "PromptCrafter_VisualCreatorEasy": "✨ Easy Image → Prompt",
+    "PromptCrafter_LyricsCreatorEasy": "🎤 Easy Lyrics → Prompt",
 }

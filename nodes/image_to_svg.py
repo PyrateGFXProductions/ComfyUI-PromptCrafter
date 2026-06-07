@@ -165,6 +165,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "CP_ImageToSVG": "PromptCrafter ✨ Image to SVG",
+    "CP_ImageToSVG": "PromptCrafter ✨ Image Trace to SVG",
     "CP_SaveSVG": "PromptCrafter 💾 Save SVG"
 }

@@ -1,0 +1,99 @@
+{
+  "last_node_id": 10,
+  "last_link_id": 6,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Note",
+      "pos": [10, 10],
+      "size": [1200, 160],
+      "widgets_values": ["☠️ PGFX LYRICS → VISEME LIP-SYNC\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nProperly timed viseme animation using LyricsCreator + WordTimingJsonBuilder + CinemaVisemeRig\n\nCHAIN:\n① LyricsCreator: transcribes audio → lyrics text + audio_meta with timed_segments\n② WordTimingJsonBuilder: converts phrase-level timed_segments → word-level word_segments\n③ CinemaVisemeRig: uses word_segments for accurate phonetic lip-sync timing\n\nCRITICAL: Both connections from LyricsCreator are needed:\n  • clean_lyrics_txt (STRING) → CinemaVisemeRig.lyrics  — the words to animate\n  • audio_meta (DICT) → WordTimingJsonBuilder.audio_meta — phrase timing from Whisper\n  • WordTimingJsonBuilder.word_segments (DICT) → CinemaVisemeRig.audio_meta — word timing"]
+    },
+    {
+      "id": 2,
+      "type": "Note",
+      "pos": [10, 200],
+      "size": [250, 60],
+      "widgets_values": ["① AUDIO INPUT\nConnect a LoadAudio node here\nor use the built-in audio\npicker in LyricsCreator"]
+    },
+    {
+      "id": 3,
+      "type": "PromptCrafter_LyricsCreator",
+      "pos": [10, 290],
+      "size": [400, 520],
+      "widgets_values": ["openai/gpt-4o", "openai/gpt-4o-mini", "large-v3", "en", "silero", true, false, false, 4.0, false, "", "input/YouTuber.wav", "", false, false, false, "Default (GPU)", true]
+    },
+    {
+      "id": 4,
+      "type": "Note",
+      "pos": [10, 840],
+      "size": [900, 60],
+      "widgets_values": ["③ CONNECTIONS: LyricsCreator.clean_lyrics_txt → CinemaVisemeRig.lyrics | LyricsCreator.audio_meta → WordTimingJsonBuilder.audio_meta | WordTimingJsonBuilder.word_segments → CinemaVisemeRig.audio_meta"]
+    },
+    {
+      "id": 5,
+      "type": "PGFX_WordTimingJsonBuilder",
+      "pos": [450, 290],
+      "size": [350, 200],
+      "widgets_values": [false],
+      "inputs": [
+        {"name": "audio_meta", "type": "DICT", "link": 1}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "PGFX_CinemaVisemeRig",
+      "pos": [850, 290],
+      "size": [400, 380],
+      "widgets_values": ["", 25, "LivePortrait (Cyan/Magenta)", 1.2, 512, 512, null, null, 1.0],
+      "inputs": [
+        {"name": "lyrics", "type": "STRING", "link": 2},
+        {"name": "audio_meta", "type": "DICT", "link": 3}
+      ]
+    },
+    {
+      "id": 7,
+      "type": "VHS_VideoCombine",
+      "pos": [1300, 290],
+      "size": [315, 300],
+      "widgets_values": [25, 0, "PGFX_Viseme_Lipsync", "video/h264-mp4", false, true],
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 4}
+      ]
+    },
+    {
+      "id": 8,
+      "type": "PreviewImage",
+      "pos": [1300, 50],
+      "size": [300, 200],
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 4}
+      ]
+    },
+    {
+      "id": 9,
+      "type": "MaskPreview",
+      "pos": [1650, 50],
+      "size": [300, 200],
+      "inputs": [
+        {"name": "mask", "type": "MASK", "link": 5}
+      ]
+    },
+    {
+      "id": 10,
+      "type": "Note",
+      "pos": [1300, 630],
+      "size": [700, 120],
+      "widgets_values": ["HOW TO USE:\n1. Place a .wav in ComfyUI/input/ and set the filename in LyricsCreator\n2. Set LLM models in LyricsCreator (gpt-4o / gpt-4o-mini, or hf/...)\n3. Queue Prompt — LyricsCreator transcribes audio, WordTimingJsonBuilder extracts word timing,\n   CinemaVisemeRig generates phonetically accurate lip-sync frames\n4. The lip_mask output can be used for compositing with ControlNet or LivePortrait"]
+    }
+  ],
+  "links": [
+    [1, 3, 8, 5, 0, "DICT"],
+    [2, 3, 4, 6, 0, "STRING"],
+    [3, 5, 1, 6, 6, "DICT"],
+    [4, 6, 0, 7, 0, "IMAGE"],
+    [5, 6, 2, 9, 0, "MASK"],
+    [6, 6, 0, 8, 0, "IMAGE"]
+  ],
+  "version": 0.4
+}

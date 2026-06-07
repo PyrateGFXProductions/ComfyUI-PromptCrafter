@@ -28,19 +28,15 @@ class PGFX_Studio_ControlNet:
     CATEGORY = "☠️PGFX /Studio"
 
     def apply_visemes(self, viseme_depth, viseme_canny, strength, start_percent, end_percent, base_controlnet=None):
-        # In a real ComfyUI environment, this would interface with the ControlNet logic.
-        # Since we are building a "Universal Studio", we return a custom conditioning 
-        # structure that the PGFX_Studio_Sampler understands.
-        
         print(f"[PGFX Studio ControlNet] Preparing viseme conditioning (Strength: {strength})")
 
-        conditioning = {
-            "depth": viseme_depth,
-            "canny": viseme_canny,
+        controlnet_cond = {
+            "hint": viseme_canny,
             "strength": strength,
             "start_percent": start_percent,
             "end_percent": end_percent,
         }
+        conditioning = [[base_controlnet, controlnet_cond]] if base_controlnet else [[None, controlnet_cond]]
 
         # For preview, we blend depths and canny
         preview = (viseme_depth * 0.5 + viseme_canny * 0.5) * strength

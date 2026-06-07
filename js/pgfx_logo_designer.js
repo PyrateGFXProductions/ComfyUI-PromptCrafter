@@ -33,6 +33,64 @@ const loadFabric = (statusEl) => {
     });
 };
 
+// Load Three.js, OrbitControls, SVGLoader, and TransformControls with status reporting
+const loadThreeJS = (statusEl) => {
+    return new Promise(async (resolve, reject) => {
+        if (window.THREE && window.THREE.OrbitControls && window.THREE.SVGLoader && window.THREE.TransformControls && window.THREE.GLTFLoader && window.THREE.OBJLoader && window.THREE.STLLoader) {
+            resolve(window.THREE);
+            return;
+        }
+
+        const loadScript = (src) => {
+            return new Promise((res, rej) => {
+                const script = document.createElement("script");
+                script.src = src;
+                script.onload = () => res();
+                script.onerror = () => rej(new Error("Failed to load script: " + src));
+                document.head.appendChild(script);
+            });
+        };
+
+        try {
+            if (statusEl) statusEl.textContent = "📦 Downloading 3D Graphics Engine (Three.js)...";
+            if (!window.THREE) {
+                await loadScript("https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js");
+            }
+            if (statusEl) statusEl.textContent = "📦 Downloading 3D Camera Controls (OrbitControls)...";
+            if (!window.THREE.OrbitControls) {
+                await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js");
+            }
+            if (statusEl) statusEl.textContent = "📦 Downloading Vector Extruder (SVGLoader)...";
+            if (!window.THREE.SVGLoader) {
+                await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/SVGLoader.js");
+            }
+            if (statusEl) statusEl.textContent = "📦 Downloading Transform Controls...";
+            if (!window.THREE.TransformControls) {
+                await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js");
+            }
+            if (statusEl) statusEl.textContent = "📦 Downloading 3D Model Loaders (GLTF/OBJ/STL)...";
+            if (!window.THREE.GLTFLoader) {
+                await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js");
+            }
+            if (!window.THREE.OBJLoader) {
+                await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js");
+            }
+            if (!window.THREE.STLLoader) {
+                await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js");
+            }
+            if (statusEl) statusEl.textContent = "📦 Downloading 3D Exporter...";
+            if (!window.THREE.GLTFExporter) {
+                await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js");
+            }
+            if (statusEl) statusEl.textContent = "✅ 3D Engine Ready!";
+            resolve(window.THREE);
+        } catch (err) {
+            if (statusEl) statusEl.textContent = "❌ Failed to load 3D graphics engine: " + err.message;
+            reject(err);
+        }
+    });
+};
+
 // Insert custom CSS for the Studio Overlay
 const injectStyles = () => {
     if (document.getElementById("pgfx-logo-studio-styles")) return;
@@ -390,6 +448,14 @@ class LogoStudioUI {
         this.currentlyEditingPoly = null;
         this.lastCanvasText = "";
 
+        // 3D Selection & Transform
+        this.selectedMesh3d = null;
+        this.transformControls3d = null;
+        this.raycaster3d = null;
+        this.mouse3d = null;
+        this.transformMode = 'translate'; // translate | rotate | scale
+        this._saved3DTransforms = {}; // keyed by name+type — persists 3D transforms across sync
+
         this.initDOM();
     }
 
@@ -413,13 +479,15 @@ class LogoStudioUI {
     }
 
     undo() {
-        if (this.historyIdx <= 0) return;
+        if (this.isProcessingHistory || this.historyIdx <= 0) return;
+        console.log("[PGFX Studio] Undo", this.historyIdx - 1);
         this.historyIdx--;
         this._loadFromHistory();
     }
 
     redo() {
-        if (this.historyIdx >= this.history.length - 1) return;
+        if (this.isProcessingHistory || this.historyIdx >= this.history.length - 1) return;
+        console.log("[PGFX Studio] Redo", this.historyIdx + 1);
         this.historyIdx++;
         this._loadFromHistory();
     }
@@ -432,8 +500,27 @@ class LogoStudioUI {
         this.canvas.loadFromJSON(JSON.parse(state), () => {
             this.canvas.renderAll();
             this.isProcessingHistory = false;
+            this._updateSelectionUI();
             this.scheduleNodeStateSync();
+            
+            // Sync to 3D if active so Undo/Redo works in 3D Viewport
+            if (this.mode3D) {
+                this.sync2DTo3D();
+            }
         });
+    }
+
+    commitCanvasChange() {
+        if (!this.canvas) return;
+        this.canvas.renderAll();
+        this.refreshLayersPanel();
+        this._saveToHistory();
+        this.scheduleNodeStateSync();
+        
+        // Ensure 3D viewport stays in sync with 2D changes
+        if (this.mode3D) {
+            this.sync2DTo3D();
+        }
     }
 
     async open() {
@@ -470,12 +557,17 @@ class LogoStudioUI {
                                 await this.loadFontIntoBrowser(font.name, font.url);
                             }
                         }
+                        this.isProcessingHistory = true;
                         this.canvas.loadFromJSON(jsonData, () => {
+                            this.isProcessingHistory = false;
                             const restoredBg = jsonData.pgfx_editor_background || jsonData.backgroundColor || jsonData.background || '#000000';
                             this.pageBackgroundColor = restoredBg === 'transparent' ? '#000000' : restoredBg;       
                             this.canvas.backgroundColor = 'transparent';
                             this.targetWidth = jsonData.pgfx_canvas_width || 1024;       
                             this.targetHeight = jsonData.pgfx_canvas_height || 1024;    
+
+                            // Restore 3D settings from saved JSON
+                            this._apply3DSettings(jsonData.pgfx_3d_settings);
 
                             // Sync UI boxes if they exist
                             const widthInput = document.getElementById('pgfx-canvas-width');
@@ -506,6 +598,8 @@ class LogoStudioUI {
                             this.refreshLayersPanel();
                             this.fitCanvasToView();
                             this.lastCanvasText = this._extractCanvasText();
+                            this.history = [];
+                            this.historyIdx = -1;
                             this._saveToHistory();
                             this.scheduleNodeStateSync();
                             if (loadingOverlay) loadingOverlay.style.display = 'none';
@@ -516,6 +610,8 @@ class LogoStudioUI {
                         this._syncBackgroundPicker();
                         this.refreshLayersPanel();
                         this.fitCanvasToView();
+                        this.history = [];
+                        this.historyIdx = -1;
                         this._saveToHistory();
                         this.scheduleNodeStateSync();
                         if (loadingOverlay) loadingOverlay.style.display = 'none';
@@ -530,6 +626,8 @@ class LogoStudioUI {
                     // Multi-pass fit to handle dynamic layout shifts
                     setTimeout(() => this.fitCanvasToView(), 100);
                     setTimeout(() => this.fitCanvasToView(), 300);
+                    this.history = [];
+                    this.historyIdx = -1;
                     this._saveToHistory();
                     this.scheduleNodeStateSync();
                     if (loadingOverlay) loadingOverlay.style.display = 'none';
@@ -604,6 +702,40 @@ class LogoStudioUI {
         const prevVpt = Array.isArray(this.canvas.viewportTransform)
             ? [...this.canvas.viewportTransform]
             : [1, 0, 0, 1, 0, 0];
+
+        // If in 3D mode, capture WebGL renderer directly
+        if (this.mode3D && this.renderer3d && this.scene3d && this.camera3d) {
+            // Hide transform gizmo so it doesn't appear in the capture
+            if (this.transformControls3d) this.transformControls3d.visible = false;
+            this.isExporting = true;
+            this.renderer3d.render(this.scene3d, this.camera3d);
+            const dataUrl = this.renderer3d.domElement.toDataURL("image/png");
+            this.isExporting = false;
+            if (this.transformControls3d) this.transformControls3d.visible = true;
+
+            const advSettings = {};
+            const primary = this.canvas.getObjects().find(o => o.name === 'pgfx_primary_text');
+            if (primary) {
+                advSettings.font_family = primary.fontFamily;
+                advSettings.text_align = primary.textAlign;
+            }
+
+            const jsonState = this.canvas.toJSON(['name']);
+            jsonState.background = 'transparent';
+            jsonState.backgroundColor = 'transparent';
+            jsonState.pgfx_editor_background = editorBackground;
+            jsonState.pgfx_canvas_width = this.targetWidth;
+            jsonState.pgfx_canvas_height = this.targetHeight;
+            jsonState.customFonts = this.customFonts;
+            jsonState.pgfx_adv_settings = advSettings;
+            jsonState.pgfx_3d_settings = this._collect3DSettings();
+
+            return {
+                dataUrl,
+                jsonText: JSON.stringify(jsonState),
+                canvasText: this._extractCanvasText(),
+            };
+        }
 
         // Silently hide active object controls without triggering selection events or destroying ActiveSelection groups
         const prevActive = this.canvas._activeObject;
@@ -687,13 +819,6 @@ class LogoStudioUI {
         this.node._pgfxPreviewImg = null;
         this.node._pgfxLastSrc = null;
 
-        if (bumpSeed) {
-            const seedWidget = this.node.widgets.find(w => w.name === "seed");
-            if (seedWidget) {
-                seedWidget.value = Math.floor(Math.random() * 0xffffffffffffffff);
-            }
-        }
-
         if (app.graph) {
             const newSize = this.node.computeSize();
             this.node.setSize([Math.max(this.node.size[0], newSize[0]), newSize[1]]);
@@ -733,6 +858,12 @@ class LogoStudioUI {
         if (controlsDiv) {
             controlsDiv.style.display = 'none';
         }
+
+        // Stop 3D render loop and clean up WebGL without switching the UI mode
+        if (this.mode3D) {
+            this.cleanUp3D();
+        }
+
         this.overlay.classList.remove('active');
     }
 
@@ -1194,6 +1325,61 @@ class LogoStudioUI {
     }
 
     updateUIForSelection() {
+        // 3D mode: show mesh properties in the 2D controls
+        if (this.mode3D && this.selectedMesh3d) {
+            const mesh = this.selectedMesh3d;
+            const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+
+            // Check if this is an imported model group (not an extruded Fabric object)
+            const isImportedModel = mesh.parent === this.modelsGroup || !!mesh.userData._importedModelId;
+
+            // For extruded objects (not imported models), sync per-object 3D settings
+            if (!isImportedModel) {
+                const activeObj = this.canvas.getActiveObject();
+                if (activeObj) {
+                    const s3d = this._getObj3DSettings(activeObj);
+                    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+                    setVal('pgfx-3d-depth', s3d.depth);
+                    const dv = document.getElementById('pgfx-3d-depth-val');
+                    if (dv) dv.textContent = s3d.depth;
+                    document.getElementById('pgfx-3d-bevel-enabled').checked = s3d.bevelEnabled;
+                    document.getElementById('pgfx-3d-bevel-settings').style.display = s3d.bevelEnabled ? 'flex' : 'none';
+                    setVal('pgfx-3d-bevel-size', s3d.bevelSize);
+                    const bsv = document.getElementById('pgfx-3d-bevel-size-val');
+                    if (bsv) bsv.textContent = s3d.bevelSize;
+                    setVal('pgfx-3d-bevel-segments', s3d.bevelSegments);
+                    const bsgv = document.getElementById('pgfx-3d-bevel-segments-val');
+                    if (bsgv) bsgv.textContent = s3d.bevelSegments;
+                }
+            }
+
+            // Update color picker
+            const colorEl = document.getElementById('pgfx-color-picker');
+            if (mat && mat.color && colorEl) {
+                colorEl.value = '#' + mat.color.getHexString();
+            }
+
+            // Update opacity
+            const opacityVal = mat ? (mat.opacity ?? 1) : 1;
+            document.getElementById('pgfx-opacity').value = opacityVal;
+            const valEl = document.getElementById('pgfx-opacity-val');
+            if (valEl) valEl.textContent = Math.round(opacityVal * 100) + '%';
+
+            // Rotation
+            const rotDeg = THREE.MathUtils.radToDeg(mesh.rotation.z);
+            document.getElementById('pgfx-rotation').value = Math.round(rotDeg);
+            const rotValEl = document.getElementById('pgfx-rotation-val');
+            if (rotValEl) rotValEl.textContent = Math.round(rotDeg) + '\u00b0';
+
+            // Stroke and shadow only apply to single extruded meshes, not imported model groups
+            if (!isImportedModel) {
+                this._update3DStroke(mesh);
+                this._update3DShadow(mesh);
+            }
+
+            return;
+        }
+
         const active = this.canvas.getActiveObject();
         if (!active) return;
 
@@ -1329,6 +1515,10 @@ class LogoStudioUI {
     }
 
     updateShadow() {
+        if (this.mode3D && this.selectedMesh3d) {
+            this._update3DShadow(this.selectedMesh3d);
+            return;
+        }
         const active = this.canvas.getActiveObject();
         if (!active) return;
 
@@ -1356,107 +1546,168 @@ class LogoStudioUI {
     refreshLayersPanel() {
         const list = document.getElementById('pgfx-layers-list');
         const count = document.getElementById('pgfx-layer-count');
-        if (!list || !this.canvas) return;
+        if (!list) return;
 
         list.innerHTML = '';
-        const objects = this.canvas.getObjects().filter(o => o.name !== 'node_control'); // Don't show technical helpers
-        
+
+        let objects;
+        let is3D = this.mode3D && this.extrudedGroup;
+
+        if (is3D) {
+            objects = this.extrudedGroup.children;
+            // Also include imported models
+            if (this.modelsGroup && this.modelsGroup.children.length > 0) {
+                objects = [...objects, ...this.modelsGroup.children];
+            }
+        } else if (this.canvas) {
+            objects = this.canvas.getObjects().filter(o => o.name !== 'node_control');
+        } else {
+            if (count) count.textContent = '0';
+            return;
+        }
+
         if (count) count.textContent = objects.length;
 
-        // Render from top to bottom (reverse order of Fabric's stack)
-        [...objects].reverse().forEach((obj, idx) => {
+        // Render from top to bottom (reverse order of stack)
+        [...objects].reverse().forEach((obj) => {
             const item = document.createElement('div');
             item.className = 'pgfx-layer-item';
-            if (this.canvas.getActiveObject() === obj || (obj.type === 'activeSelection' && obj.getObjects().includes(obj))) {
-                item.classList.add('active');
+
+            // Determine if selected
+            let isActive = false;
+            if (is3D) {
+                isActive = this.selectedMesh3d === obj;
+            } else if (this.canvas) {
+                isActive = this.canvas.getActiveObject() === obj || 
+                    (obj.type === 'activeSelection' && obj.getObjects().includes(obj));
             }
 
-            const visibleIcon = document.createElement('span');
-            visibleIcon.className = 'pgfx-layer-icon';
-            visibleIcon.innerHTML = obj.visible ? '👁️' : '🕶️';
-            visibleIcon.title = obj.visible ? 'Hide Layer' : 'Show Layer';
-            visibleIcon.onclick = (e) => {
-                e.stopPropagation();
-                obj.set('visible', !obj.visible);
-                this.canvas.requestRenderAll();
-                this.refreshLayersPanel();
-                this._saveToHistory();
-                this.scheduleNodeStateSync();
-            };
+            if (isActive) item.classList.add('active');
 
-            const lockIcon = document.createElement('span');
-            lockIcon.className = 'pgfx-layer-icon';
-            lockIcon.innerHTML = obj.selectable ? '🔓' : '🔒';
-            lockIcon.title = obj.selectable ? 'Lock Layer' : 'Unlock Layer';
-            lockIcon.onclick = (e) => {
-                e.stopPropagation();
-                const isLocked = !obj.selectable;
-                obj.set({
-                    selectable: isLocked,
-                    evented: isLocked,
-                    hasControls: isLocked,
-                    hasBorders: isLocked
-                });
-                this.canvas.requestRenderAll();
-                this.refreshLayersPanel();
-                this._saveToHistory();
-                this.scheduleNodeStateSync();
-            };
+            if (is3D) {
+                // 3D layer item - simpler, no visibility/lock for now
+                const icon = document.createElement('span');
+                icon.className = 'pgfx-layer-icon';
+                const isImported = obj.userData && obj.userData._importedModelId;
+                const typeLabel = isImported ? '3D Model' : (obj.geometry && obj.geometry.type ? obj.geometry.type : 'Mesh');
+                icon.innerHTML = isImported ? '🎲' : '🧊';
+                icon.title = isImported ? 'Imported 3D Model' : '3D Object';
 
-            const name = document.createElement('span');
-            name.className = 'pgfx-layer-name';
-            const typeLabel = obj.type.charAt(0).toUpperCase() + obj.type.slice(1);
-            name.textContent = obj.name || `${typeLabel} Layer`;
-            
-            // Double click to rename
-            name.ondblclick = (e) => {
-                e.stopPropagation();
-                const newName = prompt("Rename Layer:", name.textContent);
-                if (newName !== null) {
-                    obj.set('name', newName);
+                const name = document.createElement('span');
+                name.className = 'pgfx-layer-name';
+                name.textContent = obj.userData?.name || `${typeLabel} ${objects.indexOf(obj) + 1}`;
+
+                item.appendChild(icon);
+                item.appendChild(name);
+                item.onclick = () => {
+                    if (this.selectedMesh3d === obj) {
+                        this.deselectMesh3d();
+                    } else {
+                        this.selectMesh3d(obj);
+                    }
+                    this.refreshLayersPanel();
+                };
+            } else {
+                // 2D Fabric layer item
+                const visibleIcon = document.createElement('span');
+                visibleIcon.className = 'pgfx-layer-icon';
+                visibleIcon.innerHTML = obj.visible ? '👁️' : '🕶️';
+                visibleIcon.title = obj.visible ? 'Hide Layer' : 'Show Layer';
+                visibleIcon.onclick = (e) => {
+                    e.stopPropagation();
+                    obj.set('visible', !obj.visible);
+                    this.canvas.requestRenderAll();
                     this.refreshLayersPanel();
                     this._saveToHistory();
                     this.scheduleNodeStateSync();
-                }
-            };
+                };
 
-            const upBtn = document.createElement('span');
-            upBtn.className = 'pgfx-layer-icon';
-            upBtn.innerHTML = '▲';
-            upBtn.title = 'Move Up';
-            upBtn.onclick = (e) => {
-                e.stopPropagation();
-                obj.bringForward();
-                this.refreshLayersPanel();
-                this._saveToHistory();
-                this.scheduleNodeStateSync();
-            };
+                const lockIcon = document.createElement('span');
+                lockIcon.className = 'pgfx-layer-icon';
+                lockIcon.innerHTML = obj.selectable ? '🔓' : '🔒';
+                lockIcon.title = obj.selectable ? 'Lock Layer' : 'Unlock Layer';
+                lockIcon.onclick = (e) => {
+                    e.stopPropagation();
+                    const isLocked = !obj.selectable;
+                    obj.set({
+                        selectable: isLocked,
+                        evented: isLocked,
+                        hasControls: isLocked,
+                        hasBorders: isLocked
+                    });
+                    this.canvas.requestRenderAll();
+                    this.refreshLayersPanel();
+                    this._saveToHistory();
+                    this.scheduleNodeStateSync();
+                };
 
-            const downBtn = document.createElement('span');
-            downBtn.className = 'pgfx-layer-icon';
-            downBtn.innerHTML = '▼';
-            downBtn.title = 'Move Down';
-            downBtn.onclick = (e) => {
-                e.stopPropagation();
-                obj.sendBackwards();
-                this.refreshLayersPanel();
-                this._saveToHistory();
-                this.scheduleNodeStateSync();
-            };
+                const name = document.createElement('span');
+                name.className = 'pgfx-layer-name';
+                const typeLabel = obj.type.charAt(0).toUpperCase() + obj.type.slice(1);
+                name.textContent = obj.name || `${typeLabel} Layer`;
+                
+                name.ondblclick = (e) => {
+                    e.stopPropagation();
+                    const newName = prompt("Rename Layer:", name.textContent);
+                    if (newName !== null) {
+                        obj.set('name', newName);
+                        this.refreshLayersPanel();
+                        this._saveToHistory();
+                        this.scheduleNodeStateSync();
+                    }
+                };
 
-            item.onclick = () => {
-                this.canvas.setActiveObject(obj);
-                this.canvas.requestRenderAll();
-                // refreshLayersPanel will be called by selection:created/updated
-            };
+                const upBtn = document.createElement('span');
+                upBtn.className = 'pgfx-layer-icon';
+                upBtn.innerHTML = '▲';
+                upBtn.title = 'Move Up';
+                upBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    obj.bringForward();
+                    this.refreshLayersPanel();
+                    this._saveToHistory();
+                    this.scheduleNodeStateSync();
+                };
 
-            item.appendChild(visibleIcon);
-            item.appendChild(lockIcon);
-            item.appendChild(name);
-            item.appendChild(upBtn);
-            item.appendChild(downBtn);
+                const downBtn = document.createElement('span');
+                downBtn.className = 'pgfx-layer-icon';
+                downBtn.innerHTML = '▼';
+                downBtn.title = 'Move Down';
+                downBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    obj.sendBackwards();
+                    this.refreshLayersPanel();
+                    this._saveToHistory();
+                    this.scheduleNodeStateSync();
+                };
+
+                item.appendChild(visibleIcon);
+                item.appendChild(lockIcon);
+                item.appendChild(name);
+                item.appendChild(upBtn);
+                item.appendChild(downBtn);
+                item.onclick = () => {
+                    if (obj.type === 'activeSelection') return;
+                    this.canvas.setActiveObject(obj);
+                    this.canvas.requestRenderAll();
+                    this.refreshLayersPanel();
+                    this._updateSelectionUI();
+                };
+            }
             list.appendChild(item);
         });
+    }
+
+    // ── Agent Log ──────────────────────────────────────────────
+    _addAgentLog(msg) {
+        this._agentLog = this._agentLog || [];
+        this._agentLog.unshift(msg);
+        if (this._agentLog.length > 5) this._agentLog.length = 5;
+        const el = document.getElementById('pgfx-agent-log');
+        if (!el) return;
+        el.innerHTML = this._agentLog.map(m =>
+            `<div style="border-bottom: 1px solid rgba(255,255,255,0.04); padding: 2px 0;">${m}</div>`
+        ).join('');
     }
 
     async sendToAgent() {
@@ -1468,7 +1719,7 @@ class LogoStudioUI {
 
         const btn = document.getElementById('pgfx-send-agent-btn');
         const originalText = btn.innerHTML;
-        btn.innerHTML = "🤖 Packaging...";
+        btn.innerHTML = "🤖 Injecting...";
         btn.disabled = true;
 
         try {
@@ -1487,42 +1738,39 @@ class LogoStudioUI {
             const fill = getFillInfo(active.fill);
             const stroke = active.stroke ? `${active.strokeWidth}px ${active.stroke}` : "none";
             const opacity = Math.round((active.opacity || 1) * 100) + "%";
-            
-            let description = `Selected Element: ${name}\n- Type: ${type}\n- Fill: ${fill}\n- Stroke: ${stroke}\n- Opacity: ${opacity}`;
-            
+
+            let injection = `[Agent Focus: "${name}"] `;
+            injection += `Type: ${type}, Fill: ${fill}, Opacity: ${opacity}`;
+            if (active.stroke && active.strokeWidth > 0) injection += `, Stroke: ${stroke}`;
             if (active.type.includes('text')) {
-                description += `\n- Text Content: "${active.text}"\n- Font: ${active.fontFamily}`;
+                injection += `, Text: "${active.text}", Font: ${active.fontFamily}`;
             }
 
-            // Append to extra_instruction widget
-            const currentExtra = this.jsonWidget.value || "{}";
-            let extraData = {};
-            try {
-                extraData = JSON.parse(currentExtra);
-            } catch(e) {}
-
-            extraData.agent_focus = {
-                target_layer: name,
-                properties: description,
-                timestamp: Date.now()
-            };
-
-            // Also update the visible extra_instruction if the user has a prompt they want to add
-            const userRefinement = prompt(`describe what the AI should do with the "${name}"?`, "Make this element more detailed...");
+            const userRefinement = prompt(`What should the AI do with "${name}"?`, "enhance detail and visual quality");
             if (userRefinement) {
-                extraData.freeform_extra = (extraData.freeform_extra || "") + `\nRegarding "${name}": ${userRefinement}`;
+                injection += `. ${userRefinement}`;
             }
 
-            this.jsonWidget.value = JSON.stringify(extraData);
-            
-            btn.innerHTML = "✅ Sent to Agent";
+            // Find the extra_instruction widget on the node
+            const extraWidget = this.node.widgets?.find(w => w.name === 'extra_instruction');
+            if (extraWidget) {
+                const existing = (extraWidget.value || '').trim();
+                extraWidget.value = existing
+                    ? existing + '\n' + injection
+                    : injection;
+                // Force the widget callback so ComfyUI sees the change
+                if (extraWidget.callback) extraWidget.callback(extraWidget.value);
+            }
+
+            this._addAgentLog(`📝 "${name}" → extra_instruction`);
+
+            btn.innerHTML = "✅ Injected";
             setTimeout(() => {
                 btn.innerHTML = originalText;
                 btn.disabled = false;
             }, 2000);
 
-            // Force a sync so the node sees the change
-            this.applyCanvasStateToNode();
+            this.scheduleNodeStateSync();
 
         } catch (err) {
             console.error("[PGFX Studio] Error sending to agent:", err);
@@ -1531,12 +1779,288 @@ class LogoStudioUI {
         }
     }
 
+    // ── Save / Load Project ────────────────────────────────────
+    collectProjectState() {
+        const state = {
+            pgfx_version: '1.1',
+            pgfx_type: 'project',
+            saved_at: new Date().toISOString(),
+            canvas_json: this.canvas ? this.canvas.toJSON(['name']) : null,
+            canvas_text: this.lastCanvasText || '',
+            editor: {
+                target_width: this.targetWidth,
+                target_height: this.targetHeight,
+                page_background_color: this.pageBackgroundColor || '#000000',
+                custom_fonts: this.customFonts || [],
+                show_grid: document.getElementById('pgfx-show-grid')?.checked ?? true,
+                grid_size: parseFloat(document.getElementById('pgfx-grid-size')?.value) || 50,
+            },
+            settings_3d: this._collect3DSettings(),
+            imported_models: this.importedModels ? this.importedModels.map(m => ({
+                id: m.id,
+                name: m.name,
+                format: m.format,
+                data: m.data,
+            })) : [],
+            brush: {
+                type: document.getElementById('pgfx-brush-type')?.value || 'Pencil',
+                size: parseFloat(document.getElementById('pgfx-brush-size')?.value) || 10,
+                color: document.getElementById('pgfx-brush-color')?.value || '#ffffff',
+                opacity: parseFloat(document.getElementById('pgfx-brush-opacity')?.value) || 1,
+            },
+        };
+
+        // Collect public node widget values
+        const widgetNames = [
+            'output_intent', 'background_mode', 'background_preset',
+            'background_custom_prompt', 'scene_interaction', 'material',
+            'decoration', 'action', 'environment_1', 'environment_2',
+            'environment_3', 'environment_1_intensity', 'environment_2_intensity',
+            'environment_3_intensity', 'style_mode', 'intensity', 'extra_instruction',
+            'text_input'
+        ];
+        if (this.node?.widgets) {
+            state.node_widgets = {};
+            for (const w of this.node.widgets) {
+                if (widgetNames.includes(w.name)) {
+                    state.node_widgets[w.name] = w.value;
+                }
+            }
+        }
+
+        return state;
+    }
+
+    async saveProject() {
+        try {
+            const state = this.collectProjectState();
+            const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+            const suggestedName = `pgfx_project_${Date.now()}.pgfx`;
+
+            // Try File System Access API (shows native save dialog)
+            if ('showSaveFilePicker' in window) {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: suggestedName,
+                        types: [{
+                            description: 'PGFX Project',
+                            accept: { 'application/json': ['.pgfx'] }
+                        }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    this._addAgentLog('💾 Project saved to ' + handle.name);
+                    return;
+                } catch (err) {
+                    // User cancelled or API failed — fall through
+                    if (err.name === 'AbortError' || err.name === 'SecurityError') return;
+                }
+            }
+
+            // Fallback: anchor download
+            this._saveBlob(blob, suggestedName);
+            this._addAgentLog('💾 Project saved');
+        } catch (err) {
+            console.error('[PGFX] Save error:', err);
+            alert('Failed to save project: ' + err.message);
+        }
+    }
+
+    _saveBlob(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    export3D() {
+        if (!window.THREE || !window.THREE.GLTFExporter || !this.scene3d) {
+            alert("3D Engine or Exporter not ready. Please open the 3D Viewport first.");
+            return;
+        }
+
+        const exporter = new THREE.GLTFExporter();
+        
+        // We only want to export the design elements, not the helper grid/axes/plane
+        const exportGroup = new THREE.Group();
+        
+        // Clone design groups into the export group
+        if (this.extrudedGroup) exportGroup.add(this.extrudedGroup.clone());
+        if (this.modelsGroup) exportGroup.add(this.modelsGroup.clone());
+        
+        const options = {
+            binary: true, // Export as compact .glb
+            trs: false,
+            onlyVisible: true,
+            truncateDrawRange: true,
+            embedImages: true,
+            forceIndices: true
+        };
+
+        exporter.parse(exportGroup, (result) => {
+            if (result instanceof ArrayBuffer) {
+                this._saveBlob(new Blob([result], { type: 'application/octet-stream' }), `PGFX_3D_Export_${+new Date()}.glb`);
+                this._addAgentLog('🧊 3D Scene exported (.glb)');
+            } else {
+                // Fallback to text JSON if binary failed
+                const output = JSON.stringify(result, null, 2);
+                this._saveBlob(new Blob([output], { type: 'text/plain' }), `PGFX_3D_Export_${+new Date()}.gltf`);
+                this._addAgentLog('🧊 3D Scene exported (.gltf)');
+            }
+        }, options);
+    }
+
+    async loadProject() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.pgfx,.json';
+        input.onchange = async () => {
+            const file = input.files[0];
+            if (!file) return;
+            try {
+                const text = await file.text();
+                const state = JSON.parse(text);
+                if (!state.pgfx_version) {
+                    alert('Invalid project file (missing pgfx_version).');
+                    return;
+                }
+                this._restoreProjectState(state);
+            } catch (err) {
+                console.error('[PGFX] Load error:', err);
+                alert('Failed to load project: ' + err.message);
+            }
+        };
+        input.click();
+    }
+
+    _restoreProjectState(state) {
+        // 1. Restore editor settings
+        if (state.editor) {
+            if (state.editor.target_width) this.targetWidth = state.editor.target_width;
+            if (state.editor.target_height) this.targetHeight = state.editor.target_height;
+            if (state.editor.page_background_color) {
+                this.pageBackgroundColor = state.editor.page_background_color;
+                const el = document.getElementById('pgfx-page-bg-color');
+                if (el) el.value = state.editor.page_background_color;
+            }
+            if (state.editor.custom_fonts) {
+                this.customFonts = state.editor.custom_fonts;
+            }
+            if (state.editor.show_grid !== undefined) {
+                const el = document.getElementById('pgfx-show-grid');
+                if (el) el.checked = state.editor.show_grid;
+            }
+            if (state.editor.grid_size !== undefined) {
+                const el = document.getElementById('pgfx-grid-size');
+                if (el) el.value = state.editor.grid_size;
+                const valEl = document.getElementById('pgfx-grid-size-val');
+                if (valEl) valEl.textContent = String(state.editor.grid_size);
+            }
+        }
+
+        // 2. Restore canvas objects
+        if (state.canvas_json && this.canvas) {
+            this.isProcessingHistory = true;
+            this.canvas.loadFromJSON(state.canvas_json, () => {
+                this.isProcessingHistory = false;
+                this.canvas.requestRenderAll();
+                this.refreshLayersPanel();
+            });
+        }
+
+        // 3. Restore canvas text
+        if (state.canvas_text != null) {
+            this.lastCanvasText = state.canvas_text;
+            if (this.textWidget) this.textWidget.value = state.canvas_text;
+        }
+
+        // 4. Restore node widgets
+        if (state.node_widgets && this.node?.widgets) {
+            for (const w of this.node.widgets) {
+                if (state.node_widgets[w.name] !== undefined) {
+                    w.value = state.node_widgets[w.name];
+                    if (w.callback) w.callback(w.value);
+                }
+            }
+        }
+
+        // 5. Restore 3D settings
+        if (state.settings_3d) {
+            const s = state.settings_3d;
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.value = val;
+            };
+            setVal('pgfx-3d-depth', s.depth ?? 20);
+            setVal('pgfx-3d-bevel-enabled', s.bevel_enabled ?? false);
+            setVal('pgfx-3d-bevel-size', s.bevel_size ?? 1.5);
+            setVal('pgfx-3d-bevel-segments', s.bevel_segments ?? 3);
+            setVal('pgfx-3d-material', s.material || 'matte_plastic');
+            const setChecked = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.checked = !!val;
+            };
+            setChecked('pgfx-3d-show-grid', s.show_grid_3d ?? true);
+            const bevSettings = document.getElementById('pgfx-3d-bevel-settings');
+            if (bevSettings) {
+                bevSettings.style.display = (s.bevel_enabled ?? false) ? 'flex' : 'none';
+            }
+        }
+
+        // 6. Restore brush settings
+        if (state.brush) {
+            const set = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.value = val;
+            };
+            set('pgfx-brush-type', state.brush.type || 'Pencil');
+            set('pgfx-brush-size', state.brush.size ?? 10);
+            set('pgfx-brush-color', state.brush.color || '#ffffff');
+            set('pgfx-brush-opacity', state.brush.opacity ?? 1);
+        }
+
+        // 7. Restore imported 3D models
+        this.importedModels = [];
+        if (state.imported_models && Array.isArray(state.imported_models)) {
+            for (const m of state.imported_models) {
+                if (m.data) {
+                    const entry = { id: m.id, name: m.name, format: m.format, data: m.data };
+                    this.importedModels.push(entry);
+                }
+            }
+        }
+
+        // If in 3D mode, rebuild extruded meshes and restore imported models
+        if (this.mode3D && this.extrudedGroup) {
+            const grid3DCheck = document.getElementById('pgfx-3d-show-grid');
+            if (grid3DCheck && this.gridHelper) this.gridHelper.visible = grid3DCheck.checked;
+            if (grid3DCheck && this.axesHelper) this.axesHelper.visible = grid3DCheck.checked;
+            this.sync2DTo3D().then(() => {
+                if (this.modelsGroup) {
+                    for (const entry of this.importedModels) {
+                        if (entry.data && !entry.group) {
+                            this._loadModelIntoScene(entry).catch(err => {
+                                console.error('[PGFX] Failed to restore model:', entry.name, err);
+                            });
+                        }
+                    }
+                }
+                this.fit3DView();
+            });
+        }
+
+        this._addAgentLog('📂 Project loaded');
+        this.scheduleNodeStateSync();
+    }
+
     setupEventHandlers() {
         const commitCanvasChange = () => {
-            this.canvas.renderAll();
-            this.refreshLayersPanel();
-            this._saveToHistory();
-            this.scheduleNodeStateSync();
+            this.commitCanvasChange();
         };
 
         // --- CONTEXT MENU ---
@@ -1613,6 +2137,10 @@ class LogoStudioUI {
 
         // Elite Bridge
         document.getElementById('pgfx-send-agent-btn').onclick = () => this.sendToAgent();
+
+        // Save / Load Project
+        document.getElementById('pgfx-save-project').onclick = () => this.saveProject();
+        document.getElementById('pgfx-load-project').onclick = () => this.loadProject();
 
         // --- ADD ELEMENTS ---
         document.getElementById('pgfx-add-text').onclick = () => {
@@ -1703,24 +2231,26 @@ class LogoStudioUI {
             opt.e.stopPropagation();
         });
 
+        const _snapGrid = () => parseFloat(document.getElementById('pgfx-grid-size')?.value) || 10;
+
         this.canvas.on('object:moving', (options) => {
             if (document.getElementById('pgfx-snap-grid').checked) {
-                const gridSize = 10;
+                const gs = _snapGrid();
                 options.target.set({
-                    left: Math.round(options.target.left / gridSize) * gridSize,
-                    top: Math.round(options.target.top / gridSize) * gridSize
+                    left: Math.round(options.target.left / gs) * gs,
+                    top: Math.round(options.target.top / gs) * gs
                 });
             }
         });
 
         this.canvas.on('object:scaling', (options) => {
             if (document.getElementById('pgfx-snap-grid').checked) {
-                const gridSize = 10;
+                const gs = _snapGrid();
                 const target = options.target;
                 const w = target.width * target.scaleX;
                 const h = target.height * target.scaleY;
-                const snapW = Math.round(w / gridSize) * gridSize;
-                const snapH = Math.round(h / gridSize) * gridSize;
+                const snapW = Math.round(w / gs) * gs;
+                const snapH = Math.round(h / gs) * gs;
                 target.set({
                     scaleX: snapW / target.width,
                     scaleY: snapH / target.height
@@ -1823,6 +2353,50 @@ class LogoStudioUI {
             fileInput.value = '';
         };
 
+        // --- 3D MODEL IMPORTER ---
+        this.importedModels = [];
+        const modelInput = document.getElementById('pgfx-import-3d-input');
+        const importBtn = document.getElementById('pgfx-import-3d-btn');
+        const clearBtn = document.getElementById('pgfx-clear-3d-models-btn');
+        if (importBtn && modelInput) {
+            importBtn.onclick = () => modelInput.click();
+            modelInput.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                try {
+                    const buffer = await file.arrayBuffer();
+                    const ext = file.name.split('.').pop().toLowerCase();
+                    const base64 = this._bufferToBase64(buffer);
+                    const modelEntry = {
+                        id: 'model_' + Date.now(),
+                        name: file.name,
+                        format: ext,
+                        data: base64,
+                    };
+                    this.importedModels.push(modelEntry);
+                    await this._loadModelIntoScene(modelEntry);
+                    this.fit3DView();
+                    this.scheduleNodeStateSync();
+                } catch (err) {
+                    console.error('[PGFX] 3D model import error:', err);
+                    alert('Failed to import 3D model: ' + err.message);
+                }
+                modelInput.value = '';
+            };
+        }
+        if (clearBtn) {
+            clearBtn.onclick = () => {
+                for (const m of this.importedModels) {
+                    if (m.group) {
+                        this.modelsGroup.remove(m.group);
+                        this._disposeModelGroup(m.group);
+                    }
+                }
+                this.importedModels = [];
+                this.scheduleNodeStateSync();
+            };
+        }
+
         // --- CUSTOM FONTS ---
         const fontInput = document.getElementById('pgfx-font-upload');
         document.getElementById('pgfx-upload-font-btn').onclick = () => fontInput.click();
@@ -1868,6 +2442,32 @@ class LogoStudioUI {
         };
 
         document.getElementById('pgfx-color-picker').oninput = (e) => {
+            // 3D mode: update selected mesh material color
+            if (this.mode3D && this.selectedMesh3d) {
+                const color = new THREE.Color(e.target.value);
+                const mat = this.selectedMesh3d.material;
+                if (mat) {
+                    if (Array.isArray(mat)) {
+                        mat.forEach(m => { m.color = color; m.needsUpdate = true; });
+                    } else {
+                        mat.color = color;
+                        mat.needsUpdate = true;
+                    }
+                } else {
+                    // Possibly an imported model group — update all child meshes
+                    this.selectedMesh3d.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            if (Array.isArray(child.material)) {
+                                child.material.forEach(m => { m.color = color; m.needsUpdate = true; });
+                            } else {
+                                child.material.color = color;
+                                child.material.needsUpdate = true;
+                            }
+                        }
+                    });
+                }
+                return;
+            }
             const active = this.canvas.getActiveObject();
             if (active) {
                 if (active.type === 'group') {
@@ -1889,6 +2489,10 @@ class LogoStudioUI {
         });
 
         document.getElementById('pgfx-stroke-picker').oninput = (e) => {
+            if (this.mode3D && this.selectedMesh3d) {
+                this._update3DStroke(this.selectedMesh3d);
+                return;
+            }
             const active = this.canvas.getActiveObject();
             if (active) {
                 if (active.type === 'group') {
@@ -1901,9 +2505,13 @@ class LogoStudioUI {
         };
 
         document.getElementById('pgfx-stroke-width').oninput = (e) => {
-            const active = this.canvas.getActiveObject();
             const valEl = document.getElementById('pgfx-stroke-width-val');
             if (valEl) valEl.textContent = e.target.value;
+            if (this.mode3D && this.selectedMesh3d) {
+                this._update3DStroke(this.selectedMesh3d);
+                return;
+            }
+            const active = this.canvas.getActiveObject();
             if (active) {
                 active.set('strokeWidth', parseInt(e.target.value));
                 commitCanvasChange();
@@ -1924,6 +2532,15 @@ class LogoStudioUI {
                 this.updateShadow();
             };
         });
+
+        document.getElementById('pgfx-show-grid').onchange = () => {
+            if (this.canvas) this.canvas.requestRenderAll();
+        };
+        document.getElementById('pgfx-grid-size').oninput = (e) => {
+            const valEl = document.getElementById('pgfx-grid-size-val');
+            if (valEl) valEl.textContent = e.target.value;
+            if (this.canvas) this.canvas.requestRenderAll();
+        };
 
         document.getElementById('pgfx-bg-picker').oninput = (e) => {
             this.pageBackgroundColor = e.target.value;
@@ -2018,11 +2635,39 @@ class LogoStudioUI {
         };
 
         document.getElementById('pgfx-opacity').oninput = (e) => {
-            const active = this.canvas.getActiveObject();
+            const val = parseFloat(e.target.value);
             const valEl = document.getElementById('pgfx-opacity-val');
-            if (valEl) valEl.textContent = Math.round(parseFloat(e.target.value) * 100) + '%';
+            if (valEl) valEl.textContent = Math.round(val * 100) + '%';
+            // 3D mode: update mesh material opacity
+            if (this.mode3D && this.selectedMesh3d) {
+                const mat = this.selectedMesh3d.material;
+                if (mat) {
+                    if (Array.isArray(mat)) {
+                        mat.forEach(m => { m.opacity = val; m.transparent = val < 1; m.needsUpdate = true; });
+                    } else {
+                        mat.opacity = val;
+                        mat.transparent = val < 1;
+                        mat.needsUpdate = true;
+                    }
+                } else {
+                    // Possibly an imported model group — update all child meshes
+                    this.selectedMesh3d.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            if (Array.isArray(child.material)) {
+                                child.material.forEach(m => { m.opacity = val; m.transparent = val < 1; m.needsUpdate = true; });
+                            } else {
+                                child.material.opacity = val;
+                                child.material.transparent = val < 1;
+                                child.material.needsUpdate = true;
+                            }
+                        }
+                    });
+                }
+                return;
+            }
+            const active = this.canvas.getActiveObject();
             if (active) {
-                active.set('opacity', parseFloat(e.target.value));
+                active.set('opacity', val);
                 commitCanvasChange();
             }
         };
@@ -2197,9 +2842,12 @@ class LogoStudioUI {
         });
         this.canvas.on('object:added', () => {
             this.refreshLayersPanel();
+            // Don't save to history during initial load or undo/redo restore
+            if (!this.isProcessingHistory) this._saveToHistory();
         });
         this.canvas.on('object:modified', () => {
             this.refreshLayersPanel();
+            this._updateSelectionUI();
             this._saveToHistory();
             this.scheduleNodeStateSync();
         });
@@ -2249,11 +2897,48 @@ class LogoStudioUI {
             if (this.isExporting) return;
             const ctx = this.canvas.getContext();
             const vpt = this.canvas.viewportTransform;
+            const zoom = this.canvas.getZoom();
+
+            // 2D Canvas Grid
+            const showGrid = document.getElementById('pgfx-show-grid')?.checked;
+            if (showGrid) {
+                const gridSize = parseFloat(document.getElementById('pgfx-grid-size')?.value) || 50;
+                ctx.save();
+                ctx.transform(vpt[0], vpt[1], vpt[2], vpt[3], vpt[4], vpt[5]);
+
+                const startX = -Math.ceil(this.targetWidth / gridSize) * gridSize;
+                const startY = -Math.ceil(this.targetHeight / gridSize) * gridSize;
+                const endX = this.targetWidth * 2;
+                const endY = this.targetHeight * 2;
+
+                ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+                ctx.lineWidth = 1 / zoom;
+
+                // Major grid every 5th line
+                for (let x = startX; x <= endX; x += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, startY);
+                    ctx.lineTo(x, endY);
+                    if (x % (gridSize * 5) === 0) ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                    else ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+                    ctx.stroke();
+                }
+                for (let y = startY; y <= endY; y += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(startX, y);
+                    ctx.lineTo(endX, y);
+                    if (y % (gridSize * 5) === 0) ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                    else ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+
             ctx.save();
-            ctx.transform(vpt[0], vpt[1], vpt[2], vpt[3], vpt[4], vpt[5]); // Zoom and pan outline with page coordinates
+            ctx.transform(vpt[0], vpt[1], vpt[2], vpt[3], vpt[4], vpt[5]);
 
             ctx.strokeStyle = 'rgba(6, 182, 212, 0.8)';
-            const zoom = this.canvas.getZoom();
             ctx.lineWidth = 2 / zoom;
             ctx.setLineDash([4 / zoom, 4 / zoom]);
             ctx.strokeRect(0, 0, this.targetWidth, this.targetHeight);
@@ -2296,8 +2981,37 @@ class LogoStudioUI {
                 }
             }
 
-            // DELETE / BACKSPACE: Remove object
+            // DELETE / BACKSPACE: Remove object (2D), selected 3D mesh, or imported model
             if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (this.mode3D && this.selectedMesh3d) {
+                    const mesh = this.selectedMesh3d;
+                    this.deselectMesh3d();
+                    // Check if it's an imported model
+                    if (mesh.parent === this.modelsGroup || mesh.userData._importedModelId) {
+                        const modelId = mesh.userData._importedModelId;
+                        const idx = this.importedModels.findIndex(m => m.id === modelId);
+                        if (idx !== -1) {
+                            const entry = this.importedModels[idx];
+                            this.modelsGroup.remove(entry.group);
+                            this._disposeModelGroup(entry.group);
+                            this.importedModels.splice(idx, 1);
+                        } else {
+                            this.modelsGroup.remove(mesh);
+                            this._disposeModelGroup(mesh);
+                        }
+                    } else {
+                        this.extrudedGroup.remove(mesh);
+                        if (mesh.geometry) mesh.geometry.dispose();
+                        if (mesh.material) {
+                            if (Array.isArray(mesh.material)) {
+                                mesh.material.forEach(m => m.dispose());
+                            } else {
+                                mesh.material.dispose();
+                            }
+                        }
+                    }
+                    return;
+                }
                 if (activeObject) {
                     if (activeObject === this.currentlyEditingPoly) {
                         this.endNodeEditMode();
@@ -2331,6 +3045,20 @@ class LogoStudioUI {
             }
             if (e.key.toLowerCase() === 'd') {
                 document.getElementById('pgfx-tool-draw').click();
+            }
+
+            // 3D TRANSFORM MODE SHORTCUTS (only in 3D mode)
+            if (this.mode3D) {
+                if (e.key.toLowerCase() === 'w') {
+                    e.preventDefault();
+                    this.setTransformMode('translate');
+                } else if (e.key.toLowerCase() === 'e') {
+                    e.preventDefault();
+                    this.setTransformMode('rotate');
+                } else if (e.key.toLowerCase() === 'r') {
+                    e.preventDefault();
+                    this.fit3DView();
+                }
             }
 
             // Group / Ungroup Shortcuts
@@ -2433,19 +3161,16 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-cancel-btn').onclick = () => this.close();
 
-        // --- EXPORT SVG ACTION ---
+        // --- EXPORT ACTIONS ---
         document.getElementById('pgfx-export-svg-btn').onclick = () => {
             if (!this.canvas) return;
             const svgData = this.canvas.toSVG();
             const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `PGFX_Design_${+new Date()}.svg`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
+            this._saveBlob(blob, `PGFX_Design_${+new Date()}.svg`);
+        };
+
+        document.getElementById('pgfx-export-3d-btn').onclick = () => {
+            this.export3D();
         };
 
         // --- DRAWING TOOLBAR LOGIC ---
@@ -2508,8 +3233,11 @@ class LogoStudioUI {
 
         document.getElementById('pgfx-clear-draw').onclick = () => {
             if (!this.canvas) return;
-            // Only clear paths drawn using the drawing brush (tagged with 'pgfx_free_draw')
-            const objects = this.canvas.getObjects().filter(o => o.name === 'pgfx_free_draw');
+            // Clear all paths drawn with the brush or tagged as free draw
+            const objects = this.canvas.getObjects().filter(o => 
+                o.name === 'pgfx_free_draw' || 
+                (o.type === 'path' && !o.name)
+            );
             if (objects.length > 0) {
                 this.canvas.remove(...objects);
                 commitCanvasChange();
@@ -2544,6 +3272,1162 @@ class LogoStudioUI {
                 }
             };
         }
+
+        // --- 3D TRANSFORM MODE BUTTONS ---
+        const btnTrans = document.getElementById('pgfx-3d-mode-translate');
+        const btnRot = document.getElementById('pgfx-3d-mode-rotate');
+        const btnScale = document.getElementById('pgfx-3d-mode-scale');
+        if (btnTrans) btnTrans.onclick = () => this.setTransformMode('translate');
+        if (btnRot) btnRot.onclick = () => this.setTransformMode('rotate');
+        if (btnScale) btnScale.onclick = () => this.setTransformMode('scale');
+
+        // --- OBJECT PROPERTIES INPUT HANDLERS ---
+        ['pgfx-prop-x','pgfx-prop-y','pgfx-prop-z','pgfx-prop-rotation','pgfx-prop-scale'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.onchange = () => {
+                    if (this.mode3D) {
+                        this._applyPropertyTo3D();
+                    } else {
+                        this._applyPropertyTo2D();
+                    }
+                };
+            }
+        });
+
+        // --- 3D VIEWPORT TAB & CONTROL EVENTS ---
+        const tab2D = document.getElementById('pgfx-tab-2d');
+        const tab3D = document.getElementById('pgfx-tab-3d');
+        if (tab2D && tab3D) {
+            tab2D.onclick = () => this.toggleViewportTab('2D');
+            tab3D.onclick = () => this.toggleViewportTab('3D');
+        }
+
+        const depthInput = document.getElementById('pgfx-3d-depth');
+        if (depthInput) {
+            depthInput.oninput = (e) => {
+                document.getElementById('pgfx-3d-depth-val').textContent = e.target.value;
+                if (this.mode3D) {
+                    this._applyObj3DSettings();
+                } else {
+                    this.sync2DTo3D();
+                }
+            };
+        }
+
+        const bevelEnabledInput = document.getElementById('pgfx-3d-bevel-enabled');
+        if (bevelEnabledInput) {
+            bevelEnabledInput.onchange = (e) => {
+                document.getElementById('pgfx-3d-bevel-settings').style.display = e.target.checked ? 'flex' : 'none';
+                if (this.mode3D) {
+                    this._applyObj3DSettings();
+                } else {
+                    this.sync2DTo3D();
+                }
+            };
+        }
+
+        const bevelSizeInput = document.getElementById('pgfx-3d-bevel-size');
+        if (bevelSizeInput) {
+            bevelSizeInput.oninput = (e) => {
+                document.getElementById('pgfx-3d-bevel-size-val').textContent = e.target.value;
+                if (this.mode3D) {
+                    this._applyObj3DSettings();
+                } else {
+                    this.sync2DTo3D();
+                }
+            };
+        }
+
+        const bevelSegsInput = document.getElementById('pgfx-3d-bevel-segments');
+        if (bevelSegsInput) {
+            bevelSegsInput.oninput = (e) => {
+                document.getElementById('pgfx-3d-bevel-segments-val').textContent = e.target.value;
+                if (this.mode3D) {
+                    this._applyObj3DSettings();
+                } else {
+                    this.sync2DTo3D();
+                }
+            };
+        }
+
+        const matSelect = document.getElementById('pgfx-3d-material');
+        if (matSelect) {
+            matSelect.onchange = () => this.sync2DTo3D();
+        }
+
+        const lightRotInput = document.getElementById('pgfx-3d-light-rot');
+        if (lightRotInput) {
+            lightRotInput.oninput = (e) => {
+                document.getElementById('pgfx-3d-light-rot-val').textContent = e.target.value + '°';
+            };
+        }
+
+        const resetCamBtn = document.getElementById('pgfx-3d-reset-cam');
+        if (resetCamBtn) {
+            resetCamBtn.onclick = () => this.fit3DView();
+        }
+
+        // 3D Grid toggle
+        const grid3DCheck = document.getElementById('pgfx-3d-show-grid');
+        if (grid3DCheck) {
+            grid3DCheck.onchange = (e) => {
+                if (this.gridHelper) this.gridHelper.visible = e.target.checked;
+                if (this.axesHelper) this.axesHelper.visible = e.target.checked;
+            };
+        }
+    }
+
+    async toggleViewportTab(mode) {
+        const tab2D = document.getElementById('pgfx-tab-2d');
+        const tab3D = document.getElementById('pgfx-tab-3d');
+        const container2D = document.getElementById('pgfx-2d-canvas-container');
+        const container3D = document.getElementById('pgfx-3d-canvas-container');
+        const rightSidebar = document.querySelector('.pgfx-studio-right-sidebar');
+        const tools3D = document.getElementById('pgfx-3d-tools-group');
+        const zRow = document.getElementById('pgfx-prop-z-row');
+        const sidebar3D = document.getElementById('pgfx-3d-sidebar-controls');
+
+        if (mode === '3D') {
+            this.mode3D = true;
+            tab2D.classList.remove('pgfx-btn-primary');
+            tab3D.classList.add('pgfx-btn-primary');
+            container2D.style.display = 'none';
+            container3D.style.display = 'block';
+            if (rightSidebar) rightSidebar.style.display = 'flex';
+            if (tools3D) tools3D.style.display = 'block';
+            if (zRow) zRow.style.display = 'flex';
+            if (sidebar3D) sidebar3D.style.display = 'flex';
+
+            // Show loading status inside the 3D canvas
+            container3D.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: #06b6d4; font-size: 14px; font-weight: bold;"><div class="pgfx-spinner" style="margin-right: 12px;"></div>Loading 3D Viewport...</div>';
+
+            try {
+                // Asynchronously load Three.js libraries
+                const loadingOverlay = document.getElementById('pgfx-studio-loading');
+                const loadingStatus = document.getElementById('pgfx-loading-status');
+                await loadThreeJS(loadingStatus || null);
+                if (!this.scene3d) {
+                    this.init3DScene();
+                }
+                // Rebuild the 3D meshes based on current 2D canvas contents
+                await this.sync2DTo3D();
+                // Restore imported 3D models
+                if (this.importedModels && this.importedModels.length > 0) {
+                    for (const m of this.importedModels) {
+                        if (m.data && !m.group) {
+                            await this._loadModelIntoScene(m).catch(err => {
+                                console.error('[PGFX] Failed to restore model:', m.name, err);
+                            });
+                        }
+                    }
+                }
+                // Frame camera to fit extruded objects
+                this.fit3DView();
+            } catch (err) {
+                console.error("Failed to initialize 3D view:", err);
+                container3D.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: #ef4444; font-size: 14px; font-weight: bold; text-align: center; flex-direction: column;">Error loading 3D:<br>${err.message}</div>`;
+            }
+
+            // Sync 3D grid visibility from checkbox state
+            const grid3DCheck = document.getElementById('pgfx-3d-show-grid');
+            if (grid3DCheck && this.gridHelper) this.gridHelper.visible = grid3DCheck.checked;
+            if (grid3DCheck && this.axesHelper) this.axesHelper.visible = grid3DCheck.checked;
+
+            // Refresh layers & properties for 3D
+            this.refreshLayersPanel();
+            this._updateSelectionUI();
+        } else {
+            this.mode3D = false;
+            tab2D.classList.add('pgfx-btn-primary');
+            tab3D.classList.remove('pgfx-btn-primary');
+            container2D.style.display = 'block';
+            container3D.style.display = 'none';
+            if (rightSidebar) rightSidebar.style.display = 'flex';
+            if (tools3D) tools3D.style.display = 'none';
+            if (zRow) zRow.style.display = 'none';
+            if (sidebar3D) sidebar3D.style.display = 'none';
+
+            // Clean up 3D to release WebGL context and graphics memory
+            this.cleanUp3D();
+
+            // Force redraw of 2D canvas
+            if (this.canvas) {
+                this.canvas.requestRenderAll();
+                this.fitCanvasToView();
+            }
+
+            // Refresh layers & properties for 2D
+            this.refreshLayersPanel();
+            this._updateSelectionUI();
+            this.updateUIForSelection();
+        }
+    }
+
+    init3DScene() {
+        const container = document.getElementById('pgfx-3d-canvas-container');
+        if (!container) return;
+
+        // Clear container
+        container.innerHTML = '';
+
+        const width = container.clientWidth || 800;
+        const height = container.clientHeight || 600;
+
+        // Create Scene
+        this.scene3d = new THREE.Scene();
+        this.scene3d.background = new THREE.Color(0x333333); // Blender-like gray background
+
+        // Create Camera
+        this.camera3d = new THREE.PerspectiveCamera(45, width / height, 1, 10000);
+        this.camera3d.position.set(0, 0, 800);
+
+        // Create Renderer
+        this.renderer3d = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+        this.renderer3d.setSize(width, height);
+        this.renderer3d.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer3d.shadowMap.enabled = true;
+        this.renderer3d.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(this.renderer3d.domElement);
+
+        // OrbitControls
+        this.controls3d = new THREE.OrbitControls(this.camera3d, this.renderer3d.domElement);
+        this.controls3d.enableDamping = true;
+        this.controls3d.dampingFactor = 0.05;
+        this.controls3d.screenSpacePanning = true;
+
+        // TransformControls (move/rotate/scale gizmo)
+        if (window.THREE.TransformControls) {
+            this.transformControls3d = new THREE.TransformControls(this.camera3d, this.renderer3d.domElement);
+            this.transformControls3d.setMode(this.transformMode);
+            this.scene3d.add(this.transformControls3d);
+
+            // Disable OrbitControls while dragging the gizmo
+            this.transformControls3d.addEventListener('dragging-changed', (event) => {
+                this.controls3d.enabled = !event.value;
+            });
+
+            // Update properties panel when object is transformed
+            this.transformControls3d.addEventListener('change', () => {
+                this._updateSelectionUI();
+            });
+        }
+
+        // Raycaster for 3D object selection
+        this.raycaster3d = new THREE.Raycaster();
+        this.mouse3d = new THREE.Vector2();
+
+        // Click-to-select handler
+        this.renderer3d.domElement.addEventListener('click', (event) => {
+            // Ignore clicks when transform gizmo is being dragged
+            if (this.transformControls3d && this.transformControls3d.dragging) return;
+
+            const rect = this.renderer3d.domElement.getBoundingClientRect();
+            this.mouse3d.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            this.mouse3d.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+            if (this.raycaster3d && this.extrudedGroup) {
+                this.raycaster3d.setFromCamera(this.mouse3d, this.camera3d);
+                const allTargets = [...this.extrudedGroup.children];
+                if (this.modelsGroup) {
+                    allTargets.push(...this.modelsGroup.children);
+                }
+                const intersects = this.raycaster3d.intersectObjects(allTargets, true);
+
+                if (intersects.length > 0) {
+                    let hit = intersects[0].object;
+                    // Walk up to find the top-level group for imported models
+                    while (hit.parent && hit.parent !== this.modelsGroup && hit.parent !== this.extrudedGroup && hit.parent !== this.scene3d) {
+                        hit = hit.parent;
+                    }
+                    // If it's inside a model group, select the model group root
+                    if (hit.parent === this.modelsGroup) {
+                        this.selectMesh3d(hit);
+                    } else {
+                        this.selectMesh3d(intersects[0].object);
+                    }
+                } else {
+                    this.deselectMesh3d();
+                }
+            }
+        });
+
+        // Lights
+        this.ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        this.scene3d.add(this.ambientLight);
+
+        this.dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+        this.dirLight.castShadow = true;
+        this.dirLight.shadow.mapSize.width = 2048;
+        this.dirLight.shadow.mapSize.height = 2048;
+        this.dirLight.shadow.camera.near = 0.5;
+        this.dirLight.shadow.camera.far = 5000;
+        
+        // Set up camera boundaries for shadows
+        const d = 1000;
+        this.dirLight.shadow.camera.left = -d;
+        this.dirLight.shadow.camera.right = d;
+        this.dirLight.shadow.camera.top = d;
+        this.dirLight.shadow.camera.bottom = -d;
+        
+        this.scene3d.add(this.dirLight);
+
+        // Soft fill light
+        this.fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+        this.fillLight.position.set(-1, -1, 1);
+        this.scene3d.add(this.fillLight);
+
+        // Grid helper (horizontal floor like Blender)
+        this.gridHelper = new THREE.GridHelper(3000, 40, 0x555555, 0x444444);
+        this.gridHelper.position.z = -250;
+        this.gridHelper.material.transparent = true;
+        this.gridHelper.material.opacity = 0.5;
+        this.scene3d.add(this.gridHelper);
+
+        // World Axes (X=red, Y=green, Z=blue) at origin
+        this.axesHelper = new THREE.AxesHelper(500);
+        this.axesHelper.position.z = -250;
+        this.scene3d.add(this.axesHelper);
+
+        // --- CANVAS SAFE AREA (The Plane) ---
+        if (this.canvasPlane3d) {
+            this.scene3d.remove(this.canvasPlane3d);
+            if (this.canvasPlane3d.geometry) this.canvasPlane3d.geometry.dispose();
+            if (this.canvasPlane3d.material) this.canvasPlane3d.material.dispose();
+        }
+        const canvasPlaneGeom = new THREE.PlaneGeometry(this.targetWidth, this.targetHeight);
+        const canvasPlaneMat = new THREE.MeshBasicMaterial({ 
+            color: new THREE.Color(this.pageBackgroundColor || '#000000'),
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 1.0
+        });
+        this.canvasPlane3d = new THREE.Mesh(canvasPlaneGeom, canvasPlaneMat);
+        this.canvasPlane3d.position.z = -5; // slightly behind the 2D elements
+        this.scene3d.add(this.canvasPlane3d);
+
+        // Border for the canvas safe area
+        const edges = new THREE.EdgesGeometry(canvasPlaneGeom);
+        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x06b6d4, linewidth: 2 }));
+        this.canvasPlane3d.add(line);
+
+        // Group to hold all extruded elements
+        this.extrudedGroup = new THREE.Group();
+        this.scene3d.add(this.extrudedGroup);
+
+        // Group to hold imported 3D models
+        this.modelsGroup = new THREE.Group();
+        this.scene3d.add(this.modelsGroup);
+
+        // Handle resize
+        this.resizeObserver3d = new ResizeObserver(() => {
+            if (!this.renderer3d || !container) return;
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            if (w > 0 && h > 0) {
+                this.camera3d.aspect = w / h;
+                this.camera3d.updateProjectionMatrix();
+                this.renderer3d.setSize(w, h);
+            }
+        });
+        this.resizeObserver3d.observe(container);
+
+        // Render loop
+        const animate = () => {
+            if (!this.renderer3d) return; // stopped/cleaned up
+            requestAnimationFrame(animate);
+            if (this.controls3d) this.controls3d.update();
+            
+            // Update light position based on slider
+            const rotInput = document.getElementById('pgfx-3d-light-rot');
+            if (rotInput && this.dirLight) {
+                const rotVal = parseFloat(rotInput.value);
+                const rad = THREE.MathUtils.degToRad(rotVal);
+                this.dirLight.position.set(Math.cos(rad) * 600, Math.sin(rad) * 600, 600);
+            }
+            
+            // Shadows enabled check
+            const shadowInput = document.getElementById('pgfx-3d-shadows');
+            if (shadowInput && this.dirLight) {
+                this.dirLight.castShadow = shadowInput.checked;
+            }
+
+            if (this.scene3d && this.camera3d) {
+                this.renderer3d.render(this.scene3d, this.camera3d);
+            }
+        };
+        animate();
+    }
+
+    _keyForObj(obj, index) {
+        return (obj.name || obj.type || 'obj') + '_' + index;
+    }
+
+    async sync2DTo3D() {
+        if (!window.THREE || !this.extrudedGroup) return;
+
+        // 1. Save selection state to recover it after sync
+        const selectedKey = this.selectedMesh3d ? this.selectedMesh3d.userData._key : null;
+
+        // 2. Update Canvas Safe Area Plane
+        if (this.canvasPlane3d) {
+            this.canvasPlane3d.material.color.set(this.pageBackgroundColor || '#000000');
+            const currentGeom = this.canvasPlane3d.geometry.parameters;
+            if (currentGeom.width !== this.targetWidth || currentGeom.height !== this.targetHeight) {
+                this.canvasPlane3d.geometry.dispose();
+                this.canvasPlane3d.geometry = new THREE.PlaneGeometry(this.targetWidth, this.targetHeight);
+                if (this.canvasPlane3d.children.length > 0) {
+                    const line = this.canvasPlane3d.children[0];
+                    line.geometry.dispose();
+                    line.geometry = new THREE.EdgesGeometry(this.canvasPlane3d.geometry);
+                }
+            }
+        }
+
+        // 3. Save 3D transforms before clearing
+        const saved = {};
+        for (let i = 0; i < this.extrudedGroup.children.length; i++) {
+            const child = this.extrudedGroup.children[i];
+            if (child.userData && child.userData._key) {
+                saved[child.userData._key] = {
+                    position: child.position.clone(),
+                    rotation: child.rotation.clone(),
+                    scale: child.scale.clone(),
+                };
+            }
+        }
+        Object.assign(this._saved3DTransforms, saved);
+
+        // 4. Clear previous meshes
+        while (this.extrudedGroup.children.length > 0) { 
+            const childObj = this.extrudedGroup.children[0];
+            this.extrudedGroup.remove(childObj);
+            if (childObj.geometry) childObj.geometry.dispose();
+            if (childObj.material) {
+                if (Array.isArray(childObj.material)) childObj.material.forEach(m => { if (m) m.dispose(); });
+                else childObj.material.dispose();
+            }
+        }
+
+        const objects = this.canvas.getObjects();
+        for (let index = 0; index < objects.length; index++) {
+            const obj = objects[index];
+            if (!obj.visible || obj.name === 'node_control') continue;
+            const zOffset = index * 2; 
+
+            if (obj.type === 'image' || obj.type === 'video') {
+                const imgEl = obj.getElement();
+                if (!imgEl) continue;
+                const texture = new THREE.Texture(imgEl);
+                texture.needsUpdate = true;
+                const width = obj.width * obj.scaleX;
+                const height = obj.height * obj.scaleY;
+                const s3d = this._getObj3DSettings(obj);
+                
+                // Use a neutral color for the base material properties
+                const baseColor = '#888888';
+                const material = this.createMaterialPreset(baseColor);
+                
+                let mesh;
+                if (s3d.depth > 0) {
+                    const geometry = new THREE.BoxGeometry(width, height, s3d.depth);
+                    // Front face material with texture
+                    const frontMat = material.clone();
+                    frontMat.map = texture;
+                    frontMat.transparent = true;
+                    
+                    // BoxGeometry materials order: +x, -x, +y, -y, +z (front), -z (back)
+                    // We put the image on the front (+z) and back (-z), or just front.
+                    // Let's do front only to avoid confusion.
+                    const sideMat = material; 
+                    const materials = [sideMat, sideMat, sideMat, sideMat, frontMat, sideMat];
+                    mesh = new THREE.Mesh(geometry, materials);
+                } else {
+                    const geometry = new THREE.PlaneGeometry(width, height);
+                    const frontMat = material.clone();
+                    frontMat.map = texture;
+                    frontMat.transparent = true;
+                    frontMat.side = THREE.DoubleSide;
+                    mesh = new THREE.Mesh(geometry, frontMat);
+                }
+                
+                mesh.userData.name = obj.name || 'Image';
+                mesh.userData._key = this._keyForObj(obj, index);
+                const center = obj.getCenterPoint();
+                mesh.position.set(center.x - this.targetWidth / 2, -(center.y - this.targetHeight / 2), zOffset);
+                mesh.rotation.z = THREE.MathUtils.degToRad(-obj.angle);
+                mesh.castShadow = true; mesh.receiveShadow = true;
+                this.extrudedGroup.add(mesh);
+            } else if (obj.type === 'i-text' || obj.type === 'text' || obj.type === 'textbox') {
+                // TRUE SILHOUETTE VECTOR EXTRUSION (V2)
+                const textContent = obj.text || '';
+                if (!textContent.trim()) continue;
+
+                const s3d = this._getObj3DSettings(obj);
+                const fillColor = typeof obj.fill === 'string' && obj.fill !== 'transparent' ? obj.fill : '#ffffff';
+                const material = this.createMaterialPreset(fillColor);
+
+                let pathData = "";
+                try {
+                    pathData = (typeof obj.toPathData === "function") ? obj.toPathData() : "";
+                } catch(e) {}
+
+                if (pathData) {
+                    const svgPathMarkup = `<path d="${pathData}" />`;
+                    const wrapper = `<svg xmlns="http://www.w3.org/2000/svg">${svgPathMarkup}</svg>`;
+                    const svgLoader = new THREE.SVGLoader();
+                    const parsed = svgLoader.parse(wrapper);
+
+                    if (parsed && parsed.paths && parsed.paths.length > 0) {
+                        const allShapes = [];
+                        parsed.paths.forEach(p => allShapes.push(...THREE.SVGLoader.createShapes(p)));
+                        
+                        if (allShapes.length > 0) {
+                            const extrudeGeom = new THREE.ExtrudeGeometry(allShapes, {
+                                depth: s3d.depth,
+                                bevelEnabled: s3d.bevelEnabled,
+                                bevelSegments: s3d.bevelSegments,
+                                steps: 1,
+                                bevelSize: s3d.bevelSize,
+                                bevelThickness: s3d.bevelSize
+                            });
+
+                            // Center the geometry so the origin is the middle of the text
+                            extrudeGeom.center();
+
+                            const mesh = new THREE.Mesh(extrudeGeom, material);
+                            mesh.userData.name = obj.name || 'Text';
+                            mesh.userData._key = this._keyForObj(obj, index);
+                            
+                            const center = obj.getCenterPoint();
+                            mesh.position.set(center.x - this.targetWidth / 2, -(center.y - this.targetHeight / 2), zOffset);
+                            mesh.rotation.z = THREE.MathUtils.degToRad(-obj.angle);
+                            
+                            // Fabric path data is already scaled, but Three.js Y is inverted
+                            mesh.scale.set(1, -1, 1);
+                            
+                            mesh.castShadow = true;
+                            mesh.receiveShadow = true;
+                            this.extrudedGroup.add(mesh);
+                            continue;
+                        }
+                    }
+                }
+
+                // FALLBACK: Sharp block if vectorization fails
+                const padding = 24;
+                const scale = 2; 
+                const textWidth = Math.ceil(obj.width * obj.scaleX) + padding * 2;
+                const textHeight = Math.ceil(obj.height * obj.scaleY) + padding * 2;
+                const textCanvas = document.createElement('canvas');
+                textCanvas.width = textWidth * scale; textCanvas.height = textHeight * scale;
+                const tCtx = textCanvas.getContext('2d');
+                tCtx.scale(scale, scale);
+                const fontSize = Math.round(obj.fontSize * obj.scaleY);
+                tCtx.font = `${obj.fontStyle || 'normal'} ${obj.fontWeight || 'normal'} ${fontSize}px "${obj.fontFamily || 'Arial'}"`;
+                tCtx.textAlign = 'center'; tCtx.textBaseline = 'middle';
+                tCtx.save();
+                const hStretch = obj.scaleX / obj.scaleY;
+                tCtx.setTransform(scale * hStretch, 0, 0, scale, (textWidth / 2) * scale, (textHeight / 2) * scale);
+                tCtx.fillStyle = fillColor;
+                tCtx.fillText(textContent, 0, 0);
+                tCtx.restore();
+
+                const textTex = new THREE.CanvasTexture(textCanvas);
+                const frontMat = material.clone(); frontMat.map = textTex; frontMat.transparent = true; frontMat.alphaTest = 0.5;
+                const invMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+                const geometry = new THREE.BoxGeometry(textWidth, textHeight, s3d.depth);
+                const mesh = new THREE.Mesh(geometry, [invMat, invMat, invMat, invMat, frontMat, invMat]);
+                mesh.userData._key = this._keyForObj(obj, index);
+                const center = obj.getCenterPoint();
+                mesh.position.set(center.x - this.targetWidth / 2, -(center.y - this.targetHeight / 2), zOffset);
+                mesh.rotation.z = THREE.MathUtils.degToRad(-obj.angle);
+                this.extrudedGroup.add(mesh);
+            } else {
+                // ... (SVG logic)
+                const svgMarkup = obj.toSVG();
+                const wrapper = `<svg xmlns="http://www.w3.org/2000/svg" width="${this.targetWidth}" height="${this.targetHeight}" viewBox="0 0 ${this.targetWidth} ${this.targetHeight}">${svgMarkup}</svg>`;
+                const svgLoader = new THREE.SVGLoader();
+                let parsed;
+                try { parsed = svgLoader.parse(wrapper); } catch (err) { continue; }
+                const paths = parsed.paths;
+                for (let p = 0; p < paths.length; p++) {
+                    const path = paths[p];
+                    const shapes = THREE.SVGLoader.createShapes(path);
+                    const fillColor = path.color || new THREE.Color(0xffffff);
+                    const material = this.createMaterialPreset(fillColor);
+                    for (let s = 0; s < shapes.length; s++) {
+                        const shape = shapes[s];
+                        const s3d = this._getObj3DSettings(obj);
+                        const extrudeGeom = new THREE.ExtrudeGeometry(shape, {
+                            depth: s3d.depth, bevelEnabled: s3d.bevelEnabled,
+                            bevelSegments: s3d.bevelSegments, steps: 1,
+                            bevelSize: s3d.bevelSize, bevelThickness: s3d.bevelSize
+                        });
+                        const mesh = new THREE.Mesh(extrudeGeom, material);
+                        mesh.userData.name = obj.name || 'Shape';
+                        mesh.userData._key = this._keyForObj(obj, index) + '_' + p + '_' + s;
+                        mesh.scale.set(1, -1, 1);
+                        mesh.position.set(-this.targetWidth / 2, this.targetHeight / 2, zOffset);
+                        mesh.castShadow = true; mesh.receiveShadow = true;
+                        this.extrudedGroup.add(mesh);
+                    }
+                }
+            }
+        }
+
+        // 5. Restore saved 3D transforms
+        for (const child of this.extrudedGroup.children) {
+            if (child.userData && child.userData._key) {
+                const savedTr = this._saved3DTransforms[child.userData._key];
+                if (savedTr) {
+                    child.position.copy(savedTr.position);
+                    child.rotation.copy(savedTr.rotation);
+                    child.scale.copy(savedTr.scale);
+                }
+            }
+        }
+
+        // 6. RECOVER SELECTION: find the new mesh that matches the old key and re-select it
+        if (selectedKey) {
+            const newSelection = this.extrudedGroup.children.find(c => c.userData?._key === selectedKey);
+            if (newSelection) {
+                this.selectMesh3d(newSelection);
+            }
+        }
+    }
+
+    createMaterialPreset(color) {
+        const presetSelect = document.getElementById('pgfx-3d-material');
+        const preset = presetSelect ? presetSelect.value : 'polished_gold';
+        
+        switch (preset) {
+            case 'polished_gold':
+                return new THREE.MeshStandardMaterial({
+                    color: new THREE.Color(0xd4af37), // gold hue
+                    roughness: 0.15,
+                    metalness: 0.9,
+                    clearcoat: 1.0,
+                    clearcoatRoughness: 0.05
+                });
+            case 'brushed_steel':
+                return new THREE.MeshStandardMaterial({
+                    color: new THREE.Color(0x8a95a5),
+                    roughness: 0.35,
+                    metalness: 0.85
+                });
+            case 'frosted_glass':
+                return new THREE.MeshPhysicalMaterial({
+                    color: color,
+                    transparent: true,
+                    opacity: 0.5,
+                    roughness: 0.25,
+                    metalness: 0.05,
+                    transmission: 0.9,
+                    ior: 1.45,
+                    thickness: 8,
+                    depthWrite: false
+                });
+            case 'obsidian':
+                return new THREE.MeshStandardMaterial({
+                    color: new THREE.Color(0x111116),
+                    roughness: 0.08,
+                    metalness: 0.1,
+                    clearcoat: 1.0,
+                    clearcoatRoughness: 0.05
+                });
+            case 'marble_white':
+                return new THREE.MeshStandardMaterial({
+                    color: new THREE.Color(0xf5f5fa),
+                    roughness: 0.4,
+                    metalness: 0.05
+                });
+            case 'glowing_neon':
+                return new THREE.MeshStandardMaterial({
+                    color: color,
+                    emissive: color,
+                    emissiveIntensity: 2.0,
+                    roughness: 0.2,
+                    metalness: 0.1
+                });
+            case 'matte_plastic':
+                return new THREE.MeshStandardMaterial({
+                    color: color,
+                    roughness: 0.75,
+                    metalness: 0.0
+                });
+            case 'default_color':
+            default:
+                return new THREE.MeshStandardMaterial({
+                    color: color,
+                    roughness: 0.4,
+                    metalness: 0.2
+                });
+        }
+    }
+
+    selectMesh3d(mesh) {
+        if (!mesh) return;
+        if (this.selectedMesh3d === mesh) return;
+
+        // Restore previous selection highlight
+        this.deselectMesh3d();
+
+        this.selectedMesh3d = mesh;
+
+        // Save original emissive for restoration on deselect
+        if (mesh.material && !mesh._origEmissive) {
+            mesh._origEmissive = mesh.material.emissive ? mesh.material.emissive.clone() : new THREE.Color(0x000000);
+        }
+        // Highlight selected
+        if (mesh.material) {
+            mesh.material.emissive = new THREE.Color(0x06b6d4);
+            mesh.material.emissiveIntensity = 0.25;
+        } else {
+            // Imported model group — highlight all child meshes
+            mesh.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    if (!child._origEmissive) {
+                        child._origEmissive = child.material.emissive ? child.material.emissive.clone() : new THREE.Color(0x000000);
+                    }
+                    child.material.emissive = new THREE.Color(0x06b6d4);
+                    child.material.emissiveIntensity = 0.25;
+                }
+            });
+        }
+
+        // Attach transform gizmo
+        if (this.transformControls3d) {
+            this.transformControls3d.attach(mesh);
+        }
+
+        this._updateSelectionUI();
+        this.updateUIForSelection();
+        this._update3DTransformButtons();
+        this.refreshLayersPanel();
+    }
+
+    deselectMesh3d() {
+        if (this.selectedMesh3d) {
+            if (this.selectedMesh3d.material) {
+                this.selectedMesh3d.material.emissive = this.selectedMesh3d._origEmissive || new THREE.Color(0x000000);
+                this.selectedMesh3d.material.emissiveIntensity = 0;
+            } else {
+                // Imported model group — restore all child meshes
+                this.selectedMesh3d.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        child.material.emissive = child._origEmissive || new THREE.Color(0x000000);
+                        child.material.emissiveIntensity = 0;
+                    }
+                });
+            }
+            this.selectedMesh3d = null;
+        }
+        if (this.transformControls3d) {
+            this.transformControls3d.detach();
+        }
+        this._updateSelectionUI();
+        this.updateUIForSelection();
+        this.refreshLayersPanel();
+    }
+
+    setTransformMode(mode) {
+        this.transformMode = mode;
+        if (this.transformControls3d) {
+            this.transformControls3d.setMode(mode);
+        }
+        this._update3DTransformButtons();
+    }
+
+    _update3DTransformButtons() {
+        const btnT = document.getElementById('pgfx-3d-mode-translate');
+        const btnR = document.getElementById('pgfx-3d-mode-rotate');
+        const btnS = document.getElementById('pgfx-3d-mode-scale');
+        if (btnT) btnT.classList.toggle('pgfx-btn-primary', this.transformMode === 'translate');
+        if (btnR) btnR.classList.toggle('pgfx-btn-primary', this.transformMode === 'rotate');
+        if (btnS) btnS.classList.toggle('pgfx-btn-primary', this.transformMode === 'scale');
+    }
+
+    _updateSelectionUI() {
+        const panel = document.getElementById('pgfx-properties-panel');
+        if (!panel) return;
+        const zRow = document.getElementById('pgfx-prop-z-row');
+
+        if (this.mode3D && this.selectedMesh3d) {
+            // 3D object selected
+            panel.style.display = 'block';
+            if (zRow) zRow.style.display = 'flex';
+            const p = this.selectedMesh3d.position;
+            const r = this.selectedMesh3d.rotation;
+            const s = this.selectedMesh3d.scale;
+            this._setPropInput('pgfx-prop-x', p.x);
+            this._setPropInput('pgfx-prop-y', p.y);
+            this._setPropInput('pgfx-prop-z', p.z);
+            this._setPropInput('pgfx-prop-rotation', THREE.MathUtils.radToDeg(r.z).toFixed(1));
+            this._setPropInput('pgfx-prop-scale', s.x.toFixed(2));
+        } else if (!this.mode3D) {
+            const active = this.canvas ? this.canvas.getActiveObject() : null;
+            if (active) {
+                panel.style.display = 'block';
+                if (zRow) zRow.style.display = 'none';
+                const bounds = active.getBoundingRect();
+                this._setPropInput('pgfx-prop-x', Math.round(bounds.left));
+                this._setPropInput('pgfx-prop-y', Math.round(bounds.top));
+                this._setPropInput('pgfx-prop-rotation', Math.round(active.angle || 0));
+                this._setPropInput('pgfx-prop-scale', parseFloat(active.scaleX || 1).toFixed(2));
+            } else {
+                panel.style.display = 'none';
+            }
+        } else {
+            panel.style.display = 'none';
+        }
+    }
+
+    _setPropInput(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.value = value;
+    }
+
+    _applyPropertyTo3D() {
+        if (!this.selectedMesh3d) return;
+        const x = parseFloat(document.getElementById('pgfx-prop-x')?.value) || 0;
+        const y = parseFloat(document.getElementById('pgfx-prop-y')?.value) || 0;
+        const z = parseFloat(document.getElementById('pgfx-prop-z')?.value) || 0;
+        const rot = parseFloat(document.getElementById('pgfx-prop-rotation')?.value) || 0;
+        const scale = parseFloat(document.getElementById('pgfx-prop-scale')?.value) || 1;
+        this.selectedMesh3d.position.set(x, y, z);
+        this.selectedMesh3d.rotation.set(0, 0, THREE.MathUtils.degToRad(rot));
+        this.selectedMesh3d.scale.set(scale, scale, scale);
+        this._updateSelectionUI();
+    }
+
+    _applyPropertyTo2D() {
+        if (!this.canvas) return;
+        const active = this.canvas.getActiveObject();
+        if (!active) return;
+        const x = parseFloat(document.getElementById('pgfx-prop-x')?.value) || 0;
+        const y = parseFloat(document.getElementById('pgfx-prop-y')?.value) || 0;
+        const rot = parseFloat(document.getElementById('pgfx-prop-rotation')?.value) || 0;
+        const scale = parseFloat(document.getElementById('pgfx-prop-scale')?.value) || 1;
+        active.set({
+            left: x,
+            top: y,
+            angle: rot,
+            scaleX: scale,
+            scaleY: scale,
+        });
+        active.setCoords();
+        this.canvas.requestRenderAll();
+        this._updateSelectionUI();
+    }
+
+    _getObj3DSettings(obj) {
+        if (!obj) return { depth: 20, bevelEnabled: true, bevelSize: 1.5, bevelSegments: 3 };
+        if (!obj.userData) obj.userData = {};
+        if (!obj.userData.pgfx_3d) {
+            obj.userData.pgfx_3d = {
+                depth: parseFloat(document.getElementById('pgfx-3d-depth')?.value) || 20,
+                bevelEnabled: document.getElementById('pgfx-3d-bevel-enabled')?.checked ?? true,
+                bevelSize: parseFloat(document.getElementById('pgfx-3d-bevel-size')?.value) || 1.5,
+                bevelSegments: parseInt(document.getElementById('pgfx-3d-bevel-segments')?.value) || 3,
+            };
+        }
+        return obj.userData.pgfx_3d;
+    }
+
+    _applyObj3DSettings() {
+        const active = this.canvas ? this.canvas.getActiveObject() : null;
+        if (!active) return;
+        if (!active.userData) active.userData = {};
+        active.userData.pgfx_3d = {
+            depth: parseFloat(document.getElementById('pgfx-3d-depth')?.value) || 20,
+            bevelEnabled: document.getElementById('pgfx-3d-bevel-enabled')?.checked ?? true,
+            bevelSize: parseFloat(document.getElementById('pgfx-3d-bevel-size')?.value) || 1.5,
+            bevelSegments: parseInt(document.getElementById('pgfx-3d-bevel-segments')?.value) || 3,
+        };
+        this.sync2DTo3D();
+    }
+
+    _update3DStroke(mesh) {
+        if (!mesh || !window.THREE) return;
+        // Remove old stroke overlay
+        if (mesh.userData._strokeLines) {
+            mesh.remove(mesh.userData._strokeLines);
+            if (mesh.userData._strokeLines.geometry) mesh.userData._strokeLines.geometry.dispose();
+            if (mesh.userData._strokeLines.material) mesh.userData._strokeLines.material.dispose();
+            mesh.userData._strokeLines = null;
+        }
+        const strokeWidth = parseInt(document.getElementById('pgfx-stroke-width')?.value) || 0;
+        const strokeColor = document.getElementById('pgfx-stroke-picker')?.value;
+        if (strokeWidth > 0 && strokeColor) {
+            const edges = new THREE.EdgesGeometry(mesh.geometry, 30);
+            const lineMat = new THREE.LineBasicMaterial({ color: strokeColor });
+            const lines = new THREE.LineSegments(edges, lineMat);
+            lines.position.z = 0.5;
+            mesh.add(lines);
+            mesh.userData._strokeLines = lines;
+        }
+    }
+
+    _update3DShadow(mesh) {
+        if (!mesh || !window.THREE) return;
+        // Remove old shadow clone
+        if (mesh.userData._shadowClone) {
+            mesh.remove(mesh.userData._shadowClone);
+            if (mesh.userData._shadowClone.geometry) mesh.userData._shadowClone.geometry.dispose();
+            if (mesh.userData._shadowClone.material) mesh.userData._shadowClone.material.dispose();
+            mesh.userData._shadowClone = null;
+        }
+        const enabled = document.getElementById('pgfx-shadow-enabled')?.checked;
+        if (!enabled) return;
+        const color = document.getElementById('pgfx-shadow-color')?.value || '#000000';
+        const offsetX = parseInt(document.getElementById('pgfx-shadow-offset-x')?.value) || 5;
+        const offsetY = parseInt(document.getElementById('pgfx-shadow-offset-y')?.value) || 5;
+        const blur = parseInt(document.getElementById('pgfx-shadow-blur')?.value) || 10;
+        const shadowMat = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: Math.max(0.1, Math.min(0.5, blur / 100)),
+            depthWrite: false,
+        });
+        const shadowClone = new THREE.Mesh(mesh.geometry.clone(), shadowMat);
+        shadowClone.position.set(offsetX * 0.5, -offsetY * 0.5, -5);
+        mesh.add(shadowClone);
+        mesh.userData._shadowClone = shadowClone;
+    }
+
+    fit3DView() {
+        if (!this.camera3d || !this.extrudedGroup || !this.controls3d) return;
+
+        const box = new THREE.Box3();
+
+        // Include the extruded objects
+        if (!this.extrudedGroup.children.length === 0) {
+            box.expandByObject(this.extrudedGroup);
+        }
+
+        // Include the canvas safe area plane (the "Page")
+        if (this.canvasPlane3d) {
+            box.expandByObject(this.canvasPlane3d);
+        }
+
+        if (box.isEmpty()) return;
+
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+
+        this.controls3d.target.copy(center);
+
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const fov = this.camera3d.fov * (Math.PI / 180);
+        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+
+        cameraZ *= 1.35; // margin
+        cameraZ = Math.max(cameraZ, 200); // slightly more generous lower bound
+
+        this.camera3d.position.set(center.x, center.y, center.z + cameraZ);
+        this.camera3d.lookAt(center);
+        this.controls3d.update();
+    }
+
+    cleanUp3D() {
+        this.deselectMesh3d();
+        if (this.transformControls3d) {
+            this.transformControls3d.dispose();
+            this.transformControls3d = null;
+        }
+        if (this.resizeObserver3d && this.renderer3d) {
+            const container = document.getElementById('pgfx-3d-canvas-container');
+            if (container) this.resizeObserver3d.unobserve(container);
+            this.resizeObserver3d = null;
+        }
+        if (this.renderer3d) {
+            this.renderer3d.dispose();
+            this.renderer3d.forceContextLoss();
+            const canvasEl = this.renderer3d.domElement;
+            if (canvasEl) canvasEl.remove();
+            this.renderer3d = null;
+        }
+        if (this.scene3d) {
+            this.scene3d.traverse((object) => {
+                if (object.geometry) object.geometry.dispose();
+                if (object.material) {
+                    if (Array.isArray(object.material)) {
+                        object.material.forEach(m => m.dispose());
+                    } else {
+                        object.material.dispose();
+                    }
+                }
+            });
+            this.scene3d = null;
+        }
+        this.camera3d = null;
+        this.controls3d = null;
+        this.extrudedGroup = null;
+        this.modelsGroup = null;
+        this.scene3d = null;
+    }
+
+    _bufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    _base64ToBuffer(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    async _loadModelIntoScene(entry) {
+        if (!window.THREE || !this.modelsGroup) return;
+        const buffer = this._base64ToBuffer(entry.data);
+        const blob = new Blob([buffer]);
+        const url = URL.createObjectURL(blob);
+
+        try {
+            let modelGroup = new THREE.Group();
+            const ext = entry.format || 'glb';
+
+            if (ext === 'glb' || ext === 'gltf') {
+                const loader = new THREE.GLTFLoader();
+                const gltf = await new Promise((resolve, reject) => {
+                    loader.load(url, resolve, undefined, reject);
+                });
+                const scene = gltf.scene || gltf;
+                scene.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        if (!child.geometry.attributes.normal) {
+                            child.geometry.computeVertexNormals();
+                        }
+                    }
+                });
+                modelGroup = scene;
+            } else if (ext === 'obj') {
+                const loader = new THREE.OBJLoader();
+                const obj = await new Promise((resolve, reject) => {
+                    loader.load(url, resolve, undefined, reject);
+                });
+                obj.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        child.geometry.computeVertexNormals();
+                    }
+                });
+                modelGroup = obj;
+            } else if (ext === 'stl') {
+                const loader = new THREE.STLLoader();
+                const geometry = await new Promise((resolve, reject) => {
+                    loader.load(url, resolve, undefined, reject);
+                });
+                const material = new THREE.MeshStandardMaterial({
+                    color: new THREE.Color(0x888888),
+                    roughness: 0.5,
+                    metalness: 0.3,
+                });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                mesh.geometry.computeVertexNormals();
+                modelGroup.add(mesh);
+            }
+
+            modelGroup.userData._importedModelId = entry.id;
+            entry.group = modelGroup;
+            this.modelsGroup.add(modelGroup);
+
+            // Center and scale to fit
+            const box = new THREE.Box3().setFromObject(modelGroup);
+            if (!box.isEmpty()) {
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                const center = new THREE.Vector3();
+                box.getCenter(center);
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const targetSize = 200;
+                if (maxDim > 0) {
+                    const scale = targetSize / maxDim;
+                    modelGroup.scale.set(scale, scale, scale);
+                }
+                modelGroup.position.sub(center.clone().multiply(modelGroup.scale));
+                modelGroup.position.z = -50;
+            }
+
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            URL.revokeObjectURL(url);
+            console.error('[PGFX] Failed to load model:', entry.name, err);
+            throw err;
+        }
+    }
+
+    _disposeModelGroup(group) {
+        if (!group) return;
+        group.traverse((child) => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(m => m.dispose());
+                } else {
+                    child.material.dispose();
+                }
+            }
+        });
+    }
+
+    _collect3DSettings() {
+        if (!this.mode3D) return null;
+        return {
+            depth: parseFloat(document.getElementById('pgfx-3d-depth').value) || 20,
+            bevel_enabled: document.getElementById('pgfx-3d-bevel-enabled').checked,
+            bevel_size: parseFloat(document.getElementById('pgfx-3d-bevel-size').value) || 1.5,
+            bevel_segments: parseInt(document.getElementById('pgfx-3d-bevel-segments').value) || 3,
+            material: document.getElementById('pgfx-3d-material').value || 'matte_plastic',
+            light_rotation: parseFloat(document.getElementById('pgfx-3d-light-rot').value) || 45,
+            cast_shadows: document.getElementById('pgfx-3d-shadows').checked,
+            show_grid_3d: document.getElementById('pgfx-3d-show-grid')?.checked ?? true,
+        };
+    }
+
+    _apply3DSettings(settings) {
+        if (!settings) return;
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+        };
+        const setChecked = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = !!val;
+        };
+        setVal('pgfx-3d-depth', settings.depth ?? 20);
+        const dv = document.getElementById('pgfx-3d-depth-val');
+        if (dv) dv.textContent = settings.depth ?? 20;
+        setChecked('pgfx-3d-bevel-enabled', settings.bevel_enabled ?? true);
+        document.getElementById('pgfx-3d-bevel-settings').style.display = (settings.bevel_enabled !== false) ? 'flex' : 'none';
+        setVal('pgfx-3d-bevel-size', settings.bevel_size ?? 1.5);
+        const bsv = document.getElementById('pgfx-3d-bevel-size-val');
+        if (bsv) bsv.textContent = settings.bevel_size ?? 1.5;
+        setVal('pgfx-3d-bevel-segments', settings.bevel_segments ?? 3);
+        const bsgv = document.getElementById('pgfx-3d-bevel-segments-val');
+        if (bsgv) bsgv.textContent = settings.bevel_segments ?? 3;
+        setVal('pgfx-3d-material', settings.material || 'matte_plastic');
+        setVal('pgfx-3d-light-rot', settings.light_rotation ?? 45);
+        const lrv = document.getElementById('pgfx-3d-light-rot-val');
+        if (lrv) lrv.textContent = (settings.light_rotation ?? 45) + '°';
+        setChecked('pgfx-3d-shadows', settings.cast_shadows ?? true);
+        setChecked('pgfx-3d-show-grid', settings.show_grid_3d ?? true);
     }
 
     initDOM() {
@@ -2560,6 +4444,10 @@ class LogoStudioUI {
                     <div class="pgfx-studio-header">
                         <div class="pgfx-studio-title">
                             <span style="font-size: 24px;">🎨</span> PGFX Logo Designer Studio
+                            <div class="pgfx-studio-tabs" style="margin-left: 24px; display: inline-flex; gap: 8px;">
+                                <button id="pgfx-tab-2d" class="pgfx-btn pgfx-btn-primary" style="height: 28px; padding: 2px 10px; font-size: 11px; text-transform: uppercase;">🎨 2D Design</button>
+                                <button id="pgfx-tab-3d" class="pgfx-btn" style="height: 28px; padding: 2px 10px; font-size: 11px; text-transform: uppercase;">🧊 3D Viewport</button>
+                            </div>
                         </div>
                         <div class="pgfx-row">
                             <button id="pgfx-cancel-btn" class="pgfx-btn">Cancel</button>
@@ -2568,7 +4456,8 @@ class LogoStudioUI {
                             <button id="pgfx-redo-btn" class="pgfx-btn" title="Redo (Ctrl+Y)">↷ Redo</button>
                             <div class="pgfx-toolbar-separator"></div>
                             <button id="pgfx-fit-btn" class="pgfx-btn" title="Center and fit the canvas to the current window.">🔍 Fit View</button>
-                            <button id="pgfx-export-svg-btn" class="pgfx-btn" title="Download the current design as a clean SVG file.">📋 Export SVG</button>
+                            <button id="pgfx-export-svg-btn" class="pgfx-btn" title="Download the current design as a clean SVG file.">📋 SVG</button>
+                            <button id="pgfx-export-3d-btn" class="pgfx-btn" title="Export the 3D scene as a standard .glb file for Blender, Unity, etc.">🧊 3D (.glb)</button>
                             <button id="pgfx-save-btn" class="pgfx-btn pgfx-btn-primary" title="Apply the design to the node and close the window.">💾 Save State & Apply</button>
                         </div>
                     </div>
@@ -2578,6 +4467,15 @@ class LogoStudioUI {
                             <!-- CANVAS SETTINGS -->
                             <div class="pgfx-input-group">
                                 <label class="pgfx-label">Canvas Properties</label>
+                                <div class="pgfx-row" style="justify-content: space-between;">
+                                    <span style="font-size: 11px; color:#aaa;">Show Grid</span>
+                                    <input type="checkbox" id="pgfx-show-grid" checked style="cursor: pointer;">
+                                </div>
+                                <div class="pgfx-row">
+                                    <span style="font-size: 11px; color:#aaa; width: 60px;">Grid Size</span>
+                                    <input type="range" id="pgfx-grid-size" min="10" max="200" value="50" style="flex: 1;">
+                                    <span id="pgfx-grid-size-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 25px; text-align: right;">50</span>
+                                </div>
                                 <div class="pgfx-row" style="justify-content: space-between;">
                                     <span style="font-size: 11px; color:#aaa;">Snap to Grid</span>
                                     <input type="checkbox" id="pgfx-snap-grid" style="cursor: pointer;">
@@ -2613,10 +4511,75 @@ class LogoStudioUI {
                                 </div>
                             </div>
 
-                             <!-- ASSETS & TEXT -->
-                            <div class="pgfx-input-group">
-                                <label class="pgfx-label">Creation Tools</label>
-                                <button id="pgfx-add-text" class="pgfx-btn" style="justify-content: flex-start;" title="Add an editable text layer. Double-click the text on canvas to type.">📝 Add Text</button>
+                            <!-- 3D SIDEBAR CONTROLS (Only visible in 3D mode) -->
+                            <div id="pgfx-3d-sidebar-controls" style="display: none; flex-direction: column; gap: 12px; width: 100%;">
+                                <div class="pgfx-input-group" style="border-color: rgba(6, 182, 212, 0.3);">
+                                    <label class="pgfx-label" style="color: #06b6d4;">3D Extrusion & Bevel</label>
+                                    <div class="pgfx-row">
+                                        <span style="font-size: 11px; color:#aaa; width: 60px;">Depth</span>
+                                        <input type="range" id="pgfx-3d-depth" min="1" max="150" value="20" style="flex: 1;">
+                                        <span id="pgfx-3d-depth-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 25px; text-align: right;">20</span>
+                                    </div>
+                                    <div class="pgfx-row" style="justify-content: space-between;">
+                                        <span style="font-size: 11px; color:#aaa;">Bevel Enabled</span>
+                                        <input type="checkbox" id="pgfx-3d-bevel-enabled" checked style="cursor: pointer;">
+                                    </div>
+                                    <div id="pgfx-3d-bevel-settings" style="display: flex; flex-direction: column; gap: 8px;">
+                                        <div class="pgfx-row">
+                                            <span style="font-size: 11px; color:#aaa; width: 60px;">B-Size</span>
+                                            <input type="range" id="pgfx-3d-bevel-size" min="0" max="15" step="0.5" value="1.5" style="flex: 1;">
+                                            <span id="pgfx-3d-bevel-size-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 25px; text-align: right;">1.5</span>
+                                        </div>
+                                        <div class="pgfx-row">
+                                            <span style="font-size: 11px; color:#aaa; width: 60px;">B-Segs</span>
+                                            <input type="range" id="pgfx-3d-bevel-segments" min="1" max="8" value="3" style="flex: 1;">
+                                            <span id="pgfx-3d-bevel-segments-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 25px; text-align: right;">3</span>
+                                        </div>
+                                    </div>
+                                    <div class="pgfx-row">
+                                        <span style="font-size: 11px; color:#aaa; width: 60px;">Material</span>
+                                        <select id="pgfx-3d-material" class="pgfx-select" style="flex: 1;">
+                                            <option value="polished_gold">Polished Gold</option>
+                                            <option value="brushed_steel">Brushed Steel</option>
+                                            <option value="frosted_glass">Frosted Glass</option>
+                                            <option value="obsidian">Obsidian Black</option>
+                                            <option value="marble_white">White Marble</option>
+                                            <option value="glowing_neon">Glowing Neon</option>
+                                            <option value="matte_plastic">Matte Plastic</option>
+                                            <option value="default_color">Default Color</option>
+                                        </select>
+                                    </div>
+                                    <div class="pgfx-row">
+                                        <span style="font-size: 11px; color:#aaa; width: 60px;">Light Rot</span>
+                                        <input type="range" id="pgfx-3d-light-rot" min="0" max="360" value="45" style="flex: 1;">
+                                        <span id="pgfx-3d-light-rot-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 25px; text-align: right;">45°</span>
+                                    </div>
+                                    <div class="pgfx-row" style="justify-content: space-between;">
+                                        <span style="font-size: 11px; color:#aaa;">Cast Shadows</span>
+                                        <input type="checkbox" id="pgfx-3d-shadows" checked style="cursor: pointer;">
+                                    </div>
+                                    <div class="pgfx-row" style="justify-content: space-between;">
+                                        <span style="font-size: 11px; color:#aaa;">Show Grid</span>
+                                        <input type="checkbox" id="pgfx-3d-show-grid" checked style="cursor: pointer;">
+                                    </div>
+                                    <div class="pgfx-row" style="margin-top: 4px;">
+                                        <button id="pgfx-3d-reset-cam" class="pgfx-btn pgfx-btn-primary" style="flex: 1; font-size: 10px;" title="Reset 3D camera orientation and center the model (Shortcut: R)">Reset Camera (R)</button>
+                                    </div>
+                                    <div class="pgfx-row" style="margin-top: 4px;">
+                                        <button id="pgfx-import-3d-btn" class="pgfx-btn" style="flex: 1; font-size: 10px;" title="Import a 3D model file (.glb, .gltf, .obj, .stl) into the 3D viewport">🎲 Import 3D Model</button>
+                                        <button id="pgfx-clear-3d-models-btn" class="pgfx-btn" style="font-size: 10px; padding: 4px 8px;" title="Remove all imported 3D models from the scene">🗑️</button>
+                                    </div>
+                                    <input type="file" id="pgfx-import-3d-input" class="hidden-file-input" accept=".glb,.gltf,.obj,.stl">
+                                </div>
+
+
+                            </div>
+
+                            <div id="pgfx-2d-sidebar-controls" style="display: flex; flex-direction: column; gap: 12px; width: 100%;">
+                                <!-- ASSETS & TEXT -->
+                                <div class="pgfx-input-group">
+                                    <label class="pgfx-label">Creation Tools</label>
+                                    <button id="pgfx-add-text" class="pgfx-btn" style="justify-content: flex-start;" title="Add an editable text layer. Double-click the text on canvas to type.">📝 Add Text</button>
                                 <div class="pgfx-row">
                                     <button id="pgfx-add-rect" class="pgfx-btn" style="flex: 1;" title="Add a filled rectangle shape to the canvas.">⬛ Rect</button>
                                     <button id="pgfx-add-circle" class="pgfx-btn" style="flex: 1;" title="Add a filled circle/ellipse shape to the canvas.">⚫ Circle</button>
@@ -2900,7 +4863,7 @@ class LogoStudioUI {
                                     Free-form text appended verbatim to the final model prompt.
                                 </div>
                             </details>
-
+                            </div>
                         </div>
                         <div class="pgfx-studio-main">
                             <!-- TOP TOOLBAR -->
@@ -2936,10 +4899,15 @@ class LogoStudioUI {
                             </div>
 
                             <div class="pgfx-studio-canvas-wrapper">
-                                <canvas id="pgfx-design-canvas"></canvas>
+                                <div id="pgfx-2d-canvas-container" style="display: block; width: 100%; height: 100%; position: relative;">
+                                    <canvas id="pgfx-design-canvas"></canvas>
+                                </div>
+                                <div id="pgfx-3d-canvas-container" style="display: none; width: 100%; height: 100%; position: relative; overflow: hidden; background: #0a0a0b;">
+                                </div>
                             </div>
                         </div>
-                        <div class="pgfx-studio-right-sidebar">
+                        <div class="pgfx-studio-right-sidebar" style="margin-top: 45px;">
+                            <!-- LAYERS PANEL (works for both 2D and 3D) -->
                             <div class="pgfx-input-group" style="flex: 1; display: flex; flex-direction: column;">
                                 <label class="pgfx-label">
                                     Layers
@@ -2949,9 +4917,62 @@ class LogoStudioUI {
                                     <!-- Populated dynamically -->
                                 </div>
                             </div>
-                            <div class="pgfx-input-group">
-                                <label class="pgfx-label">Elite Bridge</label>
-                                <button id="pgfx-send-agent-btn" class="pgfx-btn pgfx-btn-primary" title="Package selected object properties and send to the AI Agent for intelligent refinement.">🤖 Send to Agent</button>
+
+                            <!-- 3D TRANSFORM TOOLS (shown only in 3D mode) -->
+                            <div id="pgfx-3d-tools-group" class="pgfx-input-group" style="display: none; border-color: rgba(6, 182, 212, 0.3); padding: 10px 8px;">
+                                <label class="pgfx-label" style="color: #06b6d4; font-size: 9px;">3D Transform</label>
+                                <div style="display: flex; flex-direction: column; gap: 4px;">
+                                    <button id="pgfx-3d-mode-translate" class="pgfx-btn pgfx-btn-primary" style="width: 100%; font-size: 10px; padding: 6px 2px;" title="Move mode (W)">↕ Translate</button>
+                                    <button id="pgfx-3d-mode-rotate" class="pgfx-btn" style="width: 100%; font-size: 10px; padding: 6px 2px;" title="Rotate mode (E)">↻ Rotate</button>
+                                    <button id="pgfx-3d-mode-scale" class="pgfx-btn" style="width: 100%; font-size: 10px; padding: 6px 2px;" title="Scale mode">⇔ Scale</button>
+                                </div>
+                                <div style="font-size: 8px; color: #71717a; margin-top: 4px; text-align: center; line-height: 1.2;">Click object to select.<br>W / E to switch modes.</div>
+                            </div>
+
+                            <!-- OBJECT PROPERTIES (editable for both 2D and 3D) -->
+                            <div id="pgfx-properties-panel" class="pgfx-input-group" style="display: none; padding: 10px 8px;">
+                                <label class="pgfx-label" style="font-size: 9px;">Object Properties</label>
+                                <div class="pgfx-row" style="justify-content: space-between; align-items: center; gap: 4px;">
+                                    <span style="font-size: 9px; color:#aaa;">X</span>
+                                    <input id="pgfx-prop-x" type="number" step="1" style="width: 50px; font-size: 9px; background: #1a1a2e; color: #d4d4d8; border: 1px solid #333; border-radius: 4px; padding: 2px 3px;">
+                                </div>
+                                <div class="pgfx-row" style="justify-content: space-between; align-items: center; gap: 4px;">
+                                    <span style="font-size: 9px; color:#aaa;">Y</span>
+                                    <input id="pgfx-prop-y" type="number" step="1" style="width: 50px; font-size: 9px; background: #1a1a2e; color: #d4d4d8; border: 1px solid #333; border-radius: 4px; padding: 2px 3px;">
+                                </div>
+                                <div id="pgfx-prop-z-row" class="pgfx-row" style="justify-content: space-between; align-items: center; gap: 4px; display: none;">
+                                    <span style="font-size: 9px; color:#06b6d4;">Z</span>
+                                    <input id="pgfx-prop-z" type="number" step="1" style="width: 50px; font-size: 9px; background: #1a1a2e; color: #d4d4d8; border: 1px solid #333; border-radius: 4px; padding: 2px 3px;">
+                                </div>
+                                <div class="pgfx-row" style="justify-content: space-between; align-items: center; gap: 4px;">
+                                    <span style="font-size: 9px; color:#aaa;">Rotation</span>
+                                    <input id="pgfx-prop-rotation" type="number" step="1" style="width: 50px; font-size: 9px; background: #1a1a2e; color: #d4d4d8; border: 1px solid #333; border-radius: 4px; padding: 2px 3px;">
+                                </div>
+                                <div class="pgfx-row" style="justify-content: space-between; align-items: center; gap: 4px;">
+                                    <span style="font-size: 9px; color:#aaa;">Scale</span>
+                                    <input id="pgfx-prop-scale" type="number" step="0.01" style="width: 50px; font-size: 9px; background: #1a1a2e; color: #d4d4d8; border: 1px solid #333; border-radius: 4px; padding: 2px 3px;">
+                                </div>
+                            </div>
+
+                            <!-- ELITE BRIDGE -->
+                            <div class="pgfx-input-group" style="padding: 10px 8px;">
+                                <label class="pgfx-label" style="font-size: 9px;">
+                                    Elite Bridge
+                                </label>
+                                <button id="pgfx-send-agent-btn" class="pgfx-btn pgfx-btn-primary" style="font-size: 10px; padding: 8px 4px;" title="Describe the selected element">🤖 Describe Selection</button>
+                                <div id="pgfx-agent-log" style="margin-top: 4px; max-height: 60px; overflow-y: auto; font-size: 8px; line-height: 1.4; color: #71717a;"></div>
+                            </div>
+
+                            <!-- SAVE / LOAD PROJECT -->
+                            <div class="pgfx-input-group" style="padding: 10px 8px;">
+                                <label class="pgfx-label" style="font-size: 9px;">
+                                    Project
+                                    <span style="font-weight: normal; opacity: 0.6; font-size: 8px;">.pgfx file</span>
+                                </label>
+                                <div style="display: flex; flex-direction: column; gap: 4px;">
+                                    <button id="pgfx-save-project" class="pgfx-btn" style="width: 100%; font-size: 10px; padding: 6px 2px;" title="Save project file">💾 Save</button>
+                                    <button id="pgfx-load-project" class="pgfx-btn" style="width: 100%; font-size: 10px; padding: 6px 2px;" title="Load project file">📂 Load</button>
+                                </div>
                             </div>
                         </div>
                     </div>

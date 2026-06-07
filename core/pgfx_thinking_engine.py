@@ -1902,6 +1902,10 @@ Return ONLY the final, refined prompt.
             try:
                 import torchaudio
 
+                try:
+                    torchaudio.set_audio_backend("soundfile")
+                except Exception:
+                    pass
                 waveform, sample_rate = torchaudio.load(audio_path)
                 audio_np = waveform.mean(dim=0).cpu().numpy() if waveform.ndim > 1 else waveform.cpu().numpy()
                 spectrogram_preview = utils.audio_to_spectrogram(audio_np, sample_rate)

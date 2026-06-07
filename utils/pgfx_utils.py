@@ -418,7 +418,7 @@ def _add_metadata_to_video(video_path, comment_text):
     Adds a comment to the video's metadata using ffmpeg-python.
     This is a non-destructive operation that creates a new file and replaces the old one.
     """
-    if not config.FFMPEG_PYTHON_AVAILABLE:
+    if not getattr(config, 'FFMPEG_PYTHON_AVAILABLE', False):
         print("\033[93m[PromptCrafter] Warning: Cannot add metadata to video. `ffmpeg-python` is not installed.\033[0m")
         return False
 
@@ -573,8 +573,8 @@ def _lrc_to_timed_segments(lrc_text: str):
         if match:
             time_str, text = match.groups()
             try:
-                minutes, seconds, centiseconds = map(float, time_str.strip('[]').split(':') + [time_str.strip('[]').split('.')[-1]])
-                start_time = minutes * 60 + seconds + centiseconds / 100
+                minutes, seconds_float = map(float, time_str.strip('[]').split(':'))
+                start_time = minutes * 60 + seconds_float
                 text = text.strip()
                 if text:
                     segments.append({'start': start_time, 'text': text})

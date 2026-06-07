@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import hashlib
 import wave
 import subprocess
@@ -525,6 +526,10 @@ class PGFX_FilmAudioLoader:
                 "torchaudio is required for PGFX_FilmAudioLoader. Install it with: pip install torchaudio"
             )
 
+        try:
+            torchaudio.set_audio_backend("soundfile")
+        except Exception:
+            pass
         waveform, sample_rate = torchaudio.load(audio_path)
 
         audio = {
@@ -1483,6 +1488,8 @@ class PGFX_FilmAudioSegmenter:
             return ({"waveform": torch.zeros((1, 1, 16000)), "sample_rate": 16000},)
 
         audio = active_timing.get("audio_dict")
+        if audio is None:
+            return ({"waveform": torch.zeros((1, 1, 16000)), "sample_rate": 16000},)
         return (audio,)
 
 

@@ -98,7 +98,7 @@ def check_conflicts(requirements, installed_packages, compat_db):
 
     return conflicts
 
-def create_backup(python_executable: Path) -> Path | None:
+def create_backup(python_executable: Path):
     """Creates a backup of the current environment's packages."""
     import datetime
     backup_dir = Path("./ComfyGuard/backups")
@@ -300,7 +300,7 @@ def main():
     if not conflicts:
         console.print("[bold green][OK] No conflicts found. It seems safe to install.[/bold green]")
         if args.non_interactive:
-            install_requirements(args.python_executable, args.requirements_file)
+            safe_install_requirements(args.python_executable, args.requirements_file)
             sys.exit(0)
         else:
             choice = Prompt.ask(
@@ -310,7 +310,7 @@ def main():
                 console=console
             )
             if choice == "y":
-                install_requirements(args.python_executable, args.requirements_file)
+                safe_install_requirements(args.python_executable, args.requirements_file)
                 sys.exit(0)
             else:
                 console.print("[yellow]Installation cancelled by user.[/yellow]")
@@ -356,7 +356,7 @@ def main():
             console.print("[yellow]Installation cancelled by user.[/yellow]")
             sys.exit(0)
         elif choice == "p":
-            install_requirements(args.python_executable, args.requirements_file)
+            safe_install_requirements(args.python_executable, args.requirements_file)
             sys.exit(0)
         elif choice == "a" and has_suggestion:
             console.print("[bold cyan]Applying suggested versions... (SIMULATED)[/bold cyan]")

@@ -75,8 +75,12 @@ except Exception as e:
     pass
 # ---[End of Patch]---
 import torch
-from omegaconf import ListConfig
-from omegaconf.base import ContainerMetadata
+try:
+    from omegaconf import ListConfig
+    from omegaconf.base import ContainerMetadata
+except ImportError:
+    ListConfig = None
+    ContainerMetadata = None
 import typing # Import typing module to access typing.Any
 import collections # Import collections module to access defaultdict
 import functools # Import functools for wraps
@@ -468,7 +472,7 @@ class PromptCrafter_AudioSplitter_v2:
             whisper_model, language, correction_model, enable_silence_detection, silence_threshold
         )
 
-        if is_new_project and any(f for f in os.listdir(target_folder) if f != ".project_metadata.json") or os.path.exists(os.path.join(target_folder, "FINAL_VIDEO.mp4")):
+        if is_new_project and (any(f for f in os.listdir(target_folder) if f != ".project_metadata.json") or os.path.exists(os.path.join(target_folder, "FINAL_VIDEO.mp4"))):
             version = 2
             while os.path.exists(os.path.join(base_output, f"{folder_name}_v{version}")):
                 version += 1
@@ -496,7 +500,10 @@ class PromptCrafter_AudioSplitter_v2:
 
         fps = 25
         frames_per_scene = int(round(fps * scene_duration_seconds))
-        frames_per_scene = self._adjust_frames_for_humo(frames_per_scene)
+        # NOTE: _adjust_frames_for_humo intentionally removed — it introduced a
+        # ~1% timing warp (frames_per_scene → H.264-aligned) that accumulated
+        # across scenes, causing WhisperX word timestamps to drift from scene
+        # boundaries. Scene-frame counts should match the user's intended duration.
         
         groups_per_set = 16
         samples_per_frame = sample_rate / fps
@@ -592,7 +599,10 @@ class PromptCrafter_AudioSplitter_v2:
             if runs > 0:
                 self._debug_print(f"Auto-queuing {runs} extra job(s).")
                 for _ in range(runs):
-                    PromptServer.instance.send_sync("impact-add-queue", {})
+                    try:
+                        PromptServer.instance.send_sync("impact-add-queue", {})
+                    except Exception:
+                        self._debug_print("Auto-queue skipped (Impact Pack not installed).")
             else:
                 self._debug_print("No extra jobs needed for auto-queuing.")
         else:
@@ -601,6 +611,8 @@ class PromptCrafter_AudioSplitter_v2:
     def _send_popup_notification(self, message: str, message_type: str = "info", title: str = "Audio Splitter"):
         try:
             PromptServer.instance.send_sync("vrgdg_instructions_popup", {"message": message, "type": message_type, "title": title})
+        except AttributeError:
+            self._debug_print("Popup notification skipped (VRGDG not installed).")
         except Exception as e:
             self._debug_print(f"Error sending popup notification: {str(e)}")
 
@@ -703,7 +715,7 @@ class PromptCrafter_AudioSplitter_v2:
             self._debug_print(error_msg)
             dummy_meta = {"error": error_msg}
             # Return a dummy tuple with correct types to prevent workflow crash
-            return (dummy_meta, 0.0, "", 0, "0:00", "0:00", error_msg, 0, 0, 0, dummy_meta, "", *([None] * 16), None)
+            return (dummy_meta, 0.0, "", 0, "0:00", "0:00", error_msg, 0, 0, 0, dummy_meta, "", *([None] * 16), any_typ)
         
         waveform, sample_rate = vocal_audio["waveform"], int(vocal_audio["sample_rate"])
         instrumental_waveform = instrumental_audio.get("waveform") if isinstance(instrumental_audio, dict) else None
@@ -956,15 +968,17 @@ class PromptCrafter_AudioSplitter_v2:
             instrumental_cues = [None] * 16
 
         meta = {
-            "durations": [actual_seconds_per_scene] * 16, 
-            "offset_seconds": start_sec, 
-            "starts": starts_samples, 
-            "sample_rate": sample_rate, 
-            "audio_total_duration": total_duration, 
-            "outputs_count": len(segments), 
-            "output_folder": output_folder, 
+            "durations": [actual_seconds_per_scene] * 16,
+            "durations_frames": [frames_per_scene] * 16,
+            "offset_seconds": start_sec,
+            "starts": starts_samples,
+            "sample_rate": sample_rate,
+            "fps": fps,
+            "audio_total_duration": total_duration,
+            "outputs_count": len(segments),
+            "output_folder": output_folder,
             "project_metadata": project_metadata,
-            "alignment_result": alignment_result, 
+            "alignment_result": alignment_result,
             "instrumental_cues": instrumental_cues,
             "language": language,
             "vocal_audio": vocal_audio

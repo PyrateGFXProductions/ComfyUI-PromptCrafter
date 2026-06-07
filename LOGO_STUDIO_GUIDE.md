@@ -39,4 +39,86 @@ Use the **High-Precision Linear Sliders** for surgical control:
     - **0.5**: Professional balance.
     - **0.1**: Minimalist tech.
 
-*Documentation maintained by PGFX Industrial Engineering.*
+---
+
+## 🎮 STUDIO CONTROLS
+
+### Drawing Tools
+- **D**: Free-draw Mode (Pencil/Spray/Circle)
+- **S**: Selection Mode (Move/Edit)
+- **Brush Settings**: Set size, color, and opacity in the top bar.
+
+### Navigation
+- **Mouse Wheel**: Zoom In/Out
+- **Middle Mouse Click**: Pan/Grab Canvas
+
+### Keyboard
+- **TAB / SHIFT+TAB**: Cycle Objects
+- **DEL / BACKSPACE**: Delete Selected
+- **Arrow Keys**: Nudge Object (1px)
+- **SHIFT + Arrow Keys**: Nudge Object (10px)
+
+### Shortcuts
+- **Double-Click**: Edit Text Layers
+- **Drag Handles**: Scale / Rotate
+
+### Sync Note
+Editing the 'Primary Text' (the first one added) will auto-sync with the node's text input on Save.
+
+---
+
+## 📋 NODE WIDGET REFERENCE
+
+This window = visual layout only.
+
+The following widgets on the node control the AI prompt sent to your model:
+
+**output_intent**
+- `VECTOR`: Enforces strict flat 2-D. No lighting, no 3D. Best for vinyl/screen-print.
+- `RASTER`: Enables shading, depth, cinematic lighting for print/photo use.
+
+**background_mode**
+- `simple`: Solid background colour (use Canvas BG above).
+- `preset`: Use a named environment scene.
+- `custom`: Write your own background description.
+- `none`: No background instruction sent to model.
+
+**background_preset**
+Active when background_mode = preset. Selects a scene environment (e.g. space nebula, city street).
+
+**background_custom_prompt**
+Active when background_mode = custom. Describe any background you want.
+
+**scene_interaction**
+Describes how the design physically interacts with its environment. E.g. "Letters sinking into sand."
+
+**material**
+Changes the perceived surface of all design elements (e.g. gold, marble, neon).
+
+**decoration**
+Adds surface ornamentation on top of the material (e.g. glowing_edges, ornate_engraving).
+
+**action**
+Applies a dynamic physical process to the design (e.g. burning, dissolving, floating).
+
+**environment_1/2/3**
+Three independent atmospheric effect slots. Adds particles, fog, lightning, etc. around the design.
+
+**environment_1_intensity / environment_2_intensity / environment_3_intensity**
+Per-slot intensity for each environment effect. 0.0 = disabled. 0.5 = subtle/sparse. 1.0 = normal. 1.5 = heavy. 2.0 = dramatic/intense.
+
+**style_mode**
+- `flat_vector`: Pure 2-D, no shading (best for vinyl).
+- `creative`: Cinematic lighting and artistic direction.
+- `realistic`: Photorealistic rendering.
+- `3d_render`: Full physically-based 3-D render look.
+
+**intensity**
+0.2 = very subtle styling. 1.0 = normal. 2.0 = extreme detail.
+
+**extra_instruction**
+Free-form text appended verbatim to the final model prompt.
+
+---
+
+*Documentation maintained by PGFX Industrial Engineering.**

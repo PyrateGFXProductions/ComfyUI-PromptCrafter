@@ -1,0 +1,1020 @@
+{
+  "last_node_id": 33,
+  "last_link_id": 33,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Note",
+      "pos": [
+        10,
+        10
+      ],
+      "size": [
+        1000,
+        180
+      ],
+      "widgets_values": [
+        "☠️ PGFX STUDIO + LTX 2.3 MUSIC VIDEO PIPELINE\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nTextFormatter → KeyframePromptScheduler → LTX GGUF — Per-segment prompts with overarching theme\n\nHOW IT WORKS:\n① GLOBAL THEME: ProjectContext + Stylist define song/visual identity → TextFormatter combines into overarching prompt\n② AUDIO: Load wav → SoundEngineer segments it → TimingMapAdapter normalizes timing\n③ PER-SEGMENT PROMPTS: KFS stores per-scene JSON prompts, prepends overarching theme, selects by frame_number\n④ LTXV2.3 GGUf: Proven pipeline generates video conditioned on the prompt\n⑤ ASSEMBLY: Editor saves each clip → PostMaster stitches final video with audio\n\nFILL THIS IN FIRST:\n• ProjectContext: song metadata, artist, genre, era, aesthetic\n• Stylist: base style, character tags, lighting mood\n• Producer: project name, resolution, fps\n• LoadAudio: your .wav file path\n• KFS: frame_number (0=first segment), keyframe_prompts JSON with per-segment prompts"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "PGFX_Studio_ProjectContext",
+      "pos": [
+        10,
+        220
+      ],
+      "size": [
+        315,
+        240
+      ],
+      "widgets_values": [
+        "A high-energy electronic dance track with emotional breakdown",
+        "Artist Name",
+        "Electronic / Synthwave",
+        "Modern",
+        "Cyberpunk neon with emotional depth, synthwave aesthetics, vibrant colors"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "PGFX_Studio_Stylist",
+      "pos": [
+        350,
+        220
+      ],
+      "size": [
+        315,
+        260
+      ],
+      "widgets_values": [
+        "Synthwave / Outrun",
+        "wearing a reflective cyberpunk jacket, neon hair, determined expression",
+        "Neon/Cyber",
+        "retrowave, chromed, glowing edges, 80s aesthetic",
+        1.0
+      ]
+    },
+    {
+      "id": 4,
+      "type": "PGFX_Studio_Producer",
+      "pos": [
+        700,
+        220
+      ],
+      "size": [
+        315,
+        200
+      ],
+      "widgets_values": [
+        "MyMusicVideo",
+        "854x480",
+        24,
+        "PromptCrafter_Studio"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "PromptCrafter_Formatter",
+      "pos": [
+        1050,
+        220
+      ],
+      "size": [
+        420,
+        420
+      ],
+      "widgets_values": [
+        "Build from Template",
+        "",
+        "",
+        "OVERARCHING THEME:\n{a}\n\nVISUAL IDENTITY:\n{b}\n\nLORA TRIGGERS:\n{c}",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "Prompt",
+        "Plain Text"
+      ],
+      "inputs": [
+        {
+          "name": "var_a",
+          "type": "STRING",
+          "link": 1
+        },
+        {
+          "name": "var_b",
+          "type": "STRING",
+          "link": 2
+        },
+        {
+          "name": "var_c",
+          "type": "STRING",
+          "link": 3
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "Note",
+      "pos": [
+        10,
+        500
+      ],
+      "size": [
+        1350,
+        80
+      ],
+      "widgets_values": [
+        "② AUDIO PIPELINE — Load a .wav → SoundEngineer segments it → TimingMapAdapter normalizes for downstream nodes"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "LoadAudio",
+      "pos": [
+        10,
+        610
+      ],
+      "size": [
+        315,
+        140
+      ],
+      "widgets_values": [
+        "input/YouTuber.wav"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "PGFX_Studio_SoundEngineer",
+      "pos": [
+        350,
+        610
+      ],
+      "size": [
+        315,
+        300
+      ],
+      "widgets_values": [
+        "Cinematic Trailer",
+        4.0,
+        true,
+        0.5,
+        true
+      ],
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 5
+        },
+        {
+          "name": "PROJECT_CONFIG",
+          "type": "DICT",
+          "link": 6
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "PGFX_Studio_TimingMapAdapter",
+      "pos": [
+        700,
+        610
+      ],
+      "size": [
+        315,
+        200
+      ],
+      "inputs": [
+        {
+          "name": "TIMING_MAP",
+          "type": "DICT",
+          "link": 7
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "Note",
+      "pos": [
+        10,
+        950
+      ],
+      "size": [
+        450,
+        80
+      ],
+      "widgets_values": [
+        "③ PER-SEGMENT PROMPTS — KFS stores per-scene prompts. Increment frame_number for each segment."
+      ]
+    },
+    {
+      "id": 11,
+      "type": "KeyframePromptScheduler",
+      "pos": [
+        10,
+        1060
+      ],
+      "size": [
+        450,
+        250
+      ],
+      "widgets_values": [
+        "{\"0\": \"Intro: neon city skyline at night, rain-slicked streets reflecting purple and pink lights, slow pan across the city\",\n\"10\": \"Verse 1: character walking alone through neon-lit alley, determined expression, steam rising from vents\",\n\"20\": \"Chorus: explosion of color and light, character running through rainbow reflections, high energy\",\n\"30\": \"Breakdown: slow motion, single light source, emotional close-up on character face\",\n\"40\": \"Final Chorus: full spectacle, all neon colors, character triumphant, wide angle\"}",
+        0,
+        "",
+        ""
+      ],
+      "inputs": [
+        {
+          "name": "prepend_text",
+          "type": "STRING",
+          "link": 4
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "CLIPTextEncode",
+      "pos": [
+        500,
+        1060
+      ],
+      "size": [
+        315,
+        200
+      ],
+      "widgets_values": [
+        ""
+      ],
+      "inputs": [
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 8
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 13
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "UnetLoaderGGUF",
+      "pos": [
+        1050,
+        1060
+      ],
+      "size": [
+        315,
+        130
+      ],
+      "widgets_values": [
+        "ltx2.3/LTX-2.3-22B-distilled-1.1-Q4_K_M.gguf"
+      ]
+    },
+    {
+      "id": 14,
+      "type": "VAELoader",
+      "pos": [
+        1050,
+        1220
+      ],
+      "size": [
+        315,
+        100
+      ],
+      "widgets_values": [
+        "ltx2.3/ltx-2.3-22b-distilled_video_vae.safetensors"
+      ]
+    },
+    {
+      "id": 15,
+      "type": "DualCLIPLoader",
+      "pos": [
+        1050,
+        1350
+      ],
+      "size": [
+        315,
+        130
+      ],
+      "widgets_values": [
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx2.3/ltx-2.3-22b-distilled_embeddings_connectors.safetensors",
+        "ltxv"
+      ]
+    },
+    {
+      "id": 16,
+      "type": "CLIPTextEncode",
+      "pos": [
+        500,
+        1290
+      ],
+      "size": [
+        315,
+        150
+      ],
+      "widgets_values": [
+        "blurry, low quality, distorted, ugly, deformed, watermark, text, oversaturated, bad anatomy, extra limbs"
+      ],
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 14
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "LTXVConditioning",
+      "pos": [
+        1400,
+        1060
+      ],
+      "size": [
+        315,
+        120
+      ],
+      "widgets_values": [
+        25.0
+      ],
+      "inputs": [
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 9
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 10
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "EmptyLTXVLatentVideo",
+      "pos": [
+        1400,
+        1220
+      ],
+      "size": [
+        315,
+        150
+      ],
+      "widgets_values": [
+        768,
+        512,
+        97,
+        1
+      ]
+    },
+    {
+      "id": 19,
+      "type": "ModelSamplingLTXV",
+      "pos": [
+        1400,
+        1400
+      ],
+      "size": [
+        315,
+        130
+      ],
+      "widgets_values": [
+        2.05,
+        0.95
+      ],
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 11
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "LTXVApplySTG",
+      "pos": [
+        1400,
+        1560
+      ],
+      "size": [
+        315,
+        110
+      ],
+      "widgets_values": [
+        "14, 19"
+      ],
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 12
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "LTXVScheduler",
+      "pos": [
+        1400,
+        1700
+      ],
+      "size": [
+        315,
+        170
+      ],
+      "widgets_values": [
+        20,
+        2.05,
+        0.95,
+        true,
+        0.1
+      ],
+      "inputs": [
+        {
+          "name": "latent",
+          "type": "LATENT",
+          "link": 15
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "KSamplerSelect",
+      "pos": [
+        1400,
+        1900
+      ],
+      "size": [
+        315,
+        110
+      ],
+      "widgets_values": [
+        "euler"
+      ]
+    },
+    {
+      "id": 23,
+      "type": "RandomNoise",
+      "pos": [
+        1400,
+        2040
+      ],
+      "size": [
+        315,
+        110
+      ],
+      "widgets_values": [
+        0
+      ]
+    },
+    {
+      "id": 24,
+      "type": "STGGuiderAdvanced",
+      "pos": [
+        1400,
+        2180
+      ],
+      "size": [
+        315,
+        210
+      ],
+      "widgets_values": [
+        0.998,
+        true,
+        "1.0, 0.9933, 0.9850, 0.9767, 0.9008, 0.6180",
+        "8, 6, 6, 4, 3, 1",
+        "4, 4, 3, 2, 1, 0",
+        "1, 1, 1, 1, 1, 1",
+        "[29], [29], [29], [29], [29], [29]"
+      ],
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 16
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 17
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 18
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "PGFX_LTXVInContextSampler",
+      "pos": [
+        1400,
+        2420
+      ],
+      "size": [
+        400,
+        310
+      ],
+      "widgets_values": [
+        -1,
+        1.0,
+        0,
+        1000,
+        0,
+        1.0
+      ],
+      "inputs": [
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 19
+        },
+        {
+          "name": "guider",
+          "type": "GUIDER",
+          "link": 20
+        },
+        {
+          "name": "sampler",
+          "type": "SAMPLER",
+          "link": 21
+        },
+        {
+          "name": "sigmas",
+          "type": "SIGMAS",
+          "link": 22
+        },
+        {
+          "name": "noise",
+          "type": "NOISE",
+          "link": 23
+        },
+        {
+          "name": "guiding_latents",
+          "type": "LATENT",
+          "link": 24
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "PGFX_LTXVCorrectiveMask",
+      "pos": [
+        1850,
+        1060
+      ],
+      "size": [
+        315,
+        150
+      ],
+      "widgets_values": [
+        "enabled"
+      ],
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 25
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "VAEDecode",
+      "pos": [
+        1850,
+        1240
+      ],
+      "size": [
+        315,
+        120
+      ],
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 26
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 27
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "VHS_VideoCombine",
+      "pos": [
+        1850,
+        1400
+      ],
+      "size": [
+        315,
+        300
+      ],
+      "widgets_values": [
+        8,
+        0,
+        "PGFX_MusicVideo_Scene",
+        "video/h264-mp4",
+        false,
+        true
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 28
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 29
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "Note",
+      "pos": [
+        1850,
+        1800
+      ],
+      "size": [
+        700,
+        80
+      ],
+      "widgets_values": [
+        "④ ASSEMBLY — Editor saves structured Scene_XXX clips, PostMaster stitches final video with audio when all scenes are done"
+      ]
+    },
+    {
+      "id": 30,
+      "type": "PGFX_Studio_Editor",
+      "pos": [
+        1850,
+        1900
+      ],
+      "size": [
+        315,
+        200
+      ],
+      "widgets_values": [
+        0
+      ],
+      "inputs": [
+        {
+          "name": "PROJECT_CONFIG",
+          "type": "DICT",
+          "link": 30
+        },
+        {
+          "name": "video_frames",
+          "type": "IMAGE",
+          "link": 31
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "PGFX_Studio_PostMaster",
+      "pos": [
+        2200,
+        1900
+      ],
+      "size": [
+        315,
+        230
+      ],
+      "widgets_values": [
+        true,
+        false,
+        "FINAL_MUSIC_VIDEO"
+      ],
+      "inputs": [
+        {
+          "name": "PROJECT_CONFIG",
+          "type": "DICT",
+          "link": 32
+        },
+        {
+          "name": "master_audio",
+          "type": "AUDIO",
+          "link": 33
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "Note",
+      "pos": [
+        10,
+        1350
+      ],
+      "size": [
+        950,
+        200
+      ],
+      "widgets_values": [
+        "HOW TO USE:\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n1. Fill in ProjectContext (song metadata, artist, genre, aesthetic)\n2. Fill in Stylist (base style, character description, lighting mood)\n3. Set Producer project name and resolution\n4. Place your .wav in ComfyUI/input/ and update LoadAudio path\n5. Set KFS frame_number to 0 for first segment, edit keyframe_prompts JSON for your song\n   — Each key (0, 10, 20...) is a segment. Set frame_number to match the segment you want.\n6. Queue Prompt — TextFormatter combines theme+style, KFS prepends it to your segment prompt\n7. After rendering, increment frame_number (0 → 10 → 20) and queue again for next segment\n8. When all segments are done, set PostMaster force_render_now=true to stitch the final video"
+      ]
+    },
+    {
+      "id": 33,
+      "type": "Note",
+      "pos": [
+        500,
+        950
+      ],
+      "size": [
+        500,
+        80
+      ],
+      "widgets_values": [
+        "TIP: You can also add Screenwriter + CreativeDirector + Director → Cinematographer before KFS for LLM-generated per-segment prompts instead of manual JSON"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      2,
+      0,
+      5,
+      4,
+      "STRING"
+    ],
+    [
+      2,
+      3,
+      0,
+      5,
+      5,
+      "STRING"
+    ],
+    [
+      3,
+      3,
+      1,
+      5,
+      6,
+      "STRING"
+    ],
+    [
+      4,
+      5,
+      0,
+      11,
+      2,
+      "STRING"
+    ],
+    [
+      5,
+      7,
+      0,
+      8,
+      0,
+      "AUDIO"
+    ],
+    [
+      6,
+      4,
+      0,
+      8,
+      1,
+      "DICT"
+    ],
+    [
+      7,
+      8,
+      1,
+      9,
+      0,
+      "DICT"
+    ],
+    [
+      8,
+      11,
+      0,
+      12,
+      0,
+      "STRING"
+    ],
+    [
+      9,
+      12,
+      0,
+      17,
+      0,
+      "CONDITIONING"
+    ],
+    [
+      10,
+      16,
+      0,
+      17,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      11,
+      13,
+      0,
+      19,
+      0,
+      "MODEL"
+    ],
+    [
+      12,
+      19,
+      0,
+      20,
+      0,
+      "MODEL"
+    ],
+    [
+      13,
+      15,
+      0,
+      12,
+      1,
+      "CLIP"
+    ],
+    [
+      14,
+      15,
+      0,
+      16,
+      1,
+      "CLIP"
+    ],
+    [
+      15,
+      18,
+      0,
+      21,
+      0,
+      "LATENT"
+    ],
+    [
+      16,
+      20,
+      0,
+      24,
+      0,
+      "MODEL"
+    ],
+    [
+      17,
+      17,
+      0,
+      24,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      18,
+      17,
+      1,
+      24,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      19,
+      14,
+      0,
+      25,
+      0,
+      "VAE"
+    ],
+    [
+      20,
+      24,
+      0,
+      25,
+      1,
+      "GUIDER"
+    ],
+    [
+      21,
+      22,
+      0,
+      25,
+      2,
+      "SAMPLER"
+    ],
+    [
+      22,
+      21,
+      0,
+      25,
+      3,
+      "SIGMAS"
+    ],
+    [
+      23,
+      23,
+      0,
+      25,
+      4,
+      "NOISE"
+    ],
+    [
+      24,
+      18,
+      0,
+      25,
+      5,
+      "LATENT"
+    ],
+    [
+      25,
+      25,
+      0,
+      26,
+      0,
+      "LATENT"
+    ],
+    [
+      26,
+      26,
+      0,
+      27,
+      0,
+      "LATENT"
+    ],
+    [
+      27,
+      14,
+      0,
+      27,
+      1,
+      "VAE"
+    ],
+    [
+      28,
+      27,
+      0,
+      28,
+      0,
+      "IMAGE"
+    ],
+    [
+      29,
+      14,
+      0,
+      28,
+      1,
+      "VAE"
+    ],
+    [
+      30,
+      4,
+      0,
+      30,
+      0,
+      "DICT"
+    ],
+    [
+      31,
+      27,
+      0,
+      30,
+      1,
+      "IMAGE"
+    ],
+    [
+      32,
+      4,
+      0,
+      31,
+      0,
+      "DICT"
+    ],
+    [
+      33,
+      7,
+      0,
+      31,
+      1,
+      "AUDIO"
+    ]
+  ],
+  "version": 0.4
+}

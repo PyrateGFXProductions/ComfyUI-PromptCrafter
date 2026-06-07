@@ -9,72 +9,122 @@ const injectStyles = () => {
         .pgfx-browser-container {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
             background: #111113;
             border: 1px solid rgba(255,255,255,0.1);
             border-radius: 8px;
-            padding: 12px;
+            padding: 10px;
             color: white;
             font-family: 'Inter', system-ui, sans-serif;
             pointer-events: auto;
-            min-height: 400px;
+            box-sizing: border-box;
         }
-        .pgfx-browser-header {
+        .pgfx-pathbar {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 8px;
-        }
-        .pgfx-browser-title {
-            font-size: 11px;
-            font-weight: bold;
-            color: #06b6d4;
-            white-space: nowrap;
-        }
-        .pgfx-breadcrumbs {
-            display: flex;
-            flex-wrap: wrap;
             align-items: center;
             gap: 2px;
-            padding: 4px 8px;
+            padding: 3px 6px;
             background: #000;
             border: 1px solid #333;
             border-radius: 4px;
             font-size: 11px;
-            min-height: 28px;
+            min-height: 26px;
+            cursor: text;
+            position: relative;
+            flex: 1;
         }
-        .pgfx-breadcrumb-segment {
+        .pgfx-path-segment {
             cursor: pointer;
             color: #06b6d4;
-            padding: 1px 4px;
+            padding: 1px 3px;
             border-radius: 2px;
             white-space: nowrap;
         }
-        .pgfx-breadcrumb-segment:hover {
+        .pgfx-path-segment:hover {
             background: #1a1a2e;
         }
-        .pgfx-breadcrumb-sep {
+        .pgfx-path-sep {
             color: #555;
-            margin: 0 2px;
+            margin: 0 1px;
+            user-select: none;
         }
-        .pgfx-breadcrumb-current {
+        .pgfx-path-current {
             color: #aaa;
             white-space: nowrap;
         }
-        .pgfx-toolbar {
+        .pgfx-path-input {
+            flex: 1;
+            background: #000;
+            border: none;
+            color: white;
+            font-size: 11px;
+            outline: none;
+            font-family: inherit;
+            min-width: 50px;
+        }
+        .pgfx-dropdown-btn {
+            background: none;
+            border: 1px solid #555;
+            color: #aaa;
+            padding: 0 6px;
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 11px;
+            line-height: 20px;
+            flex-shrink: 0;
+        }
+        .pgfx-dropdown-btn:hover {
+            background: #222;
+            color: white;
+        }
+        .pgfx-folder-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            max-height: 220px;
+            overflow-y: auto;
+            min-width: 200px;
+            z-index: 1000;
+            margin-top: 2px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+        }
+        .pgfx-folder-dropdown.active {
+            display: block;
+        }
+        .pgfx-dropdown-item {
+            padding: 5px 10px;
+            font-size: 11px;
+            cursor: pointer;
+            color: #ccc;
+            white-space: nowrap;
+        }
+        .pgfx-dropdown-item:hover {
+            background: #06b6d4;
+            color: black;
+        }
+        .pgfx-dropdown-item.parent-item {
+            border-bottom: 1px solid #333;
+        }
+        .pgfx-top-row {
             display: flex;
-            gap: 6px;
             align-items: center;
+            gap: 4px;
         }
         .pgfx-btn {
             background: #18181b;
             border: 1px solid #333;
             color: #aaa;
-            padding: 4px 10px;
+            padding: 2px 8px;
             border-radius: 4px;
             cursor: pointer;
             font-size: 10px;
             white-space: nowrap;
+            line-height: 20px;
+            flex-shrink: 0;
         }
         .pgfx-btn:hover {
             background: #222;
@@ -84,74 +134,76 @@ const injectStyles = () => {
             opacity: 0.4;
             cursor: default;
         }
+        .pgfx-refresh-btn {
+            font-size: 13px;
+            padding: 2px 6px;
+            line-height: 20px;
+        }
+        .pgfx-search-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
         .pgfx-browser-search {
             background: #000;
             border: 1px solid #444;
             color: white;
-            padding: 4px 8px;
+            padding: 3px 8px;
             border-radius: 4px;
             font-size: 11px;
             outline: none;
-            flex: 1;
-            min-width: 80px;
+            width: 160px;
+            flex-shrink: 0;
         }
         .pgfx-browser-search:focus {
             border-color: #06b6d4;
         }
-        .pgfx-browser-main {
+        .pgfx-details-bar {
             display: flex;
-            gap: 8px;
-            flex: 1;
-            min-height: 0;
-        }
-        .pgfx-folder-list {
-            width: 160px;
-            min-width: 120px;
+            align-items: center;
+            gap: 10px;
+            padding: 3px 8px;
             background: #000;
             border: 1px solid #333;
             border-radius: 4px;
-            overflow-y: auto;
-            padding: 4px;
-            display: flex;
-            flex-direction: column;
-            gap: 1px;
-            max-height: 280px;
-        }
-        .pgfx-folder-item {
-            padding: 4px 6px;
-            font-size: 11px;
-            cursor: pointer;
-            border-radius: 3px;
-            color: #ccc;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .pgfx-folder-item:hover {
-            background: #1a1a2e;
-            color: white;
-        }
-        .pgfx-folder-item.active-folder {
-            background: #06b6d4;
-            color: black;
-        }
-        .pgfx-grid-area {
+            font-size: 10px;
+            min-height: 24px;
+            color: #888;
             flex: 1;
-            min-width: 0;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+        .pgfx-details-item {
             display: flex;
-            flex-direction: column;
-            gap: 4px;
+            gap: 3px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .pgfx-details-item + .pgfx-details-item::before {
+            content: "|";
+            color: #444;
+            margin-right: 10px;
+        }
+        .pgfx-details-label {
+            color: #555;
+        }
+        .pgfx-details-value {
+            color: #ddd;
+        }
+        .pgfx-details-empty {
+            color: #555;
+            font-style: italic;
         }
         .pgfx-browser-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
-            gap: 6px;
-            max-height: 280px;
+            gap: 5px;
+            max-height: 260px;
             overflow-y: auto;
             padding-right: 4px;
         }
         .pgfx-browser-grid::-webkit-scrollbar {
-            width: 6px;
+            width: 5px;
         }
         .pgfx-browser-grid::-webkit-scrollbar-thumb {
             background: #333;
@@ -187,62 +239,16 @@ const injectStyles = () => {
             height: 100%;
             object-fit: cover;
         }
-        .pgfx-folder-thumb {
-            font-size: 24px;
-            opacity: 0.5;
-        }
         .pgfx-pagination {
             display: flex;
             justify-content: space-between;
             align-items: center;
             gap: 4px;
-            margin-top: 4px;
         }
         .pgfx-page-info {
             font-size: 10px;
             color: #888;
             white-space: nowrap;
-        }
-        .pgfx-browser-details {
-            width: 160px;
-            min-width: 120px;
-            background: #000;
-            border: 1px solid #333;
-            border-radius: 4px;
-            padding: 8px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            font-size: 10px;
-            max-height: 280px;
-            overflow-y: auto;
-        }
-        .pgfx-details-title {
-            font-weight: bold;
-            text-transform: uppercase;
-            color: #06b6d4;
-            font-size: 11px;
-            letter-spacing: 0.5px;
-            border-bottom: 1px solid #333;
-            padding-bottom: 4px;
-        }
-        .pgfx-details-row {
-            display: flex;
-            flex-direction: column;
-            gap: 1px;
-        }
-        .pgfx-details-label {
-            font-size: 9px;
-            text-transform: uppercase;
-            color: #888;
-            letter-spacing: 0.5px;
-        }
-        .pgfx-details-value {
-            color: #eee;
-            word-break: break-all;
-            background: #111;
-            padding: 3px 5px;
-            border-radius: 2px;
         }
     `;
     document.head.appendChild(style);
@@ -268,88 +274,67 @@ app.registerExtension({
             selectedImageWidget.type = "hidden";
 
             let currentFolder = folderWidget.value || ".";
-            let allSubfolders = [];
 
-            // --- State ---
             let imageData = { images: [], total: 0, page: 0, total_pages: 1 };
             let currentPage = 0;
             const perPage = 18;
 
-            // --- Thumbnail cache ---
-            const getCachedThumb = (url) => {
-                if (thumbCache.has(url)) return thumbCache.get(url);
-                const img = new Image();
-                img.src = url;
-                thumbCache.set(url, img);
-                return img;
-            };
-
-            const clearImageCache = () => {
-                // Only clear image data cache, not rendered Image objects
-            };
-
-            // --- Container ---
             const container = document.createElement("div");
             container.className = "pgfx-browser-container";
 
-            // --- Header row ---
-            const headerRow = document.createElement("div");
-            headerRow.className = "pgfx-browser-header";
+            // --- Top row: path bar + refresh ---
+            const topRow = document.createElement("div");
+            topRow.className = "pgfx-top-row";
 
-            const title = document.createElement("span");
-            title.className = "pgfx-browser-title";
-            title.textContent = "PGFX Visual Browser";
+            const pathBar = document.createElement("div");
+            pathBar.className = "pgfx-pathbar";
 
-            const headerToolbar = document.createElement("div");
-            headerToolbar.className = "pgfx-toolbar";
+            const dropdownBtn = document.createElement("button");
+            dropdownBtn.className = "pgfx-dropdown-btn";
+            dropdownBtn.textContent = "📂 ▼";
+            dropdownBtn.title = "Browse subfolders";
+
+            const folderDropdown = document.createElement("div");
+            folderDropdown.className = "pgfx-folder-dropdown";
+
+            pathBar.appendChild(dropdownBtn);
+            pathBar.appendChild(folderDropdown);
 
             const refreshBtn = document.createElement("button");
-            refreshBtn.className = "pgfx-btn";
-            refreshBtn.textContent = "↻ Refresh";
+            refreshBtn.className = "pgfx-btn pgfx-refresh-btn";
+            refreshBtn.textContent = "↻";
+            refreshBtn.title = "Refresh";
             refreshBtn.onclick = async (e) => {
                 e.stopPropagation();
-                await loadSubfolders();
-                await loadImages(0);
+                await refreshAll();
             };
 
-            headerToolbar.appendChild(refreshBtn);
-            headerRow.append(title, headerToolbar);
-            container.appendChild(headerRow);
+            topRow.appendChild(pathBar);
+            topRow.appendChild(refreshBtn);
+            container.appendChild(topRow);
 
-            // --- Breadcrumbs ---
-            const breadcrumbs = document.createElement("div");
-            breadcrumbs.className = "pgfx-breadcrumbs";
-            container.appendChild(breadcrumbs);
-
-            // --- Search row ---
+            // --- Search row + details bar ---
             const searchRow = document.createElement("div");
-            searchRow.style.display = "flex";
-            searchRow.style.gap = "6px";
-            searchRow.style.alignItems = "center";
+            searchRow.className = "pgfx-search-row";
 
             const searchInput = document.createElement("input");
             searchInput.className = "pgfx-browser-search";
-            searchInput.placeholder = "Search images...";
+            searchInput.placeholder = "Search...";
+
+            const detailsBar = document.createElement("div");
+            detailsBar.className = "pgfx-details-bar";
+            detailsBar.innerHTML = '<span class="pgfx-details-empty">Select an image</span>';
+
             searchRow.appendChild(searchInput);
+            searchRow.appendChild(detailsBar);
             container.appendChild(searchRow);
 
-            // --- Main area (folder sidebar + grid + details) ---
-            const mainArea = document.createElement("div");
-            mainArea.className = "pgfx-browser-main";
-
-            // Folder list sidebar
-            const folderList = document.createElement("div");
-            folderList.className = "pgfx-folder-list";
-            mainArea.appendChild(folderList);
-
-            // Grid area
-            const gridArea = document.createElement("div");
-            gridArea.className = "pgfx-grid-area";
-
+            // --- Grid ---
             const grid = document.createElement("div");
             grid.className = "pgfx-browser-grid";
-            gridArea.appendChild(grid);
+            container.appendChild(grid);
 
+            // --- Pagination ---
             const paginationRow = document.createElement("div");
             paginationRow.className = "pgfx-pagination";
 
@@ -366,16 +351,7 @@ app.registerExtension({
             nextBtn.textContent = "Next ▶";
 
             paginationRow.append(prevBtn, pageInfo, nextBtn);
-            gridArea.appendChild(paginationRow);
-            mainArea.appendChild(gridArea);
-
-            // Details panel
-            const detailsPanel = document.createElement("div");
-            detailsPanel.className = "pgfx-browser-details";
-            detailsPanel.innerHTML = '<div class="pgfx-details-title">Details</div><div style="color: #666; text-align: center; margin-top: 10px;">Select an image</div>';
-            mainArea.appendChild(detailsPanel);
-
-            container.appendChild(mainArea);
+            container.appendChild(paginationRow);
 
             // --- DOM Widget ---
             const widget = node.addDOMWidget("VisualBrowser", "visual_browser", container, {
@@ -383,89 +359,265 @@ app.registerExtension({
                 getValue() { return selectedImageWidget.value; },
                 setValue(v) { selectedImageWidget.value = v; }
             });
-            node.size = [680, 480];
+            widget.computeSize = function(width) {
+                return [width, 440];
+            };
+            if (node.setSize) node.setSize([680, 480]);
 
-            // --- Breadcrumb rendering ---
-            const renderBreadcrumbs = () => {
-                breadcrumbs.innerHTML = "";
-                const segments = currentFolder === "." ? [] : currentFolder.split("/");
-                const allParts = [".", ...segments];
-
-                allParts.forEach((part, idx) => {
-                    if (idx > 0) {
-                        const sep = document.createElement("span");
-                        sep.className = "pgfx-breadcrumb-sep";
-                        sep.textContent = "/";
-                        breadcrumbs.appendChild(sep);
-                    }
-
-                    const isLast = idx === allParts.length - 1;
-                    if (isLast) {
-                        const span = document.createElement("span");
-                        span.className = "pgfx-breadcrumb-current";
-                        const label = part === "." ? "Output" : part;
-                        span.textContent = label;
-                        breadcrumbs.appendChild(span);
-                    } else {
-                        const span = document.createElement("span");
-                        span.className = "pgfx-breadcrumb-segment";
-                        const label = part === "." ? "Output" : part;
-                        span.textContent = label;
-                        const path = allParts.slice(0, idx + 1).join("/");
-                        span.onclick = () => navigateTo(path);
-                        breadcrumbs.appendChild(span);
-                    }
-                });
+            // --- Dropdown ---
+            const closeDropdown = () => {
+                folderDropdown.classList.remove("active");
             };
 
-            // --- Navigation ---
-            const navigateTo = async (folder) => {
-                currentFolder = folder;
-                folderWidget.value = folder;
-                renderBreadcrumbs();
-                await loadSubfolders();
-                await loadImages(0);
+            const openDropdown = async () => {
+                await populateDropdown();
+                folderDropdown.classList.add("active");
             };
 
-            // --- Load subfolders ---
-            const loadSubfolders = async () => {
-                try {
-                    const resp = await api.fetchApi(`/pgfx/browser/subfolders?folder=${encodeURIComponent(currentFolder)}`);
-                    const data = await resp.json();
-                    allSubfolders = data.subfolders || [];
-
-                    folderList.innerHTML = "";
-
-                    // Parent folder item
-                    if (data.parent) {
-                        const parentItem = document.createElement("div");
-                        parentItem.className = "pgfx-folder-item";
-                        parentItem.textContent = "📁 .. (Up)";
-                        parentItem.onclick = () => navigateTo(data.parent);
-                        folderList.appendChild(parentItem);
-                    }
-
-                    // Subfolder items
-                    allSubfolders.forEach(sf => {
-                        const item = document.createElement("div");
-                        item.className = "pgfx-folder-item";
-                        item.textContent = "📁 " + sf;
-                        item.onclick = () => {
-                            const target = currentFolder === "." ? sf : currentFolder + "/" + sf;
-                            navigateTo(target);
-                        };
-                        folderList.appendChild(item);
-                    });
-
-                    if (allSubfolders.length === 0 && !data.parent) {
-                        folderList.innerHTML = '<div style="padding: 8px; font-size: 10px; color: #555; text-align: center;">No subfolders</div>';
-                    }
-                } catch (e) {
-                    console.error("[PGFX] Error loading subfolders:", e);
+            const toggleDropdown = async (e) => {
+                e.stopPropagation();
+                if (folderDropdown.classList.contains("active")) {
+                    closeDropdown();
+                } else {
+                    await openDropdown();
                 }
             };
 
-            // --- Load images with server pagination ---
+            dropdownBtn.onclick = toggleDropdown;
+
+            document.addEventListener("click", (e) => {
+                if (!pathBar.contains(e.target)) {
+                    closeDropdown();
+                }
+            });
+
+            const populateDropdown = async () => {
+                folderDropdown.innerHTML = '<div style="padding: 8px; font-size: 10px; color: #555;">Loading...</div>';
+                try {
+                    const resp = await api.fetchApi(`/pgfx/browser/subfolders?folder=${encodeURIComponent(currentFolder)}`);
+                    const data = await resp.json();
+                    folderDropdown.innerHTML = "";
+
+                    if (data.parent) {
+                        const parentItem = document.createElement("div");
+                        parentItem.className = "pgfx-dropdown-item parent-item";
+                        parentItem.textContent = "📁 .. (Up)";
+                        parentItem.onclick = (e) => {
+                            e.stopPropagation();
+                            closeDropdown();
+                            navigateTo(data.parent);
+                        };
+                        folderDropdown.appendChild(parentItem);
+                    }
+
+                    const sfs = data.subfolders || [];
+                    if (sfs.length === 0 && !data.parent) {
+                        folderDropdown.innerHTML = '<div style="padding: 8px; font-size: 10px; color: #555;">No subfolders</div>';
+                        return;
+                    }
+
+                    sfs.forEach(sf => {
+                        const item = document.createElement("div");
+                        item.className = "pgfx-dropdown-item";
+                        item.textContent = "📁 " + sf;
+                        item.onclick = (e) => {
+                            e.stopPropagation();
+                            closeDropdown();
+                            const target = joinPath(currentFolder, sf);
+                            navigateTo(target);
+                        };
+                        folderDropdown.appendChild(item);
+                    });
+
+                    const pathInfo = document.createElement("div");
+                    pathInfo.style.cssText = "padding: 5px 10px; font-size: 9px; color: #555; border-top: 1px solid #333; margin-top: 4px; word-break: break-all;";
+                    pathInfo.textContent = data.current;
+                    folderDropdown.appendChild(pathInfo);
+                } catch (e) {
+                    console.error("[PGFX] Dropdown error:", e);
+                    folderDropdown.innerHTML = '<div style="padding: 8px; font-size: 10px; color: #f44;">Error</div>';
+                }
+            };
+
+            // --- Path utilities ---
+            const normalizePath = (p) => {
+                if (!p || p === ".") return p;
+                return p.replace(/\\/g, "/");
+            };
+
+            const joinPath = (base, name) => {
+                if (!base || base === ".") return name;
+                return base.replace(/\\/g, "/").replace(/\/+$/, "") + "/" + name;
+            };
+
+            const getPathSegments = (p) => {
+                if (!p || p === ".") return [];
+                const norm = normalizePath(p);
+                if (norm === "/") return ["/"];
+                return norm.split("/").filter(s => s !== "");
+            };
+
+            const buildPathUpTo = (segments, idx) => {
+                if (segments.length === 0) return ".";
+                const norm = normalizePath(currentFolder);
+                let parts = segments.slice(0, idx + 1);
+                if (parts[0] === "/") {
+                    return parts.length === 1 ? "/" : "/" + parts.slice(1).join("/");
+                }
+                let built = parts.join("/");
+                if (/^[A-Za-z]:$/.test(parts[0]) && parts.length === 1) {
+                    built = parts[0] + "/";
+                }
+                if (norm.startsWith("/") && !built.startsWith("/")) {
+                    built = "/" + built;
+                }
+                return built;
+            };
+
+            // --- Render path bar ---
+            const renderPathBar = () => {
+                const toRemove = [];
+                for (const child of pathBar.children) {
+                    if (child !== dropdownBtn && child !== folderDropdown) {
+                        toRemove.push(child);
+                    }
+                }
+                toRemove.forEach(el => el.remove());
+
+                const segments = getPathSegments(currentFolder);
+                
+                // Truncate logic for individual segment display names
+                const formatSeg = (s) => {
+                    if (s.length <= 14 || s.endsWith(":")) return s;
+                    return s.substring(0, 7) + ".." + s.substring(s.length - 4);
+                };
+
+                let displaySegments = segments.map((s, i) => ({
+                    original: s,
+                    display: formatSeg(s),
+                    index: i
+                }));
+
+                // Collapse logic for deep paths
+                if (displaySegments.length > 4) {
+                    const first = displaySegments[0];
+                    const lastTwo = displaySegments.slice(-2);
+                    displaySegments = [first, { display: "...", isEllipsis: true }, ...lastTwo];
+                }
+
+                if (segments.length === 0 || currentFolder === ".") {
+                    const span = document.createElement("span");
+                    span.className = "pgfx-path-current";
+                    span.textContent = "(Output)";
+                    pathBar.insertBefore(span, dropdownBtn);
+                } else {
+                    displaySegments.forEach((seg, idx) => {
+                        if (idx > 0) {
+                            const sep = document.createElement("span");
+                            sep.className = "pgfx-path-sep";
+                            sep.textContent = "/";
+                            pathBar.insertBefore(sep, dropdownBtn);
+                        }
+                        
+                        if (seg.isEllipsis) {
+                            const span = document.createElement("span");
+                            span.className = "pgfx-path-sep";
+                            span.textContent = "...";
+                            span.title = "Middle folders hidden";
+                            pathBar.insertBefore(span, dropdownBtn);
+                            return;
+                        }
+
+                        const isLast = idx === displaySegments.length - 1;
+                        if (isLast) {
+                            const span = document.createElement("span");
+                            span.className = "pgfx-path-current";
+                            span.textContent = seg.display;
+                            span.title = seg.original;
+                            pathBar.insertBefore(span, dropdownBtn);
+                        } else {
+                            const span = document.createElement("span");
+                            span.className = "pgfx-path-segment";
+                            span.textContent = seg.display;
+                            span.title = seg.original;
+                            const targetPath = buildPathUpTo(segments, seg.index);
+                            span.onclick = () => navigateTo(targetPath);
+                            pathBar.insertBefore(span, dropdownBtn);
+                        }
+                    });
+                }
+
+                pathBar.appendChild(dropdownBtn);
+                pathBar.appendChild(folderDropdown);
+            };
+
+            // --- Editable path ---
+            let editInput = null;
+
+            const startPathEdit = () => {
+                const toRemove = [];
+                for (const child of pathBar.children) {
+                    if (child !== dropdownBtn && child !== folderDropdown) {
+                        toRemove.push(child);
+                    }
+                }
+                toRemove.forEach(el => el.remove());
+
+                editInput = document.createElement("input");
+                editInput.className = "pgfx-path-input";
+                editInput.value = currentFolder;
+                pathBar.insertBefore(editInput, dropdownBtn);
+
+                editInput.focus();
+                editInput.select();
+
+                const finishEdit = () => {
+                    const val = editInput.value.trim();
+                    if (val) {
+                        closeDropdown();
+                        navigateTo(val);
+                    }
+                    editInput = null;
+                    renderPathBar();
+                };
+
+                editInput.addEventListener("keydown", (e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                        finishEdit();
+                    } else if (e.key === "Escape") {
+                        editInput = null;
+                        renderPathBar();
+                    }
+                });
+                editInput.addEventListener("blur", () => {
+                    setTimeout(() => {
+                        if (editInput) finishEdit();
+                    }, 200);
+                });
+            };
+
+            pathBar.addEventListener("dblclick", (e) => {
+                if (!editInput) {
+                    e.stopPropagation();
+                    startPathEdit();
+                }
+            });
+
+            // --- Navigation ---
+            const navigateTo = async (folder) => {
+                currentFolder = folder.replace(/\\/g, "/");
+                folderWidget.value = currentFolder;
+                renderPathBar();
+                await loadImages(0);
+            };
+
+            const refreshAll = async () => {
+                renderPathBar();
+                await loadImages(currentPage);
+            };
+
+            // --- Load images ---
             let searchTimer = null;
 
             const loadImages = async (page) => {
@@ -507,12 +659,17 @@ app.registerExtension({
                     }
 
                     const img = document.createElement("img");
-                    const thumbUrl = imgData.url + "&preview=true";
-                    const cached = getCachedThumb(thumbUrl);
-                    if (cached.complete && cached.naturalWidth > 0) {
+                    const thumbUrl = imgData.url;
+                    const cached = thumbCache.get(thumbUrl);
+                    if (cached && cached.complete && cached.naturalWidth > 0) {
                         img.src = thumbUrl;
                     } else {
                         img.src = thumbUrl;
+                        if (!cached) {
+                            const cacheImg = new Image();
+                            cacheImg.src = thumbUrl;
+                            thumbCache.set(thumbUrl, cacheImg);
+                        }
                     }
                     img.loading = "lazy";
 
@@ -531,10 +688,10 @@ app.registerExtension({
                 });
             };
 
-            // --- Pagination controls ---
+            // --- Pagination ---
             const updatePagination = () => {
                 const tp = imageData.total_pages || 1;
-                pageInfo.textContent = `Page ${currentPage + 1} / ${tp} (${imageData.total} images)`;
+                pageInfo.textContent = `Page ${currentPage + 1} / ${tp} (${imageData.total})`;
                 prevBtn.disabled = currentPage <= 0;
                 nextBtn.disabled = currentPage >= tp - 1;
             };
@@ -549,54 +706,53 @@ app.registerExtension({
                 if (currentPage < imageData.total_pages - 1) loadImages(currentPage + 1);
             };
 
-            // --- Search with debounce ---
+            // --- Search ---
             searchInput.oninput = () => {
                 if (searchTimer) clearTimeout(searchTimer);
                 searchTimer = setTimeout(() => loadImages(0), 250);
             };
 
-            // --- Details ---
+            // --- Details bar ---
             const updateDetails = async (filename) => {
-                const folder = currentFolder;
-                detailsPanel.innerHTML = '<div class="pgfx-details-title">Details</div><div style="color: #666; text-align: center; margin-top: 10px;">Loading...</div>';
+                detailsBar.innerHTML = '<span class="pgfx-details-empty">Loading...</span>';
 
                 try {
-                    const resp = await api.fetchApi(`/pgfx/browser/details?folder=${encodeURIComponent(folder)}&filename=${encodeURIComponent(filename)}`);
-                    const details = await resp.json();
+                    const resp = await api.fetchApi(`/pgfx/browser/details?folder=${encodeURIComponent(currentFolder)}&filename=${encodeURIComponent(filename)}`);
+                    const d = await resp.json();
 
-                    detailsPanel.innerHTML = `
-                        <div class="pgfx-details-title">Details</div>
-                        <div class="pgfx-details-row">
-                            <span class="pgfx-details-label">Filename</span>
-                            <span class="pgfx-details-value">${details.filename}</span>
-                        </div>
-                        <div class="pgfx-details-row">
-                            <span class="pgfx-details-label">Resolution</span>
-                            <span class="pgfx-details-value">${details.resolution}</span>
-                        </div>
-                        <div class="pgfx-details-row">
-                            <span class="pgfx-details-label">File Size</span>
-                            <span class="pgfx-details-value">${details.size}</span>
-                        </div>
-                        <div class="pgfx-details-row">
-                            <span class="pgfx-details-label">Date Modified</span>
-                            <span class="pgfx-details-value">${details.date}</span>
-                        </div>
-                        <div class="pgfx-details-row">
-                            <span class="pgfx-details-label">Format</span>
-                            <span class="pgfx-details-value">${details.format}</span>
-                        </div>
-                    `;
+                    const parts = [
+                        { label: "Res", value: d.resolution },
+                        { label: "Size", value: d.size },
+                        { label: "Date", value: d.date },
+                        { label: "Format", value: d.format },
+                    ];
+
+                    detailsBar.innerHTML = parts.map(p =>
+                        `<span class="pgfx-details-item">` +
+                        (p.label ? `<span class="pgfx-details-label">${p.label}:</span>` : ``) +
+                        `<span class="pgfx-details-value">${p.value}</span></span>`
+                    ).join("");
                 } catch (e) {
-                    console.error("[PGFX] Error fetching details:", e);
-                    detailsPanel.innerHTML = '<div class="pgfx-details-title">Details</div><div style="color: #f44; margin-top: 10px;">Error loading details</div>';
+                    console.error("[PGFX] Details error:", e);
+                    detailsBar.innerHTML = '<span class="pgfx-details-empty">Error loading details</span>';
                 }
             };
 
-            // --- Initialization ---
+            // --- Init ---
             const init = async () => {
-                renderBreadcrumbs();
-                await loadSubfolders();
+                if (currentFolder === ".") {
+                    try {
+                        const resp = await api.fetchApi(`/pgfx/browser/subfolders?folder=.`);
+                        const data = await resp.json();
+                        if (data.current) {
+                            currentFolder = data.current;
+                            folderWidget.value = currentFolder;
+                        }
+                    } catch (e) {
+                        console.error("[PGFX] Init resolve error:", e);
+                    }
+                }
+                renderPathBar();
                 await loadImages(0);
             };
 
@@ -616,10 +772,13 @@ app.registerExtension({
                         draw() {},
                         element: element,
                         options: options,
+                        computeSize(width) { return [width, 440]; },
+                        height: 440,
                     };
 
                     element.style.position = "absolute";
                     element.style.zIndex = 10;
+                    element.style.boxSizing = "border-box";
                     this.widgets.push(widget);
 
                     const canvasParent = app.canvas.el.parentElement;
@@ -631,27 +790,42 @@ app.registerExtension({
                         onRemoved?.apply(this, arguments);
                     };
 
+                    let lastX, lastY, lastW, lastScale, lastCollapsed;
+
                     const updatePosition = () => {
                         if (!this.graph || !element.parentElement) return;
+                        
                         const scale = app.canvas.ds.scale;
                         const offset = app.canvas.ds.offset;
+                        const collapsed = !!this.flags?.collapsed;
+                        
                         const widgetIndex = this.widgets.indexOf(widget);
                         let yOffset = 0;
                         for (let i = 0; i < widgetIndex; i++) {
                             yOffset += this.widgets[i].computeSize ? this.widgets[i].computeSize()[1] : 20;
                         }
+
                         const x = (this.pos[0] + offset[0]) * scale;
                         const y = (this.pos[1] + offset[1] + 60 + yOffset) * scale;
+                        const w = (this.size[0] - 20) * scale;
+
+                        if (x === lastX && y === lastY && w === lastW && scale === lastScale && collapsed === lastCollapsed) {
+                            return;
+                        }
+
+                        lastX = x; lastY = y; lastW = w; lastScale = scale; lastCollapsed = collapsed;
+
+                        if (collapsed) {
+                            element.style.display = "none";
+                            return;
+                        }
+
+                        element.style.display = "flex";
                         element.style.left = `${x}px`;
                         element.style.top = `${y}px`;
-                        element.style.width = `${(this.size[0] - 20) * scale}px`;
+                        element.style.width = `${w}px`;
                         element.style.transformOrigin = "top left";
                         element.style.transform = `scale(${scale})`;
-                        if (this.flags?.collapsed) {
-                            element.style.display = "none";
-                        } else {
-                            element.style.display = "flex";
-                        }
                     };
 
                     const origDraw = this.onDrawForeground;
