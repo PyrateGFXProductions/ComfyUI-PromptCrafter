@@ -3988,22 +3988,23 @@ class LogoStudioUI {
     deselectMesh3d() {
         if (this.selectedMesh3d) {
             if (this.selectedMesh3d.material) {
-                this.selectedMesh3d.material.emissive = this.selectedMesh3d._origEmissive || new THREE.Color(0x000000);
+                if (this.selectedMesh3d.material.emissive) {
+                    this.selectedMesh3d.material.emissive.copy(this.selectedMesh3d._origEmissive || new THREE.Color(0x000000));
+                }
                 this.selectedMesh3d.material.emissiveIntensity = 0;
             } else {
-                // Imported model group — restore all child meshes
                 this.selectedMesh3d.traverse((child) => {
                     if (child.isMesh && child.material) {
-                        child.material.emissive = child._origEmissive || new THREE.Color(0x000000);
+                        if (child.material.emissive) {
+                            child.material.emissive.copy(child._origEmissive || new THREE.Color(0x000000));
+                        }
                         child.material.emissiveIntensity = 0;
                     }
                 });
             }
             this.selectedMesh3d = null;
         }
-        if (this.transformControls3d) {
-            this.transformControls3d.detach();
-        }
+        if (this.transformControls3d) this.transformControls3d.detach();
         this._updateSelectionUI();
         this.updateUIForSelection();
         this.refreshLayersPanel();
@@ -4115,23 +4116,7 @@ class LogoStudioUI {
 
     _applyObj3DSettings() {
         let target = null;
-        
-        // Find corresponding 2D object from 3D selection
-        if (this.mode3D && this.selectedMesh3d) {
-            const key = this.selectedMesh3d.userData._key;
-            if (key) {
-                // Key format: name_type_index or key_v_p_s
-                // We extract the base index part to find the original Fabric object
-                const parts = key.split('_');
-                const index = parseInt(parts[parts.length - 1]);
-                target = this.canvas.getObjects()[index];
-            }
-        }
-        
-        if (!target && this.canvas) {
-            target = this.canvas.getActiveObject();
-        }
-
+        if (this.canvas) target = this.canvas.getActiveObject();
         if (!target) return;
         
         if (!target.userData) target.userData = {};
@@ -4142,11 +4127,8 @@ class LogoStudioUI {
             bevelSegments: parseInt(document.getElementById('pgfx-3d-bevel-segments')?.value) || 3,
         };
         
-        // Debounced sync for smoother slider interaction
         if (this._syncTimeout) clearTimeout(this._syncTimeout);
-        this._syncTimeout = setTimeout(() => {
-            this.sync2DTo3D();
-        }, 30);
+        this._syncTimeout = setTimeout(() => { this.sync2DTo3D(); }, 16);
     }
 
     _update3DStroke(mesh) {
