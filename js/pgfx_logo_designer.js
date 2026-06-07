@@ -548,48 +548,40 @@ class LogoStudioUI {
                 });
                 this.pageBackgroundColor = '#000000';
 
-                // ── Restore from saved JSON if available ──────────────────────
+                // --- RESTORE FROM SAVED DATA ---
                 if (this.jsonWidget.value && this.jsonWidget.value.startsWith('{')) {
                     try {
-                        const jsonData = JSON.parse(this.jsonWidget.value);
-                        if (jsonData.customFonts) {
-                            for (const font of jsonData.customFonts) {
+                        const projectState = JSON.parse(this.jsonWidget.value);
+                        const fabricData = projectState.fabric_canvas || projectState; 
+                        
+                        if (projectState.customFonts) {
+                            for (const font of projectState.customFonts) {
                                 await this.loadFontIntoBrowser(font.name, font.url);
                             }
                         }
+
                         this.isProcessingHistory = true;
-                        this.canvas.loadFromJSON(jsonData, () => {
+                        this.canvas.loadFromJSON(fabricData, () => {
                             this.isProcessingHistory = false;
-                            const restoredBg = jsonData.pgfx_editor_background || jsonData.backgroundColor || jsonData.background || '#000000';
-                            this.pageBackgroundColor = restoredBg === 'transparent' ? '#000000' : restoredBg;       
+                            
+                            // Restore Dimensions and Background
+                            this.targetWidth = projectState.pgfx_canvas_width || 1024;
+                            this.targetHeight = projectState.pgfx_canvas_height || 1024;
+                            const restoredBg = projectState.pgfx_editor_background || projectState.backgroundColor || '#000000';
+                            this.pageBackgroundColor = restoredBg === 'transparent' ? '#000000' : restoredBg;
                             this.canvas.backgroundColor = 'transparent';
-                            this.targetWidth = jsonData.pgfx_canvas_width || 1024;       
-                            this.targetHeight = jsonData.pgfx_canvas_height || 1024;    
 
-                            // Restore 3D settings from saved JSON
-                            this._apply3DSettings(jsonData.pgfx_3d_settings);
+                            // Restore 3D settings
+                            if (projectState.pgfx_3d_settings) {
+                                this._apply3DSettings(projectState.pgfx_3d_settings);
+                            }
 
-                            // Sync UI boxes if they exist
-                            const widthInput = document.getElementById('pgfx-canvas-width');
-                            const heightInput = document.getElementById('pgfx-canvas-height');
-                            const presetSelect = document.getElementById('pgfx-canvas-preset');
-                            if (widthInput && heightInput) {
-                                widthInput.value = this.targetWidth;
-                                heightInput.value = this.targetHeight;
-                                
-                                const presetVal = `${this.targetWidth}x${this.targetHeight}`;
-                                if (presetSelect) {
-                                    const optionExists = Array.from(presetSelect.options).some(opt => opt.value === presetVal);
-                                    if (optionExists) {
-                                        presetSelect.value = presetVal;
-                                        widthInput.disabled = true;
-                                        heightInput.disabled = true;
-                                    } else {
-                                        presetSelect.value = "custom";
-                                        widthInput.disabled = false;
-                                        heightInput.disabled = false;
-                                    }
-                                }
+                            // Sync UI Inputs
+                            const wIn = document.getElementById('pgfx-canvas-width');
+                            const hIn = document.getElementById('pgfx-canvas-height');
+                            if (wIn && hIn) {
+                                wIn.value = this.targetWidth;
+                                hIn.value = this.targetHeight;
                             }
 
                             this.canvas.renderAll();
@@ -598,22 +590,26 @@ class LogoStudioUI {
                             this.refreshLayersPanel();
                             this.fitCanvasToView();
                             this.lastCanvasText = this._extractCanvasText();
+                            
                             this.history = [];
                             this.historyIdx = -1;
                             this._saveToHistory();
                             this.scheduleNodeStateSync();
+
+                            // Force 3D Restoration if active
+                            if (this._shouldRestore3D) {
+                                console.log("[PGFX Studio] Restoring 3D Viewport...");
+                                setTimeout(() => {
+                                    this.toggleViewportTab('3D');
+                                    // Safety: Force a second sync once the UI has definitely reflowed
+                                    setTimeout(() => this.sync2DTo3D(), 300);
+                                }, 150);
+                            }
+
                             if (loadingOverlay) loadingOverlay.style.display = 'none';
                         });
                     } catch (e) {
-                        console.error("[PGFX Studio] Error loading canvas JSON", e);
-                        this._addDefaultText();
-                        this._syncBackgroundPicker();
-                        this.refreshLayersPanel();
-                        this.fitCanvasToView();
-                        this.history = [];
-                        this.historyIdx = -1;
-                        this._saveToHistory();
-                        this.scheduleNodeStateSync();
+                        console.error("[PGFX Studio] Critical Restore Error:", e);
                         if (loadingOverlay) loadingOverlay.style.display = 'none';
                     }
                 } else {
@@ -3359,7 +3355,29 @@ class LogoStudioUI {
         const lightRotInput = document.getElementById('pgfx-3d-light-rot');
         if (lightRotInput) {
             lightRotInput.oninput = (e) => {
-                document.getElementById('pgfx-3d-light-rot-val').textContent = e.target.value + '°';
+                const rotVal = parseFloat(e.target.value);
+                document.getElementById('pgfx-3d-light-rot-val').textContent = rotVal + '°';
+                if (this.dirLight) {
+                    const rad = THREE.MathUtils.degToRad(rotVal);
+                    // Orbit the light around the scene center
+                    const dist = 800;
+                    this.dirLight.position.set(
+                        Math.cos(rad) * dist,
+                        Math.sin(rad) * dist,
+                        600
+                    );
+                }
+            };
+        }
+
+        const shadowCheck = document.getElementById('pgfx-3d-shadows');
+        if (shadowCheck) {
+            shadowCheck.onchange = (e) => {
+                if (this.dirLight) {
+                    this.dirLight.castShadow = e.target.checked;
+                }
+                // Refresh scene to apply shadow changes to all materials if needed
+                this.sync2DTo3D();
             };
         }
 
@@ -3399,8 +3417,14 @@ class LogoStudioUI {
             if (zRow) zRow.style.display = 'flex';
             if (sidebar3D) sidebar3D.style.display = 'flex';
 
-            // Show loading status inside the 3D canvas
-            container3D.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: #06b6d4; font-size: 14px; font-weight: bold;"><div class="pgfx-spinner" style="margin-right: 12px;"></div>Loading 3D Viewport...</div>';
+            // Wake up renderer with a hard resize to fix the "black void"
+            if (this.renderer3d) {
+                const w = container3D.clientWidth || 800;
+                const h = container3D.clientHeight || 600;
+                this.camera3d.aspect = w / h;
+                this.camera3d.updateProjectionMatrix();
+                this.renderer3d.setSize(w, h);
+            }
 
             try {
                 // Asynchronously load Three.js libraries
@@ -3410,33 +3434,26 @@ class LogoStudioUI {
                 if (!this.scene3d) {
                     this.init3DScene();
                 }
-                // Rebuild the 3D meshes based on current 2D canvas contents
+                
+                // Rebuild scene
                 await this.sync2DTo3D();
-                // Restore imported 3D models
+                
+                // Restore imported models
                 if (this.importedModels && this.importedModels.length > 0) {
                     for (const m of this.importedModels) {
                         if (m.data && !m.group) {
-                            await this._loadModelIntoScene(m).catch(err => {
-                                console.error('[PGFX] Failed to restore model:', m.name, err);
-                            });
+                            await this._loadModelIntoScene(m).catch(e => console.error('[PGFX] Restore model failed', e));
                         }
                     }
                 }
-                // Frame camera to fit extruded objects
-                this.fit3DView();
+                
+                // Ensure camera is framing correctly
+                setTimeout(() => this.fit3DView(), 100);
+                
             } catch (err) {
-                console.error("Failed to initialize 3D view:", err);
-                container3D.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: #ef4444; font-size: 14px; font-weight: bold; text-align: center; flex-direction: column;">Error loading 3D:<br>${err.message}</div>`;
+                console.error("[PGFX Studio] 3D Activation Error:", err);
+                container3D.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: #ef4444; font-size: 14px; font-weight: bold; text-align: center; flex-direction: column;">Error activating 3D:<br>${err.message}</div>`;
             }
-
-            // Sync 3D grid visibility from checkbox state
-            const grid3DCheck = document.getElementById('pgfx-3d-show-grid');
-            if (grid3DCheck && this.gridHelper) this.gridHelper.visible = grid3DCheck.checked;
-            if (grid3DCheck && this.axesHelper) this.axesHelper.visible = grid3DCheck.checked;
-
-            // Refresh layers & properties for 3D
-            this.refreshLayersPanel();
-            this._updateSelectionUI();
         } else {
             this.mode3D = false;
             tab2D.classList.add('pgfx-btn-primary');
@@ -3471,16 +3488,17 @@ class LogoStudioUI {
         // Clear container
         container.innerHTML = '';
 
-        const width = container.clientWidth || 800;
-        const height = container.clientHeight || 600;
+        // Safety: Ensure we have valid dimensions
+        const width = Math.max(container.clientWidth, 800);
+        const height = Math.max(container.clientHeight, 600);
 
         // Create Scene
         this.scene3d = new THREE.Scene();
-        this.scene3d.background = new THREE.Color(0x333333); // Blender-like gray background
+        this.scene3d.background = new THREE.Color(0x2a2a2a); // Professional gray
 
         // Create Camera
         this.camera3d = new THREE.PerspectiveCamera(45, width / height, 1, 10000);
-        this.camera3d.position.set(0, 0, 800);
+        this.camera3d.position.set(0, 0, 1000);
 
         // Create Renderer
         this.renderer3d = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
@@ -3496,167 +3514,125 @@ class LogoStudioUI {
         this.controls3d.dampingFactor = 0.05;
         this.controls3d.screenSpacePanning = true;
 
-        // TransformControls (move/rotate/scale gizmo)
+        // TransformControls
         if (window.THREE.TransformControls) {
             this.transformControls3d = new THREE.TransformControls(this.camera3d, this.renderer3d.domElement);
             this.transformControls3d.setMode(this.transformMode);
             this.scene3d.add(this.transformControls3d);
-
-            // Disable OrbitControls while dragging the gizmo
-            this.transformControls3d.addEventListener('dragging-changed', (event) => {
-                this.controls3d.enabled = !event.value;
-            });
-
-            // Update properties panel when object is transformed
-            this.transformControls3d.addEventListener('change', () => {
-                this._updateSelectionUI();
-            });
+            this.transformControls3d.addEventListener('dragging-changed', (e) => this.controls3d.enabled = !e.value);
+            this.transformControls3d.addEventListener('change', () => this._updateSelectionUI());
         }
 
-        // Raycaster for 3D object selection
         this.raycaster3d = new THREE.Raycaster();
         this.mouse3d = new THREE.Vector2();
 
-        // Click-to-select handler
+        // Click-to-select
         this.renderer3d.domElement.addEventListener('click', (event) => {
-            // Ignore clicks when transform gizmo is being dragged
             if (this.transformControls3d && this.transformControls3d.dragging) return;
-
             const rect = this.renderer3d.domElement.getBoundingClientRect();
             this.mouse3d.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             this.mouse3d.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
             if (this.raycaster3d && this.extrudedGroup) {
                 this.raycaster3d.setFromCamera(this.mouse3d, this.camera3d);
                 const allTargets = [...this.extrudedGroup.children];
-                if (this.modelsGroup) {
-                    allTargets.push(...this.modelsGroup.children);
-                }
+                if (this.modelsGroup) allTargets.push(...this.modelsGroup.children);
                 const intersects = this.raycaster3d.intersectObjects(allTargets, true);
-
                 if (intersects.length > 0) {
                     let hit = intersects[0].object;
-                    // Walk up to find the top-level group for imported models
-                    while (hit.parent && hit.parent !== this.modelsGroup && hit.parent !== this.extrudedGroup && hit.parent !== this.scene3d) {
-                        hit = hit.parent;
-                    }
-                    // If it's inside a model group, select the model group root
-                    if (hit.parent === this.modelsGroup) {
-                        this.selectMesh3d(hit);
-                    } else {
-                        this.selectMesh3d(intersects[0].object);
-                    }
-                } else {
-                    this.deselectMesh3d();
-                }
+                    while (hit.parent && hit.parent !== this.modelsGroup && hit.parent !== this.extrudedGroup && hit.parent !== this.scene3d) hit = hit.parent;
+                    this.selectMesh3d(hit.parent === this.modelsGroup ? hit : intersects[0].object);
+                } else this.deselectMesh3d();
             }
         });
 
         // Lights
-        this.ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-        this.scene3d.add(this.ambientLight);
-
-        this.dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+        this.scene3d.add(new THREE.AmbientLight(0xffffff, 0.5));
+        this.dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        this.dirLight.position.set(500, 500, 1000);
         this.dirLight.castShadow = true;
-        this.dirLight.shadow.mapSize.width = 2048;
-        this.dirLight.shadow.mapSize.height = 2048;
-        this.dirLight.shadow.camera.near = 0.5;
-        this.dirLight.shadow.camera.far = 5000;
-        
-        // Set up camera boundaries for shadows
-        const d = 1000;
-        this.dirLight.shadow.camera.left = -d;
-        this.dirLight.shadow.camera.right = d;
-        this.dirLight.shadow.camera.top = d;
-        this.dirLight.shadow.camera.bottom = -d;
-        
+        this.dirLight.shadow.mapSize.set(2048, 2048);
         this.scene3d.add(this.dirLight);
 
-        // Soft fill light
-        this.fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
-        this.fillLight.position.set(-1, -1, 1);
-        this.scene3d.add(this.fillLight);
-
-        // Grid helper (horizontal floor like Blender)
-        this.gridHelper = new THREE.GridHelper(3000, 40, 0x555555, 0x444444);
-        this.gridHelper.position.z = -250;
-        this.gridHelper.material.transparent = true;
-        this.gridHelper.material.opacity = 0.5;
+        // Environment Helpers
+        this.gridHelper = new THREE.GridHelper(5000, 50, 0x444444, 0x333333);
+        this.gridHelper.position.z = -100;
+        this.gridHelper.rotation.x = Math.PI / 2;
         this.scene3d.add(this.gridHelper);
-
-        // World Axes (X=red, Y=green, Z=blue) at origin
         this.axesHelper = new THREE.AxesHelper(500);
-        this.axesHelper.position.z = -250;
+        this.axesHelper.position.z = -90;
         this.scene3d.add(this.axesHelper);
 
         // --- CANVAS SAFE AREA (The Plane) ---
-        if (this.canvasPlane3d) {
-            this.scene3d.remove(this.canvasPlane3d);
-            if (this.canvasPlane3d.geometry) this.canvasPlane3d.geometry.dispose();
-            if (this.canvasPlane3d.material) this.canvasPlane3d.material.dispose();
-        }
-        const canvasPlaneGeom = new THREE.PlaneGeometry(this.targetWidth, this.targetHeight);
+        const planeW = Math.max(this.targetWidth, 1);
+        const planeH = Math.max(this.targetHeight, 1);
+        const canvasPlaneGeom = new THREE.PlaneGeometry(planeW, planeH);
         const canvasPlaneMat = new THREE.MeshBasicMaterial({ 
             color: new THREE.Color(this.pageBackgroundColor || '#000000'),
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 1.0
+            side: THREE.DoubleSide, transparent: true, opacity: 0.85
         });
         this.canvasPlane3d = new THREE.Mesh(canvasPlaneGeom, canvasPlaneMat);
-        this.canvasPlane3d.position.z = -5; // slightly behind the 2D elements
+        this.canvasPlane3d.position.set(0, 0, -10);
+        this.canvasPlane3d.receiveShadow = true; // Essential for seeing shadows!
         this.scene3d.add(this.canvasPlane3d);
 
-        // Border for the canvas safe area
-        const edges = new THREE.EdgesGeometry(canvasPlaneGeom);
-        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x06b6d4, linewidth: 2 }));
-        this.canvasPlane3d.add(line);
+        const borderGeom = new THREE.EdgesGeometry(canvasPlaneGeom);
+        this.canvasPlane3d.add(new THREE.LineSegments(borderGeom, new THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 2 })));
 
-        // Group to hold all extruded elements
+        // HUD Controls
+        this._add3DViewControls(container);
+
         this.extrudedGroup = new THREE.Group();
         this.scene3d.add(this.extrudedGroup);
-
-        // Group to hold imported 3D models
         this.modelsGroup = new THREE.Group();
         this.scene3d.add(this.modelsGroup);
 
-        // Handle resize
         this.resizeObserver3d = new ResizeObserver(() => {
-            if (!this.renderer3d || !container) return;
-            const w = container.clientWidth;
-            const h = container.clientHeight;
-            if (w > 0 && h > 0) {
-                this.camera3d.aspect = w / h;
-                this.camera3d.updateProjectionMatrix();
-                this.renderer3d.setSize(w, h);
-            }
+            if (!this.renderer3d) return;
+            const w = Math.max(container.clientWidth, 100);
+            const h = Math.max(container.clientHeight, 100);
+            this.camera3d.aspect = w / h;
+            this.camera3d.updateProjectionMatrix();
+            this.renderer3d.setSize(w, h);
         });
         this.resizeObserver3d.observe(container);
 
-        // Render loop
         const animate = () => {
-            if (!this.renderer3d) return; // stopped/cleaned up
+            if (!this.renderer3d) return;
             requestAnimationFrame(animate);
             if (this.controls3d) this.controls3d.update();
-            
-            // Update light position based on slider
-            const rotInput = document.getElementById('pgfx-3d-light-rot');
-            if (rotInput && this.dirLight) {
-                const rotVal = parseFloat(rotInput.value);
-                const rad = THREE.MathUtils.degToRad(rotVal);
-                this.dirLight.position.set(Math.cos(rad) * 600, Math.sin(rad) * 600, 600);
-            }
-            
-            // Shadows enabled check
-            const shadowInput = document.getElementById('pgfx-3d-shadows');
-            if (shadowInput && this.dirLight) {
-                this.dirLight.castShadow = shadowInput.checked;
-            }
+            this.renderer3d.render(this.scene3d, this.camera3d);
+        };
+        requestAnimationFrame(animate);
+    }
 
-            if (this.scene3d && this.camera3d) {
-                this.renderer3d.render(this.scene3d, this.camera3d);
+    _add3DViewControls(container) {
+        const hud = document.createElement('div');
+        hud.style.cssText = `
+            position: absolute; bottom: 20px; right: 20px;
+            display: flex; gap: 10px; z-index: 100;
+        `;
+        
+        const btnReset = document.createElement('button');
+        btnReset.className = 'pgfx-btn';
+        btnReset.innerHTML = '🎯 Center View';
+        btnReset.onclick = () => {
+            if (this.controls3d && this.camera3d) {
+                this.controls3d.reset();
+                this.camera3d.position.set(0, 0, 1000);
+                this.controls3d.target.set(0, 0, 0);
+                this.controls3d.update();
             }
         };
-        animate();
+        
+        const btnSync = document.createElement('button');
+        btnSync.className = 'pgfx-btn pgfx-btn-primary';
+        btnSync.innerHTML = '🔄 Sync 3D';
+        btnSync.title = "Force a re-sync of design assets to the 3D scene.";
+        btnSync.onclick = () => this.sync2DTo3D();
+
+        hud.appendChild(btnSync);
+        hud.appendChild(btnReset);
+        container.appendChild(hud);
     }
 
     _keyForObj(obj, index) {
@@ -3724,22 +3700,24 @@ class LogoStudioUI {
                 const height = obj.height * obj.scaleY;
                 const s3d = this._getObj3DSettings(obj);
                 
-                // Use a neutral color for the base material properties
+                // Use a neutral base color
                 const baseColor = '#888888';
                 const material = this.createMaterialPreset(baseColor);
                 
                 let mesh;
                 if (s3d.depth > 0) {
                     const geometry = new THREE.BoxGeometry(width, height, s3d.depth);
-                    // Front face material with texture
+                    
+                    // CRITICAL: Ensure side materials have NO map to prevent image repetition
+                    const sideMat = material.clone();
+                    sideMat.map = null;
+                    sideMat.transparent = false; // Sides should be solid
+                    
                     const frontMat = material.clone();
                     frontMat.map = texture;
                     frontMat.transparent = true;
                     
-                    // BoxGeometry materials order: +x, -x, +y, -y, +z (front), -z (back)
-                    // We put the image on the front (+z) and back (-z), or just front.
-                    // Let's do front only to avoid confusion.
-                    const sideMat = material; 
+                    // BoxGeometry materials order: 0:right, 1:left, 2:top, 3:bottom, 4:front, 5:back
                     const materials = [sideMat, sideMat, sideMat, sideMat, frontMat, sideMat];
                     mesh = new THREE.Mesh(geometry, materials);
                 } else {
@@ -4136,16 +4114,39 @@ class LogoStudioUI {
     }
 
     _applyObj3DSettings() {
-        const active = this.canvas ? this.canvas.getActiveObject() : null;
-        if (!active) return;
-        if (!active.userData) active.userData = {};
-        active.userData.pgfx_3d = {
+        let target = null;
+        
+        // Find corresponding 2D object from 3D selection
+        if (this.mode3D && this.selectedMesh3d) {
+            const key = this.selectedMesh3d.userData._key;
+            if (key) {
+                // Key format: name_type_index or key_v_p_s
+                // We extract the base index part to find the original Fabric object
+                const parts = key.split('_');
+                const index = parseInt(parts[parts.length - 1]);
+                target = this.canvas.getObjects()[index];
+            }
+        }
+        
+        if (!target && this.canvas) {
+            target = this.canvas.getActiveObject();
+        }
+
+        if (!target) return;
+        
+        if (!target.userData) target.userData = {};
+        target.userData.pgfx_3d = {
             depth: parseFloat(document.getElementById('pgfx-3d-depth')?.value) || 20,
             bevelEnabled: document.getElementById('pgfx-3d-bevel-enabled')?.checked ?? true,
             bevelSize: parseFloat(document.getElementById('pgfx-3d-bevel-size')?.value) || 1.5,
             bevelSegments: parseInt(document.getElementById('pgfx-3d-bevel-segments')?.value) || 3,
         };
-        this.sync2DTo3D();
+        
+        // Debounced sync for smoother slider interaction
+        if (this._syncTimeout) clearTimeout(this._syncTimeout);
+        this._syncTimeout = setTimeout(() => {
+            this.sync2DTo3D();
+        }, 30);
     }
 
     _update3DStroke(mesh) {
@@ -4202,7 +4203,7 @@ class LogoStudioUI {
         const box = new THREE.Box3();
 
         // Include the extruded objects
-        if (!this.extrudedGroup.children.length === 0) {
+        if (this.extrudedGroup.children.length > 0) {
             box.expandByObject(this.extrudedGroup);
         }
 
@@ -4388,8 +4389,9 @@ class LogoStudioUI {
     }
 
     _collect3DSettings() {
-        if (!this.mode3D) return null;
         return {
+            mode3D: !!this.mode3D,
+            transforms: this._saved3DTransforms || {},
             depth: parseFloat(document.getElementById('pgfx-3d-depth').value) || 20,
             bevel_enabled: document.getElementById('pgfx-3d-bevel-enabled').checked,
             bevel_size: parseFloat(document.getElementById('pgfx-3d-bevel-size').value) || 1.5,
@@ -4403,6 +4405,12 @@ class LogoStudioUI {
 
     _apply3DSettings(settings) {
         if (!settings) return;
+        
+        // Restore transforms into the temporary persistence map
+        if (settings.transforms) {
+            this._saved3DTransforms = Object.assign({}, settings.transforms);
+        }
+
         const setVal = (id, val) => {
             const el = document.getElementById(id);
             if (el) el.value = val;
@@ -4411,11 +4419,18 @@ class LogoStudioUI {
             const el = document.getElementById(id);
             if (el) el.checked = !!val;
         };
+        
+        // Store mode for open() to use
+        this._shouldRestore3D = !!settings.mode3D;
+
         setVal('pgfx-3d-depth', settings.depth ?? 20);
         const dv = document.getElementById('pgfx-3d-depth-val');
         if (dv) dv.textContent = settings.depth ?? 20;
         setChecked('pgfx-3d-bevel-enabled', settings.bevel_enabled ?? true);
-        document.getElementById('pgfx-3d-bevel-settings').style.display = (settings.bevel_enabled !== false) ? 'flex' : 'none';
+        const bevSettings = document.getElementById('pgfx-3d-bevel-settings');
+        if (bevSettings) {
+            bevSettings.style.display = (settings.bevel_enabled !== false) ? 'flex' : 'none';
+        }
         setVal('pgfx-3d-bevel-size', settings.bevel_size ?? 1.5);
         const bsv = document.getElementById('pgfx-3d-bevel-size-val');
         if (bsv) bsv.textContent = settings.bevel_size ?? 1.5;

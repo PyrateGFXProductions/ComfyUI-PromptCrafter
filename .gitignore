@@ -75,6 +75,7 @@ STUDIO_AUDIT_REPORT.md
 
 # Temporary / scratch scripts
 _tmp_*.py
+MagicMock/
 tmp_*.py
 run_test_*.py
 test_*.py

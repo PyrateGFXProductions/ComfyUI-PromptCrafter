@@ -92,28 +92,28 @@ class PromptCrafter_SubtitleStyler:
         timed_segments = []
         alignment_result = meta_dict.get("alignment_result", {}) if meta_dict else {}
         word_segments = alignment_result.get("word_segments", meta_dict.get("word_segments", []))
-            if word_segments:
-                print(f"[SubtitleStyler] Using 'meta_dict' with {len(word_segments)} word segments.")
-                # Group words into lines for display. A simple heuristic is used here.
-                current_line_words = []
-                line_start_time = None
-                for i, word_info in enumerate(word_segments):
-                    word_text = word_info.get('word')
-                    if not word_text or 'start' not in word_info or 'end' not in word_info: continue
+        if word_segments:
+            print(f"[SubtitleStyler] Using 'meta_dict' with {len(word_segments)} word segments.")
+            # Group words into lines for display. A simple heuristic is used here.
+            current_line_words = []
+            line_start_time = None
+            for i, word_info in enumerate(word_segments):
+                word_text = word_info.get('word')
+                if not word_text or 'start' not in word_info or 'end' not in word_info: continue
 
-                    if line_start_time is None: line_start_time = word_info['start']
-                    
-                    current_line_words.append(word_text.strip())
-                    
-                    is_last_word = (i == len(word_segments) - 1)
-                    if len(current_line_words) >= 8 or is_last_word or word_text.strip().endswith(('.', '?', '!')):
-                        timed_segments.append({
-                            "start": line_start_time,
-                            "end": word_info['end'],
-                            "text": " ".join(current_line_words)
-                        })
-                        current_line_words = []
-                        line_start_time = None
+                if line_start_time is None: line_start_time = word_info['start']
+                
+                current_line_words.append(word_text.strip())
+                
+                is_last_word = (i == len(word_segments) - 1)
+                if len(current_line_words) >= 8 or is_last_word or word_text.strip().endswith(('.', '?', '!')):
+                    timed_segments.append({
+                        "start": line_start_time,
+                        "end": word_info['end'],
+                        "text": " ".join(current_line_words)
+                    })
+                    current_line_words = []
+                    line_start_time = None
 
         elif srt_content:
             print(f"[SubtitleStyler] Using 'srt_content'.")
