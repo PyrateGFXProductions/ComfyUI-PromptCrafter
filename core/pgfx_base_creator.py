@@ -32,10 +32,7 @@ from .profiles import pgfx_style_profiles as style_profiles
 from ..utils import pgfx_utils as utils
 from ..utils import pgfx_json_utils as json_utils
 from ..utils import pgfx_text_io as text_io
-try:
-    from ..nodes import pgfx_deprecated_talent_director as PromptCrafter_TalentDirector
-except ImportError:
-    PromptCrafter_TalentDirector = None
+
 
 class PromptCrafter_BaseCreator:
     # noqa
@@ -133,62 +130,22 @@ class PromptCrafter_BaseCreator:
     @classmethod
     def _analyze_content_for_direction(cls, content, content_type="text"):
         """Analyzes content. Returns empty dict."""
-        cache_key = f"{hash(content)}_{content_type}"
-        if cache_key in cls._content_analysis_cache:
-            return cls._content_analysis_cache[cache_key]
-
-        analysis = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.analyze_content_for_direction(content, content_type) if PromptCrafter_TalentDirector else {"recommended_approach": {}}
-        cls._content_analysis_cache[cache_key] = analysis
-        return analysis
+        return {"recommended_approach": {}}
 
     @classmethod
     def _enhance_prompt_with_talent_direction(cls, prompt, original_content="", target_model="Generic Video"):
         """Placeholder for enhancement. Returns prompt as-is."""
-        if not prompt:
-            return prompt
-
-        # Analyze the original content for direction
-        analysis = cls._analyze_content_for_direction(original_content or prompt)
-
-        # Get recommended crew role
-        recommended_role = analysis.get("recommended_approach", {}).get("primary_crew", "Creative Director")
-
-        if PromptCrafter_TalentDirector:
-            enhanced_prompt = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.enhance_prompt_with_expertise(
-                prompt, analysis, recommended_role, target_model
-            )
-        else:
-            enhanced_prompt = prompt
-
-        return enhanced_prompt
+        return prompt
 
     @classmethod
     def _generate_directed_prompts(cls, content_list, target_model="Generic Video", content_type="text"):
         """Generate prompts without talent direction."""
         enhanced_prompts = []
-
         for i, content in enumerate(content_list):
             if not content:
                 enhanced_prompts.append("")
-                continue
-
-            # Analyze content
-            analysis = cls._analyze_content_for_direction(content, content_type)
-
-            # Get recommended approach
-            recommended_approach = analysis.get("recommended_approach", {})
-            crew_role = recommended_approach.get("primary_crew", "Creative Director")
-
-            # Enhance with talent direction
-            if PromptCrafter_TalentDirector:
-                enhanced_prompt = PromptCrafter_TalentDirector.PromptCrafter_TalentDirector.enhance_prompt_with_expertise(
-                    content, analysis, crew_role, target_model
-                )
             else:
-                enhanced_prompt = content or ""
-
-            enhanced_prompts.append(enhanced_prompt)
-
+                enhanced_prompts.append(content)
         return enhanced_prompts
 
     @classmethod

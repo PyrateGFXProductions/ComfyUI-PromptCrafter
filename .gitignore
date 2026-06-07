@@ -72,3 +72,17 @@ node_modules/
 .npm
 package-lock.json.bak
 STUDIO_AUDIT_REPORT.md
+
+# Temporary / scratch scripts
+_tmp_*.py
+tmp_*.py
+run_test_*.py
+test_*.py
+verify_*.py
+debug_*.py
+robust_import_test.py
+final_debug.py
+
+# Generated Node Lists & Session Logs
+all_nodes.json
+session-*.md
