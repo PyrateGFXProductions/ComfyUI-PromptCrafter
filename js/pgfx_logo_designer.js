@@ -699,13 +699,41 @@ class LogoStudioUI {
             ? [...this.canvas.viewportTransform]
             : [1, 0, 0, 1, 0, 0];
 
-        // If in 3D mode, capture WebGL renderer directly
+        // --- HIGH-RESOLUTION ASPECT-CORRECT 3D CAPTURE ---
         if (this.mode3D && this.renderer3d && this.scene3d && this.camera3d) {
-            // Hide transform gizmo so it doesn't appear in the capture
+            const prevSize = new THREE.Vector2();
+            this.renderer3d.getSize(prevSize);
+            const prevAspect = this.camera3d.aspect;
+            const prevFov = this.camera3d.fov;
+            
             if (this.transformControls3d) this.transformControls3d.visible = false;
             this.isExporting = true;
+
+            const targetW = this.targetWidth || 1024;
+            const targetH = this.targetHeight || 1024;
+            const targetAspect = targetW / targetH;
+
+            // FOV COMPENSATION: Preserve framing regardless of aspect ratio shift
+            if (prevAspect > targetAspect) {
+                const vFovRad = THREE.MathUtils.degToRad(prevFov);
+                const hFovRad = 2 * Math.atan(Math.tan(vFovRad / 2) * prevAspect);
+                this.camera3d.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hFovRad / 2) / targetAspect));
+            }
+
+            this.renderer3d.setSize(targetW, targetH, false);
+            this.camera3d.aspect = targetAspect;
+            this.camera3d.updateProjectionMatrix();
+
+            // Render high-res frame
             this.renderer3d.render(this.scene3d, this.camera3d);
             const dataUrl = this.renderer3d.domElement.toDataURL("image/png");
+
+            // RESTORE
+            this.renderer3d.setSize(prevSize.x, prevSize.y, false);
+            this.camera3d.aspect = prevAspect;
+            this.camera3d.fov = prevFov;
+            this.camera3d.updateProjectionMatrix();
+            
             this.isExporting = false;
             if (this.transformControls3d) this.transformControls3d.visible = true;
 
@@ -716,7 +744,7 @@ class LogoStudioUI {
                 advSettings.text_align = primary.textAlign;
             }
 
-            const jsonState = this.canvas.toJSON(['name']);
+            const jsonState = this.canvas.toJSON(['name', 'userData']);
             jsonState.background = 'transparent';
             jsonState.backgroundColor = 'transparent';
             jsonState.pgfx_editor_background = editorBackground;
