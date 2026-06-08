@@ -3631,11 +3631,79 @@ class LogoStudioUI {
         });
         this.resizeObserver3d.observe(container);
 
+        // Helper to draw aspect framing guidelines in screen-space
+        const drawFramingGuides = () => {
+            if (!this.renderer3d) return;
+            const canvas = this.renderer3d.domElement;
+            const ctx2d = canvas.parentNode.querySelector('.pgfx-3d-overlay-guides') || (() => {
+                const overlay = document.createElement('canvas');
+                overlay.className = 'pgfx-3d-overlay-guides';
+                overlay.style.cssText = 'position: absolute; top: 0; left: 0; pointer-events: none; width: 100%; height: 100%;';
+                canvas.parentNode.style.position = 'relative';
+                canvas.parentNode.appendChild(overlay);
+                return overlay;
+            })();
+            
+            if (ctx2d.width !== canvas.clientWidth || ctx2d.height !== canvas.clientHeight) {
+                ctx2d.width = canvas.clientWidth;
+                ctx2d.height = canvas.clientHeight;
+            }
+            const ctx = ctx2d.getContext('2d');
+            ctx.clearRect(0, 0, ctx2d.width, ctx2d.height);
+
+            const targetW = this.targetWidth || 1024;
+            const targetH = this.targetHeight || 1024;
+            const targetAspect = targetW / targetH;
+            const currentAspect = ctx2d.width / ctx2d.height;
+
+            let frameW, frameH;
+            if (currentAspect > targetAspect) {
+                // Viewport is wider than target aspect ratio (letterbox on sides)
+                frameH = ctx2d.height;
+                frameW = frameH * targetAspect;
+            } else {
+                // Viewport is taller than target aspect ratio (letterbox on top/bottom)
+                frameW = ctx2d.width;
+                frameH = frameW / targetAspect;
+            }
+
+            const x = (ctx2d.width - frameW) / 2;
+            const y = (ctx2d.height - frameH) / 2;
+
+            // Draw dark semi-transparent letterbox areas
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            if (currentAspect > targetAspect) {
+                // Left & Right bars
+                ctx.fillRect(0, 0, x, ctx2d.height);
+                ctx.fillRect(x + frameW, 0, ctx2d.width - (x + frameW), ctx2d.height);
+            } else {
+                // Top & Bottom bars
+                ctx.fillRect(0, 0, ctx2d.width, y);
+                ctx.fillRect(0, y + frameH, ctx2d.width, ctx2d.height - (y + frameH));
+            }
+
+            // Draw target camera boundary lines (cyan/neon color to match UI)
+            ctx.strokeStyle = '#06b6d4';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, frameW, frameH);
+
+            // Add thin crosshair in the center
+            ctx.strokeStyle = 'rgba(6, 182, 212, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(ctx2d.width / 2 - 20, ctx2d.height / 2);
+            ctx.lineTo(ctx2d.width / 2 + 20, ctx2d.height / 2);
+            ctx.moveTo(ctx2d.width / 2, ctx2d.height / 2 - 20);
+            ctx.lineTo(ctx2d.width / 2, ctx2d.height / 2 + 20);
+            ctx.stroke();
+        };
+
         const animate = () => {
             if (!this.renderer3d) return;
             requestAnimationFrame(animate);
             if (this.controls3d) this.controls3d.update();
             this.renderer3d.render(this.scene3d, this.camera3d);
+            drawFramingGuides();
         };
         requestAnimationFrame(animate);
     }
