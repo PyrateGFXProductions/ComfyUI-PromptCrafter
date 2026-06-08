@@ -424,6 +424,202 @@ const injectStyles = () => {
     document.head.appendChild(style);
 };
 
+const PGFX_TEXT_JSON_PROPS = ['name', 'userData', 'pgfx_curvature', 'pgfx_editor_background'];
+
+const pgfxIsTextObject = (obj) => {
+    return !!obj && (obj.type === 'i-text' || obj.type === 'text' || obj.type === 'textbox' || (obj.type && obj.type.includes('text')));
+};
+
+const pgfxClamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const pgfxGetCurvature = (obj) => {
+    const raw = parseFloat(obj?.pgfx_curvature || 0);
+    return Number.isFinite(raw) ? pgfxClamp(raw, -180, 180) : 0;
+};
+
+const pgfxTextFontString = (obj, fontSize) => {
+    const style = obj.fontStyle || 'normal';
+    const weight = obj.fontWeight || 'normal';
+    const family = obj.fontFamily || 'Arial';
+    return `${style} ${weight} ${fontSize}px "${family}"`;
+};
+
+const pgfxGetCharSpacingPx = (obj, fontSize) => {
+    const spacing = parseFloat(obj?.charSpacing || 0);
+    return Number.isFinite(spacing) ? (spacing * fontSize) / 1000 : 0;
+};
+
+const pgfxMeasureArcLine = (text, measureChar, obj, fontSize) => {
+    const chars = Array.from(text || '');
+    const spacingPx = pgfxGetCharSpacingPx(obj, fontSize);
+    const glyphs = [];
+    let total = 0;
+
+    chars.forEach((char, index) => {
+        const rawWidth = Math.max(0, measureChar(char, index, text) || 0);
+        const advance = rawWidth + (index < chars.length - 1 ? spacingPx : 0);
+        glyphs.push({
+            char,
+            rawWidth,
+            advance,
+            center: total + advance / 2,
+        });
+        total += advance;
+    });
+
+    return { glyphs, total };
+};
+
+const pgfxBuildArcLayout = (obj, measureChar, fontSize) => {
+    const curvature = pgfxGetCurvature(obj);
+    const lines = String(obj?.text || '').split('\n');
+    const lineHeight = fontSize * (parseFloat(obj?.lineHeight || 1.16) || 1.16);
+    const startY = -((lines.length - 1) * lineHeight) / 2;
+
+    return lines.map((line, lineIndex) => {
+        const measured = pgfxMeasureArcLine(line, measureChar, obj, fontSize);
+        const absCurv = Math.abs(curvature);
+        const direction = curvature >= 0 ? 1 : -1;
+        const maxArcAngle = absCurv * Math.PI / 180;
+        const safeArcAngle = Math.max(maxArcAngle, 0.001);
+        const radius = absCurv > 0 && measured.total > 0
+            ? Math.max(measured.total / safeArcAngle, fontSize)
+            : Infinity;
+        const lineY = startY + lineIndex * lineHeight;
+
+        return {
+            text: line,
+            y: lineY,
+            total: measured.total,
+            radius,
+            direction,
+            glyphs: measured.glyphs.map((glyph) => {
+                if (!absCurv || !measured.total) {
+                    return {
+                        ...glyph,
+                        x: glyph.center - measured.total / 2,
+                        y: lineY,
+                        rotation: 0,
+                    };
+                }
+                const theta = (glyph.center - measured.total / 2) / radius;
+                return {
+                    ...glyph,
+                    x: Math.sin(theta) * radius,
+                    y: lineY - direction * (radius - Math.cos(theta) * radius),
+                    rotation: -direction * theta,
+                };
+            }),
+        };
+    });
+};
+
+const pgfxCurvedTextFillStyle = (styleValue, fallback = '#000000') => {
+    return typeof styleValue === 'string' && styleValue !== 'transparent' ? styleValue : fallback;
+};
+
+const pgfxCreateCurvedTextCanvas = (obj, pixelRatio = 2) => {
+    const fontSize = parseFloat(obj.fontSize || 72);
+    const measurer = document.createElement('canvas').getContext('2d');
+    measurer.font = pgfxTextFontString(obj, fontSize);
+    const layout = pgfxBuildArcLayout(obj, (char) => measurer.measureText(char).width, fontSize);
+    const strokeWidth = Math.max(0, parseFloat(obj.strokeWidth || 0));
+    const padding = Math.max(fontSize * 0.75, strokeWidth * 2 + 8);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+    layout.forEach(line => {
+        line.glyphs.forEach(glyph => {
+            const glyphPadX = Math.max(glyph.rawWidth, fontSize * 0.3) / 2 + padding;
+            const glyphPadY = fontSize + padding;
+            minX = Math.min(minX, glyph.x - glyphPadX);
+            maxX = Math.max(maxX, glyph.x + glyphPadX);
+            minY = Math.min(minY, glyph.y - glyphPadY);
+            maxY = Math.max(maxY, glyph.y + glyphPadY);
+        });
+    });
+
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || maxX <= minX || maxY <= minY) {
+        minX = -fontSize;
+        maxX = fontSize;
+        minY = -fontSize;
+        maxY = fontSize;
+    }
+
+    const width = Math.max(1, Math.ceil(maxX - minX));
+    const height = Math.max(1, Math.ceil(maxY - minY));
+    const ratio = Math.max(1, pixelRatio || 1);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(width * ratio);
+    canvas.height = Math.ceil(height * ratio);
+    canvas._pgfxLogicalWidth = width;
+    canvas._pgfxLogicalHeight = height;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(ratio, ratio);
+    ctx.font = pgfxTextFontString(obj, fontSize);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = pgfxCurvedTextFillStyle(obj.fill, '#000000');
+    ctx.strokeStyle = pgfxCurvedTextFillStyle(obj.stroke, '#000000');
+    ctx.lineWidth = strokeWidth;
+
+    layout.forEach(line => {
+        line.glyphs.forEach(glyph => {
+            if (!glyph.char) return;
+            ctx.save();
+            ctx.translate(glyph.x - minX, glyph.y - minY);
+            ctx.rotate(glyph.rotation);
+            if (obj.stroke && strokeWidth > 0) ctx.strokeText(glyph.char, 0, 0);
+            if (obj.fill !== 'transparent') ctx.fillText(glyph.char, 0, 0);
+            ctx.restore();
+        });
+    });
+
+    return canvas;
+};
+
+const pgfxInstallCurvedTextPatch = () => {
+    if (!window.fabric || !fabric.Text || fabric.Text.prototype._pgfxCurvedTextPatched) return;
+
+    const proto = fabric.Text.prototype;
+    const originalRenderText = proto._renderText;
+    const originalInitDimensions = proto.initDimensions;
+    const originalToObject = proto.toObject;
+
+    proto._pgfxCurvedTextPatched = true;
+
+    proto.toObject = function(propertiesToInclude) {
+        const props = Array.isArray(propertiesToInclude) ? [...propertiesToInclude] : [];
+        if (!props.includes('pgfx_curvature')) props.push('pgfx_curvature');
+        return originalToObject.call(this, props);
+    };
+
+    proto.initDimensions = function() {
+        const result = originalInitDimensions.call(this);
+        const curvature = pgfxGetCurvature(this);
+        if (!curvature || this.isEditing) return result;
+
+        const curvedCanvas = pgfxCreateCurvedTextCanvas(this, 1);
+        this.width = Math.max(1, curvedCanvas._pgfxLogicalWidth || curvedCanvas.width || this.width || 1);
+        this.height = Math.max(1, curvedCanvas._pgfxLogicalHeight || curvedCanvas.height || this.height || 1);
+        return result;
+    };
+
+    proto._renderText = function(ctx) {
+        const curvature = pgfxGetCurvature(this);
+        if (!curvature || this.isEditing) {
+            return originalRenderText.call(this, ctx);
+        }
+
+        const curvedCanvas = pgfxCreateCurvedTextCanvas(this, 2);
+        const drawW = curvedCanvas._pgfxLogicalWidth || this.width || (curvedCanvas.width / 2);
+        const drawH = curvedCanvas._pgfxLogicalHeight || this.height || (curvedCanvas.height / 2);
+        const leftOffset = typeof this._getLeftOffset === 'function' ? this._getLeftOffset() : -this.width / 2;
+        const topOffset = typeof this._getTopOffset === 'function' ? this._getTopOffset() : -this.height / 2;
+        ctx.drawImage(curvedCanvas, leftOffset, topOffset, drawW, drawH);
+    };
+};
+
 // Main Studio UI Manager
 class LogoStudioUI {
     constructor(node, base64Widget, jsonWidget, textWidget) {
@@ -466,7 +662,7 @@ class LogoStudioUI {
 
     _saveToHistory() {
         if (!this.canvas || this.isProcessingHistory) return;
-        const state = JSON.stringify(this.canvas.toJSON(['name', 'pgfx_editor_background']));
+        const state = JSON.stringify(this.canvas.toJSON(PGFX_TEXT_JSON_PROPS));
 
         // If state hasn't changed, don't push
         if (this.history[this.historyIdx] === state) return;
@@ -539,6 +735,7 @@ class LogoStudioUI {
 
         try {
             await loadFabric(loadingStatus);
+            pgfxInstallCurvedTextPatch();
             if (loadingStatus) loadingStatus.textContent = "📂 Loading Design Data...";
             
             // Fetch fonts every time the studio opens to ensure fresh data
@@ -661,6 +858,7 @@ class LogoStudioUI {
             fill: '#ffffff', textAlign: 'center',
             originX: 'center', originY: 'center',
             fontWeight: 'bold',
+            pgfx_curvature: 0,
             name: 'pgfx_primary_text'   // tag so we can find it later
         });
         this.canvas.add(text);
@@ -676,6 +874,7 @@ class LogoStudioUI {
         const primary = this.canvas.getObjects().find(o => o.name === 'pgfx_primary_text');
         if (primary && primary.text !== newText) {
             primary.set('text', newText);
+            this._refreshTextLayoutObject(primary);
             this.canvas.requestRenderAll();
         }
     }
@@ -694,6 +893,14 @@ class LogoStudioUI {
         if (!picker) return;
         const bg = this.pageBackgroundColor;
         picker.value = typeof bg === 'string' && bg.startsWith('#') ? bg : '#000000';
+    }
+
+    _refreshTextLayoutObject(obj) {
+        if (!pgfxIsTextObject(obj)) return;
+        obj.objectCaching = pgfxGetCurvature(obj) ? false : obj.objectCaching;
+        obj.dirty = true;
+        if (typeof obj.initDimensions === 'function') obj.initDimensions();
+        obj.setCoords();
     }
 
     _captureCanvasState() {
@@ -749,7 +956,7 @@ class LogoStudioUI {
                 advSettings.text_align = primary.textAlign;
             }
 
-            const jsonState = this.canvas.toJSON(['name', 'userData']);
+            const jsonState = this.canvas.toJSON(PGFX_TEXT_JSON_PROPS);
             jsonState.background = 'transparent';
             jsonState.backgroundColor = 'transparent';
             jsonState.pgfx_editor_background = editorBackground;
@@ -790,7 +997,7 @@ class LogoStudioUI {
             advSettings.text_align = primary.textAlign;
         }
 
-        const jsonState = this.canvas.toJSON(['name']);
+        const jsonState = this.canvas.toJSON(PGFX_TEXT_JSON_PROPS);
         jsonState.background = 'transparent';
         jsonState.backgroundColor = 'transparent';
         jsonState.pgfx_editor_background = editorBackground;
@@ -1482,10 +1689,11 @@ class LogoStudioUI {
         }
 
         // Text specific
-        if (active.type === 'i-text' || active.type === 'text') {
+        if (pgfxIsTextObject(active)) {
             const sizeVal = active.fontSize || 100;
             const letterVal = active.charSpacing || 0;
             const lineVal = active.lineHeight || 1.16;
+            const curvatureVal = pgfxGetCurvature(active);
 
             document.getElementById('pgfx-font-select').value = active.fontFamily || 'Arial';
             document.getElementById('pgfx-font-size').value = sizeVal;
@@ -1493,10 +1701,12 @@ class LogoStudioUI {
             document.getElementById('pgfx-font-style').value = active.fontStyle || 'normal';
             document.getElementById('pgfx-line-spacing').value = lineVal;
             document.getElementById('pgfx-letter-spacing').value = letterVal;
+            document.getElementById('pgfx-text-curvature').value = curvatureVal;
 
             _valEl('pgfx-font-size-val', String(Math.round(sizeVal)));
             _valEl('pgfx-letter-spacing-val', String(Math.round(letterVal)));
             _valEl('pgfx-line-spacing-val', parseFloat(lineVal).toFixed(2));
+            _valEl('pgfx-text-curvature-val', String(Math.round(curvatureVal)));
         }
     }
 
@@ -1816,7 +2026,7 @@ class LogoStudioUI {
             pgfx_version: '1.1',
             pgfx_type: 'project',
             saved_at: new Date().toISOString(),
-            canvas_json: this.canvas ? this.canvas.toJSON(['name']) : null,
+            canvas_json: this.canvas ? this.canvas.toJSON(PGFX_TEXT_JSON_PROPS) : null,
             canvas_text: this.lastCanvasText || '',
             editor: {
                 target_width: this.targetWidth,
@@ -2178,7 +2388,8 @@ class LogoStudioUI {
             const font = document.getElementById('pgfx-font-select').value;
             const text = new fabric.IText("NEW TEXT", {
                 left: this.targetWidth / 2, top: this.targetHeight / 2,
-                fontFamily: font, fontSize: 100, fill: '#ffffff', originX: 'center', originY: 'center'
+                fontFamily: font, fontSize: 100, fill: '#ffffff', originX: 'center', originY: 'center',
+                pgfx_curvature: 0
             });
             this.canvas.add(text);
             this.canvas.setActiveObject(text);
@@ -2453,6 +2664,7 @@ class LogoStudioUI {
                     const active = this.canvas.getActiveObject();
                     if(active && active.type.includes('text')) {
                         active.set('fontFamily', data.name);
+                        this._refreshTextLayoutObject(active);
                         commitCanvasChange();
                     }
                 } else {
@@ -2583,6 +2795,7 @@ class LogoStudioUI {
             const active = this.canvas.getActiveObject();
             if (active && active.type.includes('text')) {
                 active.set('fontFamily', e.target.value);
+                this._refreshTextLayoutObject(active);
                 commitCanvasChange();
             }
         };
@@ -2593,6 +2806,7 @@ class LogoStudioUI {
             if (valEl) valEl.textContent = e.target.value;
             if (active && active.type.includes('text')) {
                 active.set('fontSize', parseInt(e.target.value));
+                this._refreshTextLayoutObject(active);
                 commitCanvasChange();
             }
         };
@@ -2601,6 +2815,7 @@ class LogoStudioUI {
             const active = this.canvas.getActiveObject();
             if (active && active.type.includes('text')) {
                 active.set('fontWeight', e.target.value);
+                this._refreshTextLayoutObject(active);
                 commitCanvasChange();
             }
         };
@@ -2609,6 +2824,7 @@ class LogoStudioUI {
             const active = this.canvas.getActiveObject();
             if (active && active.type.includes('text')) {
                 active.set('fontStyle', e.target.value);
+                this._refreshTextLayoutObject(active);
                 commitCanvasChange();
             }
         };
@@ -2619,6 +2835,7 @@ class LogoStudioUI {
             if (valEl) valEl.textContent = e.target.value;
             if (active && active.type.includes('text')) {
                 active.set('charSpacing', parseInt(e.target.value));
+                this._refreshTextLayoutObject(active);
                 commitCanvasChange();
             }
         };
@@ -2629,6 +2846,19 @@ class LogoStudioUI {
             if (valEl) valEl.textContent = parseFloat(e.target.value).toFixed(2);
             if (active && active.type.includes('text')) {
                 active.set('lineHeight', parseFloat(e.target.value));
+                this._refreshTextLayoutObject(active);
+                commitCanvasChange();
+            }
+        };
+
+        document.getElementById('pgfx-text-curvature').oninput = (e) => {
+            const active = this.canvas.getActiveObject();
+            const curvature = pgfxClamp(parseFloat(e.target.value) || 0, -180, 180);
+            const valEl = document.getElementById('pgfx-text-curvature-val');
+            if (valEl) valEl.textContent = String(Math.round(curvature));
+            if (pgfxIsTextObject(active)) {
+                active.set('pgfx_curvature', curvature);
+                this._refreshTextLayoutObject(active);
                 commitCanvasChange();
             }
         };
@@ -3894,14 +4124,9 @@ class LogoStudioUI {
                     const tCtx = textCanvas.getContext('2d');
                     tCtx.scale(renderScale, renderScale);
                     const fontSize = Math.round(obj.fontSize * obj.scaleY);
-                    tCtx.font = `${obj.fontStyle || 'normal'} ${obj.fontWeight || 'normal'} ${fontSize}px "${obj.fontFamily || 'Arial'}"`;
-                    tCtx.textAlign = 'center';
-                    tCtx.textBaseline = 'middle';
-                    tCtx.fillStyle = fillColor;
-                    const lines = textContent.split('\n');
-                    const lineH = fontSize * (obj.lineHeight || 1.16);
-                    const startY = textHeight / 2 - (lines.length - 1) * lineH / 2;
-                    lines.forEach((line, i) => tCtx.fillText(line, textWidth / 2, startY + i * lineH));
+                    const fontStyle = obj.fontStyle || 'normal';
+                    const fontWeight = obj.fontWeight || 'normal';
+                    this._drawTextForTrace(tCtx, obj, fontStyle, fontWeight, fontSize, obj.fontFamily || 'Arial', textContent, textWidth, textHeight, 1, fillColor);
                     const textTex = new THREE.CanvasTexture(textCanvas);
                     const frontMat = material.clone();
                     frontMat.map = textTex;
@@ -4338,9 +4563,13 @@ class LogoStudioUI {
             if (bin) {
                 try {
                     const font = opentype.parse(bin);
-                    // Build the full SVG path string for the text at the given size
-                    // opentype handles multi-glyph layout including kerning
-                    const pathData = font.getPath(text, 0, 0, fontSize).toPathData(4);
+                    const curvature = pgfxGetCurvature(obj);
+                    // Straight text can use opentype's native full-string path layout.
+                    // Curved text lays out individual glyph paths so kerning-aware
+                    // advances can be rotated onto the computed arc.
+                    const pathData = curvature
+                        ? this._curvedOpenTypePathData(font, obj, text, fontSize)
+                        : font.getPath(text, 0, 0, fontSize).toPathData(4);
                     if (pathData && pathData.length > 1) {
                         const svgStr = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${pathData}"/></svg>`;
                         const loader = new THREE.SVGLoader();
@@ -4366,6 +4595,119 @@ class LogoStudioUI {
         return this._traceTextToShapes(obj, fontStyle, fontWeight, fontSize, fontFamily, text);
     }
 
+    _openTypeAdvance(font, char, nextChar, fontSize) {
+        const glyph = font.charToGlyph(char);
+        const units = font.unitsPerEm || 1000;
+        let advance = (glyph.advanceWidth || 0) * fontSize / units;
+        if (nextChar) {
+            const nextGlyph = font.charToGlyph(nextChar);
+            if (font.getKerningValue) {
+                advance += (font.getKerningValue(glyph, nextGlyph) || 0) * fontSize / units;
+            }
+        }
+        return advance;
+    }
+
+    _curvedOpenTypePathData(font, obj, text, fontSize) {
+        const lines = String(text || '').split('\n');
+        const measureLine = (line) => {
+            const chars = Array.from(line || '');
+            return pgfxMeasureArcLine(line, (char, index) => {
+                return this._openTypeAdvance(font, char, chars[index + 1], fontSize);
+            }, obj, fontSize);
+        };
+
+        const measuredLines = lines.map(line => measureLine(line));
+        const lineHeight = fontSize * (parseFloat(obj.lineHeight || 1.16) || 1.16);
+        const startY = -((lines.length - 1) * lineHeight) / 2;
+        const curvature = pgfxGetCurvature(obj);
+        const absCurv = Math.abs(curvature);
+        const direction = curvature >= 0 ? 1 : -1;
+        const maxArcAngle = absCurv * Math.PI / 180;
+        const safeArcAngle = Math.max(maxArcAngle, 0.001);
+        let d = '';
+
+        lines.forEach((line, lineIndex) => {
+            const chars = Array.from(line || '');
+            const measured = measuredLines[lineIndex];
+            const radius = measured.total > 0 ? Math.max(measured.total / safeArcAngle, fontSize) : Infinity;
+            const lineY = startY + lineIndex * lineHeight;
+
+            measured.glyphs.forEach((glyph, glyphIndex) => {
+                const char = chars[glyphIndex];
+                if (!char || char === ' ') return;
+                let x = glyph.center - measured.total / 2;
+                let y = lineY;
+                let rotation = 0;
+                if (absCurv && measured.total) {
+                    const theta = (glyph.center - measured.total / 2) / radius;
+                    x = Math.sin(theta) * radius;
+                    y = lineY - direction * (radius - Math.cos(theta) * radius);
+                    rotation = -direction * theta;
+                }
+
+                const charPath = font.getPath(char, -glyph.rawWidth / 2, 0, fontSize);
+                d += this._transformOpenTypePath(charPath, x, y, rotation);
+            });
+        });
+
+        return d;
+    }
+
+    _transformOpenTypePath(path, tx, ty, rotation) {
+        const c = Math.cos(rotation || 0);
+        const s = Math.sin(rotation || 0);
+        const fmt = (num) => Number(num || 0).toFixed(4).replace(/\.?0+$/, '');
+        const pt = (x, y) => {
+            const nx = x * c - y * s + tx;
+            const ny = x * s + y * c + ty;
+            return `${fmt(nx)} ${fmt(ny)}`;
+        };
+
+        return (path.commands || []).map(cmd => {
+            switch (cmd.type) {
+                case 'M': return `M ${pt(cmd.x, cmd.y)}`;
+                case 'L': return `L ${pt(cmd.x, cmd.y)}`;
+                case 'C': return `C ${pt(cmd.x1, cmd.y1)} ${pt(cmd.x2, cmd.y2)} ${pt(cmd.x, cmd.y)}`;
+                case 'Q': return `Q ${pt(cmd.x1, cmd.y1)} ${pt(cmd.x, cmd.y)}`;
+                case 'Z': return 'Z';
+                default: return '';
+            }
+        }).join(' ');
+    }
+
+    _drawTextForTrace(ctx, obj, fontStyle, fontWeight, fontSize, fontFamily, text, w, h, scale, fillStyle = '#fff') {
+        const fStr = `${fontStyle} ${fontWeight} ${fontSize * scale}px "${fontFamily}"`;
+        ctx.font = fStr;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = fillStyle;
+        ctx.strokeStyle = fillStyle;
+        ctx.lineWidth = Math.max(0, (obj.strokeWidth || 0) * scale);
+
+        const curvature = pgfxGetCurvature(obj);
+        if (!curvature) {
+            const lines = String(text || '').split('\n');
+            const lineH = fontSize * scale * ((obj.lineHeight || 1.16));
+            const startY = h * scale / 2 - (lines.length - 1) * lineH / 2;
+            lines.forEach((line, i) => ctx.fillText(line, w * scale / 2, startY + i * lineH));
+            return;
+        }
+
+        const layout = pgfxBuildArcLayout(obj, (char) => ctx.measureText(char).width / scale, fontSize);
+        layout.forEach(line => {
+            line.glyphs.forEach(glyph => {
+                if (!glyph.char) return;
+                ctx.save();
+                ctx.translate(w * scale / 2 + glyph.x * scale, h * scale / 2 + glyph.y * scale);
+                ctx.rotate(glyph.rotation);
+                if (obj.stroke && obj.strokeWidth > 0) ctx.strokeText(glyph.char, 0, 0);
+                if (obj.fill !== 'transparent') ctx.fillText(glyph.char, 0, 0);
+                ctx.restore();
+            });
+        });
+    }
+
     _traceTextToShapes(obj, fontStyle, fontWeight, fontSize, fontFamily, text) {
         const SCALE   = 6;    // Render at 6× for smooth edges
         const THRESH  = 128;  // Alpha threshold to consider a pixel "filled"
@@ -4384,14 +4726,7 @@ class LogoStudioUI {
         ctx.fillRect(0, 0, cw, ch);
         ctx.fillStyle = '#fff';
 
-        const lines  = text.split('\n');
-        const lineH  = fontSize * SCALE * ((obj.lineHeight || 1.16));
-        const startY = ch / 2 - (lines.length - 1) * lineH / 2;
-        const fStr   = `${fontStyle} ${fontWeight} ${fontSize * SCALE}px "${fontFamily}"`;
-        ctx.font          = fStr;
-        ctx.textAlign     = 'center';
-        ctx.textBaseline  = 'middle';
-        lines.forEach((line, i) => ctx.fillText(line, cw / 2, startY + i * lineH));
+        this._drawTextForTrace(ctx, obj, fontStyle, fontWeight, fontSize, fontFamily, text, w, h, SCALE);
 
         const data   = ctx.getImageData(0, 0, cw, ch).data;
         const shapes = [];
@@ -5029,6 +5364,16 @@ class LogoStudioUI {
                                     <span style="font-size: 11px; color:#aaa; width: 60px;">Line</span>
                                     <input type="range" id="pgfx-line-spacing" min="0.1" max="5" step="0.05" value="1.16" style="flex: 1;">
                                     <span id="pgfx-line-spacing-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">1.16</span>
+                                </div>
+                            </div>
+
+                            <!-- TEXT LAYOUT -->
+                            <div class="pgfx-input-group">
+                                <label class="pgfx-label">Text Layout</label>
+                                <div class="pgfx-row">
+                                    <span style="font-size: 11px; color:#aaa; width: 60px;">Curvature</span>
+                                    <input type="range" id="pgfx-text-curvature" min="-180" max="180" value="0" style="flex: 1;">
+                                    <span id="pgfx-text-curvature-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">0</span>
                                 </div>
                             </div>
 

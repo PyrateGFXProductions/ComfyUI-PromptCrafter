@@ -87,3 +87,4 @@ final_debug.py
 # Generated Node Lists & Session Logs
 all_nodes.json
 session-*.md
+opencode.json
