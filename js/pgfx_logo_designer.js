@@ -82,6 +82,10 @@ const loadThreeJS = (statusEl) => {
             if (!window.THREE.GLTFExporter) {
                 await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js");
             }
+            if (statusEl) statusEl.textContent = "📦 Downloading Font Extruder (opentype.js)...";
+            if (!window.opentype) {
+                await loadScript("https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js");
+            }
             if (statusEl) statusEl.textContent = "✅ 3D Engine Ready!";
             resolve(window.THREE);
         } catch (err) {
@@ -455,6 +459,7 @@ class LogoStudioUI {
         this.mouse3d = null;
         this.transformMode = 'translate'; // translate | rotate | scale
         this._saved3DTransforms = {}; // keyed by name+type — persists 3D transforms across sync
+        this._fontBinaryCache = {}; // fontFamily -> ArrayBuffer (for opentype.js glyph extrusion)
 
         this.initDOM();
     }
@@ -1328,6 +1333,8 @@ class LogoStudioUI {
             const loadedFont = await fontFace.load();
             document.fonts.add(loadedFont);
             this.customFonts.push({ name: fontName, url: fontUrl });
+            // Pre-fetch the binary for opentype.js glyph extrusion (non-blocking)
+            this._fetchFontBinary(fontName, fontUrl).catch(() => {});
 
             if (addToSelect) {
                 const select = document.getElementById('pgfx-font-select');
@@ -3765,131 +3772,158 @@ class LogoStudioUI {
                 mesh.castShadow = true; mesh.receiveShadow = true;
                 this.extrudedGroup.add(mesh);
             } else if (obj.type === 'i-text' || obj.type === 'text' || obj.type === 'textbox') {
-                // TRUE SILHOUETTE VECTOR EXTRUSION (V2)
+                // TRUE GLYPH VECTOR EXTRUSION via opentype.js (with canvas-trace fallback)
                 const textContent = obj.text || '';
                 if (!textContent.trim()) continue;
 
                 const s3d = this._getObj3DSettings(obj);
                 const fillColor = typeof obj.fill === 'string' && obj.fill !== 'transparent' ? obj.fill : '#ffffff';
                 const material = this.createMaterialPreset(fillColor);
+                const objKey = this._keyForObj(obj, index);
+                const objCenter = obj.getCenterPoint();
 
-                let pathData = "";
-                try {
-                    pathData = (typeof obj.toPathData === "function") ? obj.toPathData() : "";
-                } catch(e) {}
+                // Wrapper Group: holds user transforms. Inner mesh holds geometry Y-flip.
+                // This prevents the Y-flip from being clobbered on transform restore.
+                const group = new THREE.Group();
+                group.userData._key = objKey;
+                group.userData.name = obj.name || 'Text';
+                group.userData._isTextGroup = true;
+                group.position.set(
+                    objCenter.x - this.targetWidth / 2,
+                    -(objCenter.y - this.targetHeight / 2),
+                    zOffset
+                );
+                group.rotation.z = THREE.MathUtils.degToRad(-obj.angle);
 
-                if (pathData) {
-                    const svgPathMarkup = `<path d="${pathData}" />`;
-                    const wrapper = `<svg xmlns="http://www.w3.org/2000/svg">${svgPathMarkup}</svg>`;
-                    const svgLoader = new THREE.SVGLoader();
-                    const parsed = svgLoader.parse(wrapper);
-
-                    if (parsed && parsed.paths && parsed.paths.length > 0) {
-                        const allShapes = [];
-                        parsed.paths.forEach(p => allShapes.push(...THREE.SVGLoader.createShapes(p)));
-                        
-                        if (allShapes.length > 0) {
-                            const extrudeGeom = new THREE.ExtrudeGeometry(allShapes, {
-                                depth: s3d.depth,
-                                bevelEnabled: s3d.bevelEnabled,
-                                bevelSegments: s3d.bevelSegments,
-                                steps: 1,
-                                bevelSize: s3d.bevelSize,
-                                bevelThickness: s3d.bevelSize
-                            });
-
-                            // Center the geometry so the origin is the middle of the text
-                            extrudeGeom.center();
-
-                            const mesh = new THREE.Mesh(extrudeGeom, material);
-                            mesh.userData.name = obj.name || 'Text';
-                            mesh.userData._key = this._keyForObj(obj, index);
-                            
-                            const center = obj.getCenterPoint();
-                            mesh.position.set(center.x - this.targetWidth / 2, -(center.y - this.targetHeight / 2), zOffset);
-                            mesh.rotation.z = THREE.MathUtils.degToRad(-obj.angle);
-                            
-                            // Fabric path data is already scaled, but Three.js Y is inverted
-                            mesh.scale.set(1, -1, 1);
-                            
-                            mesh.castShadow = true;
-                            mesh.receiveShadow = true;
-                            this.extrudedGroup.add(mesh);
-                            continue;
-                        }
+                // Try vectorized extrusion first (async, may update mesh after placement)
+                const buildTextMesh = async () => {
+                    const shapes = await this._textToShapes(obj);
+                    if (shapes && shapes.length > 0) {
+                        const extrudeGeom = new THREE.ExtrudeGeometry(shapes, {
+                            depth: s3d.depth,
+                            bevelEnabled: s3d.bevelEnabled,
+                            bevelSegments: s3d.bevelSegments,
+                            steps: 2,
+                            bevelSize: s3d.bevelSize,
+                            bevelThickness: s3d.bevelSize * 0.75
+                        });
+                        extrudeGeom.computeBoundingBox();
+                        extrudeGeom.center();
+                        const mesh = new THREE.Mesh(extrudeGeom, material);
+                        // Y-flip on inner mesh only — isolated from group user transforms
+                        mesh.scale.set(1, -1, 1);
+                        mesh.castShadow = true;
+                        mesh.receiveShadow = true;
+                        group.clear();
+                        group.add(mesh);
+                        this.renderer3d && this.renderer3d.render(this.scene3d, this.camera3d);
+                        return;
                     }
-                }
+                    // Fallback: flat textured box (beveling impossible, but at least positioned correctly)
+                    const padding = 24, renderScale = 2;
+                    const textWidth = Math.ceil(obj.width * obj.scaleX) + padding * 2;
+                    const textHeight = Math.ceil(obj.height * obj.scaleY) + padding * 2;
+                    const textCanvas = document.createElement('canvas');
+                    textCanvas.width = textWidth * renderScale;
+                    textCanvas.height = textHeight * renderScale;
+                    const tCtx = textCanvas.getContext('2d');
+                    tCtx.scale(renderScale, renderScale);
+                    const fontSize = Math.round(obj.fontSize * obj.scaleY);
+                    tCtx.font = `${obj.fontStyle || 'normal'} ${obj.fontWeight || 'normal'} ${fontSize}px "${obj.fontFamily || 'Arial'}"`;
+                    tCtx.textAlign = 'center';
+                    tCtx.textBaseline = 'middle';
+                    tCtx.fillStyle = fillColor;
+                    const lines = textContent.split('\n');
+                    const lineH = fontSize * (obj.lineHeight || 1.16);
+                    const startY = textHeight / 2 - (lines.length - 1) * lineH / 2;
+                    lines.forEach((line, i) => tCtx.fillText(line, textWidth / 2, startY + i * lineH));
+                    const textTex = new THREE.CanvasTexture(textCanvas);
+                    const frontMat = material.clone();
+                    frontMat.map = textTex;
+                    frontMat.transparent = true;
+                    frontMat.alphaTest = 0.3;
+                    const invMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+                    const geometry = new THREE.BoxGeometry(textWidth, textHeight, Math.max(s3d.depth, 1));
+                    const mesh = new THREE.Mesh(geometry, [invMat, invMat, invMat, invMat, frontMat, invMat]);
+                    group.clear();
+                    group.add(mesh);
+                };
 
-                // FALLBACK: Sharp block if vectorization fails
-                const padding = 24;
-                const scale = 2; 
-                const textWidth = Math.ceil(obj.width * obj.scaleX) + padding * 2;
-                const textHeight = Math.ceil(obj.height * obj.scaleY) + padding * 2;
-                const textCanvas = document.createElement('canvas');
-                textCanvas.width = textWidth * scale; textCanvas.height = textHeight * scale;
-                const tCtx = textCanvas.getContext('2d');
-                tCtx.scale(scale, scale);
-                const fontSize = Math.round(obj.fontSize * obj.scaleY);
-                tCtx.font = `${obj.fontStyle || 'normal'} ${obj.fontWeight || 'normal'} ${fontSize}px "${obj.fontFamily || 'Arial'}"`;
-                tCtx.textAlign = 'center'; tCtx.textBaseline = 'middle';
-                tCtx.save();
-                const hStretch = obj.scaleX / obj.scaleY;
-                tCtx.setTransform(scale * hStretch, 0, 0, scale, (textWidth / 2) * scale, (textHeight / 2) * scale);
-                tCtx.fillStyle = fillColor;
-                tCtx.fillText(textContent, 0, 0);
-                tCtx.restore();
-
-                const textTex = new THREE.CanvasTexture(textCanvas);
-                const frontMat = material.clone(); frontMat.map = textTex; frontMat.transparent = true; frontMat.alphaTest = 0.5;
-                const invMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
-                const geometry = new THREE.BoxGeometry(textWidth, textHeight, s3d.depth);
-                const mesh = new THREE.Mesh(geometry, [invMat, invMat, invMat, invMat, frontMat, invMat]);
-                mesh.userData._key = this._keyForObj(obj, index);
-                const center = obj.getCenterPoint();
-                mesh.position.set(center.x - this.targetWidth / 2, -(center.y - this.targetHeight / 2), zOffset);
-                mesh.rotation.z = THREE.MathUtils.degToRad(-obj.angle);
-                this.extrudedGroup.add(mesh);
+                this.extrudedGroup.add(group);
+                buildTextMesh(); // fire-and-forget; updates group async
             } else {
-                // ... (SVG logic)
+                // SVG / Path / Shape objects — extrude using THREE.SVGLoader
+                // We extract each sub-path individually so we can center each shape
+                // around the Fabric object's center point (not the raw SVG canvas origin).
+                const s3d = this._getObj3DSettings(obj);
+                const objCenter = obj.getCenterPoint();
+                const objKey = this._keyForObj(obj, index);
+
+                // Build a minimal SVG with just this object at its canvas-space position
                 const svgMarkup = obj.toSVG();
                 const wrapper = `<svg xmlns="http://www.w3.org/2000/svg" width="${this.targetWidth}" height="${this.targetHeight}" viewBox="0 0 ${this.targetWidth} ${this.targetHeight}">${svgMarkup}</svg>`;
                 const svgLoader = new THREE.SVGLoader();
                 let parsed;
                 try { parsed = svgLoader.parse(wrapper); } catch (err) { continue; }
+
                 const paths = parsed.paths;
+                // Wrapper group so all sub-paths share one transform key
+                const shapeGroup = new THREE.Group();
+                shapeGroup.userData._key = objKey;
+                shapeGroup.userData.name = obj.name || 'Shape';
+                shapeGroup.userData._isSVGGroup = true;
+
                 for (let p = 0; p < paths.length; p++) {
                     const path = paths[p];
                     const shapes = THREE.SVGLoader.createShapes(path);
-                    const fillColor = path.color || new THREE.Color(0xffffff);
-                    const material = this.createMaterialPreset(fillColor);
+                    const fillColorVal = path.color || new THREE.Color(0xffffff);
+                    const material = this.createMaterialPreset(fillColorVal);
                     for (let s = 0; s < shapes.length; s++) {
                         const shape = shapes[s];
-                        const s3d = this._getObj3DSettings(obj);
                         const extrudeGeom = new THREE.ExtrudeGeometry(shape, {
                             depth: s3d.depth, bevelEnabled: s3d.bevelEnabled,
-                            bevelSegments: s3d.bevelSegments, steps: 1,
-                            bevelSize: s3d.bevelSize, bevelThickness: s3d.bevelSize
+                            bevelSegments: s3d.bevelSegments, steps: 2,
+                            bevelSize: s3d.bevelSize, bevelThickness: s3d.bevelSize * 0.75
                         });
+                        // Center geometry around its own bounding box center
+                        extrudeGeom.computeBoundingBox();
+                        extrudeGeom.center();
                         const mesh = new THREE.Mesh(extrudeGeom, material);
-                        mesh.userData.name = obj.name || 'Shape';
-                        mesh.userData._key = this._keyForObj(obj, index) + '_' + p + '_' + s;
+                        mesh.userData._subKey = objKey + '_' + p + '_' + s;
+                        // Y-flip on inner mesh to correct SVG → Three.js coordinate inversion
                         mesh.scale.set(1, -1, 1);
-                        mesh.position.set(-this.targetWidth / 2, this.targetHeight / 2, zOffset);
-                        mesh.castShadow = true; mesh.receiveShadow = true;
-                        this.extrudedGroup.add(mesh);
+                        mesh.castShadow = true;
+                        mesh.receiveShadow = true;
+                        shapeGroup.add(mesh);
                     }
                 }
+
+                // Position the whole group at the Fabric object's center point
+                shapeGroup.position.set(
+                    objCenter.x - this.targetWidth / 2,
+                    -(objCenter.y - this.targetHeight / 2),
+                    zOffset
+                );
+                shapeGroup.rotation.z = THREE.MathUtils.degToRad(-obj.angle);
+                this.extrudedGroup.add(shapeGroup);
             }
         }
 
         // 5. Restore saved 3D transforms
+        // For wrapper Groups (text / SVG), we restore the GROUP transforms only.
+        // Inner mesh scale (Y-flip) must NOT be touched — it is geometry correction, not user data.
         for (const child of this.extrudedGroup.children) {
             if (child.userData && child.userData._key) {
                 const savedTr = this._saved3DTransforms[child.userData._key];
                 if (savedTr) {
                     child.position.copy(savedTr.position);
                     child.rotation.copy(savedTr.rotation);
-                    child.scale.copy(savedTr.scale);
+                    if (child.isGroup && (child.userData._isTextGroup || child.userData._isSVGGroup)) {
+                        // Groups: restore X/Z scale but never touch inner mesh Y-flip
+                        child.scale.set(savedTr.scale.x, savedTr.scale.y, savedTr.scale.z);
+                    } else {
+                        child.scale.copy(savedTr.scale);
+                    }
                 }
             }
         }
@@ -4144,9 +4178,18 @@ class LogoStudioUI {
 
     _applyObj3DSettings() {
         let target = null;
-        if (this.canvas) target = this.canvas.getActiveObject();
+        // When a 3D mesh/group is selected, resolve its corresponding Fabric object
+        // so the depth/bevel sliders work even when no 2D object is active.
+        if (this.mode3D && this.selectedMesh3d) {
+            const key = this.selectedMesh3d.userData._key;
+            if (key) {
+                const objs = this.canvas.getObjects();
+                target = objs.find((o, i) => this._keyForObj(o, i) === key) || null;
+            }
+        }
+        if (!target && this.canvas) target = this.canvas.getActiveObject();
         if (!target) return;
-        
+
         if (!target.userData) target.userData = {};
         target.userData.pgfx_3d = {
             depth: parseFloat(document.getElementById('pgfx-3d-depth')?.value) || 20,
@@ -4154,10 +4197,223 @@ class LogoStudioUI {
             bevelSize: parseFloat(document.getElementById('pgfx-3d-bevel-size')?.value) || 1.5,
             bevelSegments: parseInt(document.getElementById('pgfx-3d-bevel-segments')?.value) || 3,
         };
-        
+
         if (this._syncTimeout) clearTimeout(this._syncTimeout);
         this._syncTimeout = setTimeout(() => { this.sync2DTo3D(); }, 16);
     }
+
+    // ─── FONT BINARY CACHE ───────────────────────────────────────────────────
+    // Fetches and caches the raw font binary for opentype.js glyph parsing.
+    // Called non-blocking after a custom font is loaded via loadFontIntoBrowser().
+    async _fetchFontBinary(fontFamily, fontUrl) {
+        if (this._fontBinaryCache[fontFamily]) return;
+        try {
+            const res = await fetch(fontUrl);
+            if (!res.ok) return;
+            this._fontBinaryCache[fontFamily] = await res.arrayBuffer();
+        } catch (e) {
+            console.warn('[PGFX 3D] Could not cache font binary for', fontFamily, e);
+        }
+    }
+
+    // Attempts to resolve a Google Font binary by:
+    //   1. Fetching the Google Fonts CSS API (which has CORS headers)
+    //   2. Extracting the woff2 URL from the @font-face block
+    //   3. Fetching and caching the binary
+    async _fetchGoogleFontBinary(fontFamily) {
+        if (this._fontBinaryCache[fontFamily]) return;
+        try {
+            // Use a desktop UA to get the woff2 format (better coverage than default mobile)
+            const cssUrl = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fontFamily)}&display=swap`;
+            const cssRes = await fetch(cssUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+            });
+            if (!cssRes.ok) return;
+            const css = await cssRes.text();
+            // Find the first woff2 src URL in the CSS
+            const match = css.match(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+\.woff2)\)/);
+            if (!match) return;
+            const fontRes = await fetch(match[1]);
+            if (!fontRes.ok) return;
+            this._fontBinaryCache[fontFamily] = await fontRes.arrayBuffer();
+        } catch (e) {
+            // Non-fatal — falls back to canvas tracing
+            console.warn('[PGFX 3D] Could not fetch Google Font binary for', fontFamily, e);
+        }
+    }
+
+    // ─── TEXT → THREE.Shape ARRAY ────────────────────────────────────────────
+    // Two-tier strategy:
+    //   A. opentype.js  — precise bezier glyph outlines (requires font binary)
+    //   B. Canvas trace — pixel-level silhouette shapes (works with any font)
+    async _textToShapes(obj) {
+        const text       = obj.text || '';
+        const fontFamily = obj.fontFamily || 'Arial';
+        const fontSize   = (obj.fontSize || 72) * (obj.scaleY || 1);
+        const fontStyle  = obj.fontStyle  || 'normal';
+        const fontWeight = obj.fontWeight || 'normal';
+
+        // ── Strategy A: opentype.js with cached binary ──────────────────────
+        if (window.opentype) {
+            // Try custom-uploaded fonts first, then attempt Google Fonts fetch
+            if (!this._fontBinaryCache[fontFamily]) {
+                const customFont = this.customFonts.find(f => f.name === fontFamily);
+                if (customFont) {
+                    await this._fetchFontBinary(fontFamily, customFont.url);
+                } else {
+                    await this._fetchGoogleFontBinary(fontFamily);
+                }
+            }
+
+            const bin = this._fontBinaryCache[fontFamily];
+            if (bin) {
+                try {
+                    const font = opentype.parse(bin);
+                    // Build the full SVG path string for the text at the given size
+                    // opentype handles multi-glyph layout including kerning
+                    const pathData = font.getPath(text, 0, 0, fontSize).toPathData(4);
+                    if (pathData && pathData.length > 1) {
+                        const svgStr = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${pathData}"/></svg>`;
+                        const loader = new THREE.SVGLoader();
+                        const parsed = loader.parse(svgStr);
+                        const shapes = [];
+                        parsed.paths.forEach(p => shapes.push(...THREE.SVGLoader.createShapes(p)));
+                        if (shapes.length > 0) {
+                            console.log(`[PGFX 3D] ✅ opentype.js vectorized "${text}" (${shapes.length} shapes)`);
+                            return shapes;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[PGFX 3D] opentype.js parse failed, falling back to canvas trace:', e);
+                }
+            }
+        }
+
+        // ── Strategy B: Canvas pixel tracing ───────────────────────────────
+        // Renders at 6× resolution, traces the alpha silhouette into THREE.Shape
+        // contours. Works with any font (system, Google, custom) but produces
+        // slightly blocky curves compared to the opentype.js path.
+        console.log(`[PGFX 3D] ⚠️ Canvas-trace fallback for "${text}" (font binary unavailable)`);
+        return this._traceTextToShapes(obj, fontStyle, fontWeight, fontSize, fontFamily, text);
+    }
+
+    _traceTextToShapes(obj, fontStyle, fontWeight, fontSize, fontFamily, text) {
+        const SCALE   = 6;    // Render at 6× for smooth edges
+        const THRESH  = 128;  // Alpha threshold to consider a pixel "filled"
+        const SIMPLIFY = 2.5; // RDP simplification tolerance (pixels at render scale)
+
+        const padding = Math.ceil(fontSize * 0.15);
+        const w = Math.ceil(obj.width * (obj.scaleX || 1)) + padding * 2;
+        const h = Math.ceil(obj.height * (obj.scaleY || 1)) + padding * 2;
+        const cw = w * SCALE, ch = h * SCALE;
+
+        // Render text white-on-black
+        const tc  = document.createElement('canvas');
+        tc.width  = cw; tc.height = ch;
+        const ctx = tc.getContext('2d');
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, cw, ch);
+        ctx.fillStyle = '#fff';
+
+        const lines  = text.split('\n');
+        const lineH  = fontSize * SCALE * ((obj.lineHeight || 1.16));
+        const startY = ch / 2 - (lines.length - 1) * lineH / 2;
+        const fStr   = `${fontStyle} ${fontWeight} ${fontSize * SCALE}px "${fontFamily}"`;
+        ctx.font          = fStr;
+        ctx.textAlign     = 'center';
+        ctx.textBaseline  = 'middle';
+        lines.forEach((line, i) => ctx.fillText(line, cw / 2, startY + i * lineH));
+
+        const data   = ctx.getImageData(0, 0, cw, ch).data;
+        const shapes = [];
+
+        // Build a binary grid (1 = filled, 0 = empty) from the alpha channel
+        const grid = new Uint8Array(cw * ch);
+        for (let i = 0; i < cw * ch; i++) {
+            grid[i] = data[i * 4 + 3] >= THRESH ? 1 : 0;
+        }
+
+        // Contour trace using the "square tracing" algorithm:
+        //   walks the boundary of each filled region to collect an ordered
+        //   list of edge-crossing midpoints, then converts to a THREE.Shape.
+        const visited = new Uint8Array(cw * ch);
+        const px = (x, y) => (x >= 0 && x < cw && y >= 0 && y < ch) ? grid[y * cw + x] : 0;
+
+        for (let sy = 1; sy < ch - 1; sy++) {
+            for (let sx = 1; sx < cw - 1; sx++) {
+                if (!grid[sy * cw + sx] || visited[sy * cw + sx]) continue;
+
+                // Flood-fill boundary trace (Moore neighborhood)
+                const pts = [];
+                let cx2 = sx, cy2 = sy;
+                let dx = 0, dy = -1; // start moving up
+                let steps = 0;
+                const MAX_STEPS = cw * ch;
+
+                do {
+                    pts.push([cx2, cy2]);
+                    visited[cy2 * cw + cx2] = 1;
+                    // Turn right until we find a filled cell
+                    for (let t = 0; t < 8; t++) {
+                        const [ndx, ndy] = [dy, -dx]; // 90° right
+                        const [nx, ny]   = [cx2 + ndx, cy2 + ndy];
+                        if (px(nx, ny)) { dx = ndx; dy = ndy; cx2 = nx; cy2 = ny; break; }
+                        // Otherwise turn left
+                        const [ldx, ldy] = [-dy, dx];
+                        dx = ldx; dy = ldy;
+                    }
+                    steps++;
+                } while ((cx2 !== sx || cy2 !== sy) && steps < MAX_STEPS);
+
+                if (pts.length < 8) continue; // Too small, skip noise
+
+                // Ramer–Douglas–Peucker simplification
+                const simplified = this._rdpSimplify(pts, SIMPLIFY);
+                if (simplified.length < 3) continue;
+
+                // Build THREE.Shape (convert from render-scale pixel space to
+                // the same coordinate system as opentype.js output: centered at 0,0)
+                const shape = new THREE.Shape();
+                const toWorld = (px, py) => [
+                    (px / SCALE - w / 2),
+                    (py / SCALE - h / 2)
+                ];
+                const [fx, fy] = toWorld(simplified[0][0], simplified[0][1]);
+                shape.moveTo(fx, fy);
+                for (let i = 1; i < simplified.length; i++) {
+                    const [wx, wy] = toWorld(simplified[i][0], simplified[i][1]);
+                    shape.lineTo(wx, wy);
+                }
+                shape.closePath();
+                shapes.push(shape);
+            }
+        }
+
+        return shapes;
+    }
+
+    // Ramer–Douglas–Peucker polyline simplification
+    _rdpSimplify(pts, epsilon) {
+        if (pts.length <= 2) return pts;
+        const perp = (a, b, p) => {
+            const dx = b[0] - a[0], dy = b[1] - a[1];
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+            return Math.abs((dy * p[0] - dx * p[1] + b[0] * a[1] - b[1] * a[0]) / len);
+        };
+        let maxD = 0, idx = 0;
+        for (let i = 1; i < pts.length - 1; i++) {
+            const d = perp(pts[0], pts[pts.length - 1], pts[i]);
+            if (d > maxD) { maxD = d; idx = i; }
+        }
+        if (maxD > epsilon) {
+            const l = this._rdpSimplify(pts.slice(0, idx + 1), epsilon);
+            const r = this._rdpSimplify(pts.slice(idx), epsilon);
+            return [...l.slice(0, -1), ...r];
+        }
+        return [pts[0], pts[pts.length - 1]];
+    }
+
 
     _update3DStroke(mesh) {
         if (!mesh || !window.THREE) return;
