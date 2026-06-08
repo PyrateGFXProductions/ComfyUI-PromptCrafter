@@ -3847,7 +3847,6 @@ class LogoStudioUI {
                 }
 
                 this.extrudedGroup.add(group);
-            }
             } else {
                 // SVG / Path / Shape objects — extrude using THREE.SVGLoader
                 // We extract each sub-path individually so we can center each shape
