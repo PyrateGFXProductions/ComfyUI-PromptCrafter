@@ -63,9 +63,11 @@ ComfyGuard/requirements_rollback_test.txt
 .ollama-agent/project-index.json
 .ollama-agent/verification-cache.json
 
-# Specific Workflow Overrides (if intended to be local only)
-workflows/PGFX_AI_FilmStudio_Master_Skeletal.json
-workflows/PGFX_Studio_LTX2_GGUF_Local_EndToEnd.json
+# Ignore all workflow JSON files (broken AI-generated, kept local only)
+workflows/*.json
+
+# Fonts folder - user fonts stored locally, not committed
+fonts/*
 
 # Web / Node
 node_modules/
