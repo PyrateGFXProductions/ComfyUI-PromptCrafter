@@ -3795,30 +3795,27 @@ class LogoStudioUI {
                 );
                 group.rotation.z = THREE.MathUtils.degToRad(-obj.angle);
 
-                // Try vectorized extrusion first (async, may update mesh after placement)
-                const buildTextMesh = async () => {
-                    const shapes = await this._textToShapes(obj);
-                    if (shapes && shapes.length > 0) {
-                        const extrudeGeom = new THREE.ExtrudeGeometry(shapes, {
-                            depth: s3d.depth,
-                            bevelEnabled: s3d.bevelEnabled,
-                            bevelSegments: s3d.bevelSegments,
-                            steps: 2,
-                            bevelSize: s3d.bevelSize,
-                            bevelThickness: s3d.bevelSize * 0.75
-                        });
-                        extrudeGeom.computeBoundingBox();
-                        extrudeGeom.center();
-                        const mesh = new THREE.Mesh(extrudeGeom, material);
-                        // Y-flip on inner mesh only — isolated from group user transforms
-                        mesh.scale.set(1, -1, 1);
-                        mesh.castShadow = true;
-                        mesh.receiveShadow = true;
-                        group.clear();
-                        group.add(mesh);
-                        this.renderer3d && this.renderer3d.render(this.scene3d, this.camera3d);
-                        return;
-                    }
+                // Try vectorized extrusion first (awaited)
+                const shapes = await this._textToShapes(obj);
+                if (shapes && shapes.length > 0) {
+                    const extrudeGeom = new THREE.ExtrudeGeometry(shapes, {
+                        depth: s3d.depth,
+                        bevelEnabled: s3d.bevelEnabled,
+                        bevelSegments: s3d.bevelSegments,
+                        steps: 2,
+                        bevelSize: s3d.bevelSize,
+                        bevelThickness: s3d.bevelSize * 0.75
+                    });
+                    extrudeGeom.computeBoundingBox();
+                    extrudeGeom.center();
+                    const mesh = new THREE.Mesh(extrudeGeom, material);
+                    // Y-flip on inner mesh only — isolated from group user transforms
+                    mesh.scale.set(1, -1, 1);
+                    mesh.castShadow = true;
+                    mesh.receiveShadow = true;
+                    group.clear();
+                    group.add(mesh);
+                } else {
                     // Fallback: flat textured box (beveling impossible, but at least positioned correctly)
                     const padding = 24, renderScale = 2;
                     const textWidth = Math.ceil(obj.width * obj.scaleX) + padding * 2;
@@ -3847,10 +3844,10 @@ class LogoStudioUI {
                     const mesh = new THREE.Mesh(geometry, [invMat, invMat, invMat, invMat, frontMat, invMat]);
                     group.clear();
                     group.add(mesh);
-                };
+                }
 
                 this.extrudedGroup.add(group);
-                buildTextMesh(); // fire-and-forget; updates group async
+            }
             } else {
                 // SVG / Path / Shape objects — extrude using THREE.SVGLoader
                 // We extract each sub-path individually so we can center each shape
@@ -3934,6 +3931,11 @@ class LogoStudioUI {
             if (newSelection) {
                 this.selectMesh3d(newSelection);
             }
+        }
+
+        // 7. Render immediate update
+        if (this.renderer3d && this.scene3d && this.camera3d) {
+            this.renderer3d.render(this.scene3d, this.camera3d);
         }
     }
 
@@ -4353,15 +4355,31 @@ class LogoStudioUI {
                 do {
                     pts.push([cx2, cy2]);
                     visited[cy2 * cw + cx2] = 1;
-                    // Turn right until we find a filled cell
+                    
+                    // Moore Neighborhood boundary tracing:
+                    // Rotate search direction 90 degrees right, then scan counter-clockwise (left turns)
+                    // until we find another filled pixel.
+                    // Right turn in 2D grid: (dx, dy) -> (-dy, dx)
+                    let [ndx, ndy] = [-dy, dx];
+                    let found = false;
                     for (let t = 0; t < 8; t++) {
-                        const [ndx, ndy] = [dy, -dx]; // 90° right
-                        const [nx, ny]   = [cx2 + ndx, cy2 + ndy];
-                        if (px(nx, ny)) { dx = ndx; dy = ndy; cx2 = nx; cy2 = ny; break; }
-                        // Otherwise turn left
-                        const [ldx, ldy] = [-dy, dx];
-                        dx = ldx; dy = ldy;
+                        const nx = cx2 + ndx;
+                        const ny = cy2 + ndy;
+                        if (px(nx, ny)) {
+                            dx = ndx;
+                            dy = ndy;
+                            cx2 = nx;
+                            cy2 = ny;
+                            found = true;
+                            break;
+                        }
+                        // Left turn (rotate 45 deg counter-clockwise)
+                        // A 45-degree rotation counter-clockwise:
+                        const odx = ndx, ody = ndy;
+                        ndx = Math.round(odx * Math.cos(-Math.PI/4) - ody * Math.sin(-Math.PI/4));
+                        ndy = Math.round(odx * Math.sin(-Math.PI/4) + ody * Math.cos(-Math.PI/4));
                     }
+                    if (!found) break; // Isolated pixel
                     steps++;
                 } while ((cx2 !== sx || cy2 !== sy) && steps < MAX_STEPS);
 
