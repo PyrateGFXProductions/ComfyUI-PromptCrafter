@@ -3621,18 +3621,25 @@ class PGFX_UniversalSwitchBox:
 
         selected_data = active_inputs[selected_index]
 
-        # 3. UI Preview (Only if data is an image tensor)
+        # 3. UI Preview — Pass image URL via custom key so ComfyUI's built-in
+        #    output preview doesn't show a duplicate (only the JS canvas preview draws it).
         ui_data = {}
         if isinstance(selected_data, torch.Tensor) and len(selected_data.shape) == 4:
             try:
                 import nodes
                 preview = nodes.PreviewImage().save_images(selected_data)
-                ui_data = preview.get("ui", {})
+                std_images = preview.get("ui", {}).get("images")
+                if std_images:
+                    img = std_images[0]
+                    ui_data["preview_image_url"] = (
+                        f"/view?filename={img['filename']}&type={img['type']}"
+                        f"&subfolder={img['subfolder']}"
+                    )
             except Exception:
                 pass
 
         return {
-            "ui": ui_data, 
+            "ui": ui_data,
             "result": (selected_data, selected_index)
         }
 

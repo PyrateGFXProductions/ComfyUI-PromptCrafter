@@ -5710,137 +5710,147 @@ class LogoStudioUI {
 app.registerExtension({
     name: "PGFX.LogoDesignerStudio",
     async nodeCreated(node) {
-        if (node.comfyClass !== "PGFX_LogoDesignerStudio") return;
+        try {
+            if (node.comfyClass !== "PGFX_LogoDesignerStudio") return;
 
-        // â”€â”€ Internal data widgets (optional inputs managed by JS, not user-facing) â”€â”€â”€â”€â”€
-        const base64Widget = node.widgets.find(w => w.name === "base64_image_data");
-        const jsonWidget   = node.widgets.find(w => w.name === "canvas_json_data");
-        const textWidget   = node.widgets.find(w => w.name === "text_input");
+            // â”€â”€ Internal data widgets (optional inputs managed by JS, not user-facing) â”€â”€â”€â”€â”€
+            const base64Widget = node.widgets.find(w => w.name === "base64_image_data");
+            const jsonWidget   = node.widgets.find(w => w.name === "canvas_json_data");
+            const textWidget   = node.widgets.find(w => w.name === "text_input");
 
-        // Suppress widgets visually AND remove their connectable input sockets
-        const suppressWidget = (w) => {
-            if (!w) return;
-            w.type = "hidden";
-            w.computeSize = () => [0, 0];
-            w.draw = () => {};
-        };
-        suppressWidget(base64Widget);
-        suppressWidget(jsonWidget);
-        // Remove the optional-input sockets so they don't appear as connectable pins
-        if (node.inputs) {
-            node.inputs = node.inputs.filter(inp => inp.name !== "base64_image_data" && inp.name !== "canvas_json_data");
-        }
-
-        // â”€â”€ Preview drawing constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        const PREVIEW_H   = 260;
-        const PREVIEW_PAD = 10;
-
-        // â”€â”€ LiteGraph node preview via onDrawForeground â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // We detect changes by comparing the current widget value src to what we last loaded.
-        // The save button resets _pgfxLastSrc so the next draw picks up the new image.
-        const origDrawFg = node.onDrawForeground?.bind(node);
-        node.onDrawForeground = function(ctx) {
-            if (origDrawFg) origDrawFg(ctx);
-
-            const currentSrc = base64Widget?.value || "";
-            if (!currentSrc) return;
-
-            // If the src changed (or was reset by the save button), reload the image
-            if (!this._pgfxPreviewImg || this._pgfxLastSrc !== currentSrc) {
-                this._pgfxLastSrc    = currentSrc;
-                this._pgfxPreviewImg = null;
-                const img = new Image();
-                img.onload  = () => { app.graph?.setDirtyCanvas(true, true); };
-                img.onerror = () => { this._pgfxPreviewImg = null; };
-
-                let realSrc = currentSrc;
-                if (!realSrc.startsWith("data:image")) {
-                    const parts = currentSrc.split("/");
-                    const filename = parts.pop();
-                    const subfolder = parts.join("/");
-                    realSrc = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}&t=${Date.now()}`;
-                }
-                img.src = realSrc;
-                this._pgfxPreviewImg = img;
-                return; // Render on next frame after image decodes
+            // Suppress widgets visually AND remove their connectable input sockets
+            const suppressWidget = (w) => {
+                if (!w) return;
+                w.type = "converted-widget";
+                w.options = w.options || {};
+                w.options.skipInput = true;
+                w.computeSize = () => [0, -1];
+                w.draw = () => {};
+            };
+            suppressWidget(base64Widget);
+            suppressWidget(jsonWidget);
+            // Remove the optional-input sockets so they don't appear as connectable pins
+            if (node.inputs) {
+                node.inputs = node.inputs.filter(inp => inp.name !== "base64_image_data" && inp.name !== "canvas_json_data");
             }
 
-            const img = this._pgfxPreviewImg;
-            if (!img.complete || img.naturalWidth === 0) return;
+            // â”€â”€ Preview drawing constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            const PREVIEW_H   = 260;
+            const PREVIEW_PAD = 10;
 
-            // Compute draw area: full node width, positioned dynamically below widgets
-            let widgetsBottomY = 0;
-            if (this.widgets) {
-                for (const w of this.widgets) {
-                    if (w.type !== "hidden" && w.y !== undefined) {
-                        const h = w.computeSize ? w.computeSize()[1] : (LiteGraph.NODE_WIDGET_HEIGHT || 20);    
-                        widgetsBottomY = Math.max(widgetsBottomY, w.y + h);
+            // â”€â”€ LiteGraph node preview via onDrawForeground â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // We detect changes by comparing the current widget value src to what we last loaded.
+            // The save button resets _pgfxLastSrc so the next draw picks up the new image.
+            const origDrawFg = node.onDrawForeground?.bind(node);
+            node.onDrawForeground = function(ctx) {
+                try {
+                    if (origDrawFg) origDrawFg(ctx);
+
+                    const currentSrc = base64Widget?.value || "";
+                    if (!currentSrc) return;
+
+                    // If the src changed (or was reset by the save button), reload the image
+                    if (!this._pgfxPreviewImg || this._pgfxLastSrc !== currentSrc) {
+                        this._pgfxLastSrc    = currentSrc;
+                        this._pgfxPreviewImg = null;
+                        const img = new Image();
+                        img.onload  = () => { app.graph?.setDirtyCanvas(true, true); };
+                        img.onerror = () => { this._pgfxPreviewImg = null; };
+
+                        let realSrc = currentSrc;
+                        if (!realSrc.startsWith("data:image")) {
+                            const parts = currentSrc.split("/");
+                            const filename = parts.pop();
+                            const subfolder = parts.join("/");
+                            realSrc = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}&t=${Date.now()}`;
+                        }
+                        img.src = realSrc;
+                        this._pgfxPreviewImg = img;
+                        return; // Render on next frame after image decodes
                     }
+
+                    const img = this._pgfxPreviewImg;
+                    if (!img.complete || img.naturalWidth === 0) return;
+
+                    // Compute draw area: full node width, positioned dynamically below widgets
+                    let widgetsBottomY = 0;
+                    if (this.widgets) {
+                        for (const w of this.widgets) {
+                            if (w.y !== undefined && w.type !== "hidden" && w.type !== "converted-widget") {
+                                const h = w.computeSize ? w.computeSize()[1] : (LiteGraph.NODE_WIDGET_HEIGHT || 20);    
+                                widgetsBottomY = Math.max(widgetsBottomY, w.y + h);
+                            }
+                        }
+                    }
+                    if (widgetsBottomY === 0) {
+                        widgetsBottomY = 40; // Fallback
+                    }
+
+                    const drawW  = this.size[0] - PREVIEW_PAD * 2;
+                    const aspect = img.naturalHeight / img.naturalWidth;
+                    const drawH  = Math.min(drawW * aspect, PREVIEW_H);
+                    const drawX  = PREVIEW_PAD;
+                    const drawY  = widgetsBottomY + PREVIEW_PAD;
+
+                    // Dark bordered background panel
+                    ctx.save();
+                    ctx.fillStyle   = "#09090b";
+                    ctx.strokeStyle = "rgba(6,182,212,0.4)";
+                    ctx.lineWidth   = 1;
+                    ctx.beginPath();
+                    if (ctx.roundRect) {
+                        ctx.roundRect(drawX - 2, drawY - 2, drawW + 4, drawH + 4, 6);
+                    } else {
+                        ctx.rect(drawX - 2, drawY - 2, drawW + 4, drawH + 4);
+                    }
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Clip and draw the image
+                    ctx.beginPath();
+                    if (ctx.roundRect) {
+                        ctx.roundRect(drawX, drawY, drawW, drawH, 4);
+                    } else {
+                        ctx.rect(drawX, drawY, drawW, drawH);
+                    }
+                    ctx.clip();
+                    ctx.drawImage(img, drawX, drawY, drawW, drawH);
+                    ctx.restore();
+
+                    // "CANVAS PREVIEW" label
+                    ctx.fillStyle = "rgba(6,182,212,0.7)";
+                    ctx.font      = "bold 9px monospace";
+                    ctx.textAlign = "left";
+                    ctx.fillText("CANVAS PREVIEW", drawX, drawY - 4);
+                } catch (err) {
+                    console.warn("PGFX.LogoDesignerStudio preview error:", err);
                 }
-            }
-            if (widgetsBottomY === 0) {
-                widgetsBottomY = 40; // Fallback
-            }
+            };
 
-            const drawW  = this.size[0] - PREVIEW_PAD * 2;
-            const aspect = img.naturalHeight / img.naturalWidth;
-            const drawH  = Math.min(drawW * aspect, PREVIEW_H);
-            const drawX  = PREVIEW_PAD;
-            const drawY  = widgetsBottomY + PREVIEW_PAD;
+            // â”€â”€ Auto-size: expand the node height to accommodate the preview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€   
+            const origComputeSize = node.computeSize?.bind(node);
+            node.computeSize = function(out) {
+                const s = origComputeSize ? origComputeSize(out) : [this.size[0], 400];
+                const hasSrc = (base64Widget?.value || "").trim().length > 0;
+                if (hasSrc) {
+                    s[1] = s[1] + PREVIEW_H + PREVIEW_PAD * 2;
+                }
+                return s;
+            };
 
-            // Dark bordered background panel
-            ctx.save();
-            ctx.fillStyle   = "#09090b";
-            ctx.strokeStyle = "rgba(6,182,212,0.4)";
-            ctx.lineWidth   = 1;
-            ctx.beginPath();
-            if (ctx.roundRect) {
-                ctx.roundRect(drawX - 2, drawY - 2, drawW + 4, drawH + 4, 6);
-            } else {
-                ctx.rect(drawX - 2, drawY - 2, drawW + 4, drawH + 4);
-            }
-            ctx.fill();
-            ctx.stroke();
+            // â”€â”€ "Open Studio" button â€” this MUST be the last widget added â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            node.addWidget("button", "🎨  OPEN DESIGN STUDIO", "button", () => {
+                if (!node.studioUI) {
+                    node.studioUI = new LogoStudioUI(node, base64Widget, jsonWidget, textWidget);
+                }
+                node.studioUI.open();
+            });
 
-            // Clip and draw the image
-            ctx.beginPath();
-            if (ctx.roundRect) {
-                ctx.roundRect(drawX, drawY, drawW, drawH, 4);
-            } else {
-                ctx.rect(drawX, drawY, drawW, drawH);
-            }
-            ctx.clip();
-            ctx.drawImage(img, drawX, drawY, drawW, drawH);
-            ctx.restore();
-
-            // "CANVAS PREVIEW" label
-            ctx.fillStyle = "rgba(6,182,212,0.7)";
-            ctx.font      = "bold 9px monospace";
-            ctx.textAlign = "left";
-            ctx.fillText("CANVAS PREVIEW", drawX, drawY - 4);
-        };
-
-        // â”€â”€ Auto-size: expand the node height to accommodate the preview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€   
-        const origComputeSize = node.computeSize?.bind(node);
-        node.computeSize = function(out) {
-            const s = origComputeSize ? origComputeSize(out) : [this.size[0], 400];
-            const hasSrc = (base64Widget?.value || "").trim().length > 0;
-            if (hasSrc) {
-                s[1] = s[1] + PREVIEW_H + PREVIEW_PAD * 2;
-            }
-            return s;
-        };
-
-        // â”€â”€ "Open Studio" button â€” this MUST be the last widget added â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        node.addWidget("button", "🎨  OPEN DESIGN STUDIO", "button", () => {
-            if (!node.studioUI) {
-                node.studioUI = new LogoStudioUI(node, base64Widget, jsonWidget, textWidget);
-            }
-            node.studioUI.open();
-        });
-
-        // Set initial size â€” auto-expands to include preview once a canvas is saved
-        node.setSize([340, node.computeSize()[1]]);
+            // Set initial size â”€ auto-expands to include preview once a canvas is saved
+            node.setSize([340, node.computeSize()[1]]);
+        } catch (err) {
+            console.warn("PGFX.LogoDesignerStudio nodeCreated error:", err);
+        }
     }
 });
 

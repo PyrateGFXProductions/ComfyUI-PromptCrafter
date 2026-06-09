@@ -98,11 +98,9 @@ app.registerExtension({
             };
 
             nodeType.prototype.onExecuted = function (message) {
-                if (message?.images) {
-                    const img = message.images[0];
-                    const url = `./view?filename=${encodeURIComponent(img.filename)}&type=${img.type}&subfolder=${encodeURIComponent(img.subfolder)}&t=${+new Date()}`;
+                if (message?.preview_image_url) {
                     this._pgfxPreviewImg = new Image();
-                    this._pgfxPreviewImg.src = url;
+                    this._pgfxPreviewImg.src = message.preview_image_url + `&t=${+new Date()}`;
                     this._pgfxPreviewImg.onload = () => {
                         this.setDirtyCanvas(true, true);
                     };
