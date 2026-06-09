@@ -5712,20 +5712,24 @@ app.registerExtension({
     async nodeCreated(node) {
         if (node.comfyClass !== "PGFX_LogoDesignerStudio") return;
 
-        // â”€â”€ Find the two hidden data widgets + the visible text_input widget â”€â”€â”€â”€â”€
+        // â”€â”€ Internal data widgets (optional inputs managed by JS, not user-facing) â”€â”€â”€â”€â”€
         const base64Widget = node.widgets.find(w => w.name === "base64_image_data");
         const jsonWidget   = node.widgets.find(w => w.name === "canvas_json_data");
         const textWidget   = node.widgets.find(w => w.name === "text_input");
 
-        // Completely suppress the internal data widgets:
-        const hideWidget = (w) => {
+        // Suppress widgets visually AND remove their connectable input sockets
+        const suppressWidget = (w) => {
             if (!w) return;
             w.type = "hidden";
             w.computeSize = () => [0, 0];
             w.draw = () => {};
         };
-        hideWidget(base64Widget);
-        hideWidget(jsonWidget);
+        suppressWidget(base64Widget);
+        suppressWidget(jsonWidget);
+        // Remove the optional-input sockets so they don't appear as connectable pins
+        if (node.inputs) {
+            node.inputs = node.inputs.filter(inp => inp.name !== "base64_image_data" && inp.name !== "canvas_json_data");
+        }
 
         // â”€â”€ Preview drawing constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const PREVIEW_H   = 260;
@@ -5858,19 +5862,21 @@ app.registerExtension({
                 let s = {}; // State object for new values
 
                 if (v === "1-Color Silhouette (Ultra Fast)") {
-                    s = { post: 2, noise: 32, path: 4, mode: "polygon", dither: false, layer: "cutout", color: 2 };
+                    s = { post: 2, noise: 32, path: 4, mode: "polygon", dither: false, layer: "cutout", color: 2, corner: 80, layerDiff: 80 };
                 } else if (v === "2-Color Minimalist") {
-                    s = { post: 3, noise: 24, path: 4, mode: "spline", dither: false, layer: "cutout", color: 4 };
+                    s = { post: 3, noise: 24, path: 4, mode: "spline", dither: false, layer: "cutout", color: 4, corner: 35, layerDiff: 40 };
                 } else if (v === "4-Color Vinyl / Tattoo Decal") {
-                    s = { post: 4, noise: 20, path: 4, mode: "spline", dither: false, layer: "cutout", color: 5 };
+                    s = { post: 4, noise: 20, path: 4, mode: "spline", dither: false, layer: "cutout", color: 5, corner: 30, layerDiff: 30 };
                 } else if (v === "Clean Vector Logo (8 Colors)") {
-                    s = { post: 8, noise: 16, path: 3, mode: "spline", dither: false, layer: "stacked", color: 6 };
+                    s = { post: 8, noise: 16, path: 3, mode: "spline", dither: false, layer: "stacked", color: 6, corner: 45, layerDiff: 20 };
+                } else if (v === "Smooth Curves & Fonts (8 Colors)") {
+                    s = { post: 8, noise: 4, path: 8, mode: "spline", dither: false, layer: "stacked", color: 6, corner: 25, layerDiff: 12 };
                 } else if (v === "Graphic Art (16 Colors)") {
-                    s = { post: 16, noise: 12, path: 3, mode: "polygon", dither: false, layer: "stacked", color: 7 };
+                    s = { post: 16, noise: 12, path: 3, mode: "polygon", dither: false, layer: "stacked", color: 7, corner: 60, layerDiff: 16 };
                 } else if (v === "Raster Optimization (32 Colors - Web Safe)") {
-                    s = { post: 32, noise: 8, path: 4, mode: "polygon", dither: false, layer: "stacked", color: 8 };
+                    s = { post: 32, noise: 8, path: 4, mode: "polygon", dither: false, layer: "stacked", color: 8, corner: 60, layerDiff: 16 };
                 } else if (v === "High Fidelity Raster (64 Colors - Heavy)") {
-                    s = { post: 64, noise: 2, path: 8, mode: "spline", dither: true, layer: "stacked", color: 8 };
+                    s = { post: 64, noise: 2, path: 8, mode: "spline", dither: true, layer: "stacked", color: 8, corner: 50, layerDiff: 8 };
                 }
 
                 if (s.post !== undefined) {
@@ -5881,14 +5887,18 @@ app.registerExtension({
                     const w_dith  = getWidget("dithering");
                     const w_layr  = getWidget("layering_mode");
                     const w_colr  = getWidget("color_matching");
+                    const w_corner = getWidget("corner_threshold");
+                    const w_layerDiff = getWidget("layer_difference");
 
-                    if (w_post)  w_post.value  = s.post;
-                    if (w_noise) w_noise.value = s.noise;
-                    if (w_path)  w_path.value  = s.path;
-                    if (w_mode)  w_mode.value  = s.mode;
-                    if (w_dith)  w_dith.value  = s.dither;
-                    if (w_layr)  w_layr.value  = s.layer;
-                    if (w_colr)  w_colr.value  = s.color;
+                    if (w_post)     w_post.value  = s.post;
+                    if (w_noise)    w_noise.value = s.noise;
+                    if (w_path)     w_path.value  = s.path;
+                    if (w_mode)     w_mode.value  = s.mode;
+                    if (w_dith)     w_dith.value  = s.dither;
+                    if (w_layr)     w_layr.value  = s.layer;
+                    if (w_colr)     w_colr.value  = s.color;
+                    if (w_corner)   w_corner.value = s.corner;
+                    if (w_layerDiff) w_layerDiff.value = s.layerDiff;
 
                     app.graph.setDirtyCanvas(true, true);
                 }

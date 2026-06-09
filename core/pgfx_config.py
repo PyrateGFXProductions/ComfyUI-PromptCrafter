@@ -103,6 +103,10 @@ GGUF_VISION_PROJECTOR_USE_GPU = _env_flag("PGFX_GGUF_VISION_PROJECTOR_USE_GPU", 
 # Set PGFX_QWEN_VL_IMAGE_MIN_TOKENS=1024+ for better grounding/lip-sync prompt reliability.
 QWEN_VL_IMAGE_MIN_TOKENS_WAS_SET = os.getenv("PGFX_QWEN_VL_IMAGE_MIN_TOKENS") is not None
 QWEN_VL_IMAGE_MIN_TOKENS = max(0, int(os.getenv("PGFX_QWEN_VL_IMAGE_MIN_TOKENS", "1024")))
+# Qwen-VL MRope models (Qwen3-VL) cannot use llama.cpp's context shift (seq_add).
+# Increase n_ctx to avoid triggering the shift when processing large images.
+# Set PGFX_QWEN_VL_MIN_N_CTX=4096 (or lower) to reduce VRAM usage if you use small images.
+QWEN_VL_MIN_N_CTX = int(os.getenv("PGFX_QWEN_VL_MIN_N_CTX", "8192"))
 
 # --- Dependency Flags (set at runtime in __init__.py) ---
 LLAMA_CPP_AVAILABLE = False

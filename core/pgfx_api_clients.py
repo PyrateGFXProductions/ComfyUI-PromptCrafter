@@ -463,6 +463,17 @@ class GGUFClient:
                     "\033[93m[PromptCrafter] Llama() does not accept image_min_tokens in this "
                     "llama-cpp-python build. Consider upgrading for better Qwen-VL grounding.\033[0m"
                 )
+            qwen_min_n_ctx = int(getattr(config, "QWEN_VL_MIN_N_CTX", 8192))
+            if n_ctx < qwen_min_n_ctx:
+                print(
+                    f"\033[93m[PromptCrafter] Qwen-VL models need extra KV headroom for vision tokens. "
+                    f"Increasing n_ctx from {n_ctx} to {qwen_min_n_ctx} to avoid MRope context shift crash. "
+                    f"Set PGFX_QWEN_VL_MIN_N_CTX to override.\033[0m"
+                )
+                n_ctx = qwen_min_n_ctx
+                n_batch = max(32, min(n_batch, n_ctx))
+                n_ubatch = max(32, min(n_ubatch, n_batch))
+                llama_kwargs["n_ctx"] = n_ctx
         print(
             f"\033[94m[PromptCrafter] GGUF runtime settings for '{model_id}': "
             f"n_ctx={n_ctx}, n_gpu_layers={n_gpu_layers}, n_batch={n_batch}, n_ubatch={n_ubatch}, offload_kqv={offload_kqv}\033[0m"

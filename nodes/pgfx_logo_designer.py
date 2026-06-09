@@ -953,9 +953,9 @@ def _build_logo_prompt(kwargs):
     extra_data, freeform_extra = _parse_extra_instruction(kwargs.get("extra_instruction", ""))
 
     raw_text = _coalesce_non_empty(
-        canvas_summary.get("text", ""),
-        extra_data.get("exact_text", ""),
         kwargs.get("text_input", ""),
+        extra_data.get("exact_text", ""),
+        canvas_summary.get("text", ""),
     )
     # Collapse mid-word line breaks from SVG/canvas parsing (e.g. "P\nyrate" -> "Pyrate")
     exact_text = " ".join(raw_text.split()) if raw_text else ""
@@ -1147,7 +1147,10 @@ def _build_logo_prompt(kwargs):
 
         # Universal preservation clause
         tokens.append("preserve original layout")
-        tokens.append("preserve text exactly")
+        if exact_text:
+            tokens.append(f"text: {exact_text}")
+        else:
+            tokens.append("preserve text exactly")
 
         # Filter empty and join
         prompt = ", ".join(t.rstrip(".") for t in tokens if t and t.strip())
@@ -1210,7 +1213,10 @@ def _build_logo_prompt(kwargs):
 
         # 9. Intensity and quality
         prompt += f" {intensity_phrase}"
-        prompt += " Preserve the original position, layout, and text exactly."
+        if exact_text:
+            prompt += f" Preserve the original position and layout. Render the text '{exact_text}' exactly."
+        else:
+            prompt += " Preserve the original position, layout, and text exactly."
 
     return prompt
 
@@ -1261,7 +1267,6 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
 
     RETURN_TYPES = (
         "STRING",
-        "STRING",
         SHARED_INTENTS,
         SHARED_BG_MODES,
         SHARED_ENVS,
@@ -1282,7 +1287,6 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
     ) + ("IMAGE",) * 8
 
     RETURN_NAMES = (
-        "base64_image_data",
         "text_input",
         "output_intent",
         "background_mode",
@@ -1495,7 +1499,7 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
             reset_context=clean_kwargs["reset_context"],
         )
 
-        parsed = json_utils.extract_and_parse_json(raw_response) if ok else None
+        parsed = raw_response if ok else None
         result = dict(fallback)
         if isinstance(parsed, dict):
             for key, value in parsed.items():
@@ -1679,7 +1683,6 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
         passthrough_images.extend([None] * (8 - len(passthrough_images)))
 
         return (
-            "",
             text_input,
             str(intent),
             background_mode,
@@ -1707,8 +1710,6 @@ class PGFX_LogoDesignerStudio:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "base64_image_data": ("STRING", {"multiline": True, "default": ""}),
-                "canvas_json_data": ("STRING", {"multiline": True, "default": ""}),
                 "text_input": ("STRING", {"multiline": True, "default": ""}),
                 "output_intent": (SHARED_INTENTS, {"default": "vector"}),
                 "background_mode": (SHARED_BG_MODES, {"default": "simple"}),
@@ -1731,6 +1732,10 @@ class PGFX_LogoDesignerStudio:
                 "geometry_adherence": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "creative_flair": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "prompt_style": (SHARED_PROMPT_STYLES, {"default": "conversational"}),
+            },
+            "optional": {
+                "base64_image_data": ("STRING", {"multiline": True, "default": ""}),
+                "canvas_json_data": ("STRING", {"multiline": True, "default": ""}),
             },
         }
 
@@ -1806,6 +1811,7 @@ class PGFX_ImageVectorizer:
                     "2-Color Minimalist", 
                     "4-Color Vinyl / Tattoo Decal",
                     "Clean Vector Logo (8 Colors)", 
+                    "Smooth Curves & Fonts (8 Colors)", 
                     "Graphic Art (16 Colors)", 
                     "Raster Optimization (32 Colors - Web Safe)", 
                     "High Fidelity Raster (64 Colors - Heavy)"
@@ -1817,6 +1823,8 @@ class PGFX_ImageVectorizer:
                 "color_matching": ("INT", {"default": 8, "min": 1, "max": 8, "tooltip": "Color precision for matching similar gradient shades. 8 is high precision. Lower values group similar colors aggressively."}),
                 "noise_suppression": ("INT", {"default": 4, "min": 0, "max": 128, "tooltip": "Removes speckles and micro-details by dropping paths shorter than this value. Increase to 16+ for 8K images or vinyl stencils."}),
                 "path_precision": ("INT", {"default": 3, "min": 1, "max": 16, "tooltip": "Precision of the vector paths. Lower values create simpler, blockier geometry. Higher values hug the pixels tighter but create more SVG nodes."}),
+                "corner_threshold": ("INT", {"default": 60, "min": 1, "max": 100, "tooltip": "Corner detection sensitivity. LOWER values = smoother, more rounded curves. HIGHER values = sharper corners preserved. Set to 20-40 for best curve quality on fonts and rounded designs."}),
+                "layer_difference": ("INT", {"default": 16, "min": 0, "max": 255, "tooltip": "Minimum color difference between gradient layers. LOWER values = more gradient layers (smoother color transitions). HIGHER values = fewer layers (flatter posterized look)."}),
             }
         }
 
@@ -1826,7 +1834,7 @@ class PGFX_ImageVectorizer:
     OUTPUT_NODE = True
     CATEGORY = "☠️PGFX /Design"
 
-    def vectorize(self, image, preset, mode, posterize_levels, dithering, layering_mode, color_matching, noise_suppression, path_precision):
+    def vectorize(self, image, preset, mode, posterize_levels, dithering, layering_mode, color_matching, noise_suppression, path_precision, corner_threshold, layer_difference):
         if preset != "Custom (Use Manual Sliders)":
             if preset == "1-Color Silhouette (Ultra Fast)":
                 posterize_levels = 2
@@ -1836,6 +1844,8 @@ class PGFX_ImageVectorizer:
                 dithering = False
                 layering_mode = "cutout"
                 color_matching = 2
+                corner_threshold = 80
+                layer_difference = 80
             elif preset == "2-Color Minimalist":
                 posterize_levels = 3
                 noise_suppression = 24
@@ -1844,6 +1854,8 @@ class PGFX_ImageVectorizer:
                 dithering = False
                 layering_mode = "cutout"
                 color_matching = 4
+                corner_threshold = 35
+                layer_difference = 40
             elif preset == "4-Color Vinyl / Tattoo Decal":
                 posterize_levels = 4
                 noise_suppression = 20
@@ -1852,6 +1864,8 @@ class PGFX_ImageVectorizer:
                 dithering = False
                 layering_mode = "cutout"
                 color_matching = 5
+                corner_threshold = 30
+                layer_difference = 30
             elif preset == "Clean Vector Logo (8 Colors)":
                 posterize_levels = 8
                 noise_suppression = 16
@@ -1860,6 +1874,18 @@ class PGFX_ImageVectorizer:
                 dithering = False
                 layering_mode = "stacked"
                 color_matching = 6
+                corner_threshold = 45
+                layer_difference = 20
+            elif preset == "Smooth Curves & Fonts (8 Colors)":
+                posterize_levels = 8
+                noise_suppression = 4
+                path_precision = 8
+                mode = "spline"
+                dithering = False
+                layering_mode = "stacked"
+                color_matching = 6
+                corner_threshold = 25
+                layer_difference = 12
             elif preset == "Graphic Art (16 Colors)":
                 posterize_levels = 16
                 noise_suppression = 12
@@ -1868,6 +1894,8 @@ class PGFX_ImageVectorizer:
                 dithering = False
                 layering_mode = "stacked"
                 color_matching = 7
+                corner_threshold = 60
+                layer_difference = 16
             elif preset == "Raster Optimization (32 Colors - Web Safe)":
                 posterize_levels = 32
                 noise_suppression = 8
@@ -1876,6 +1904,8 @@ class PGFX_ImageVectorizer:
                 dithering = False
                 layering_mode = "stacked"
                 color_matching = 8
+                corner_threshold = 60
+                layer_difference = 16
             elif preset == "High Fidelity Raster (64 Colors - Heavy)":
                 posterize_levels = 64
                 noise_suppression = 2
@@ -1884,6 +1914,8 @@ class PGFX_ImageVectorizer:
                 dithering = True
                 layering_mode = "stacked"
                 color_matching = 8
+                corner_threshold = 50
+                layer_difference = 8
 
         try:
             import vtracer
@@ -1909,6 +1941,8 @@ class PGFX_ImageVectorizer:
                 filter_speckle=noise_suppression,
                 path_precision=path_precision,
                 color_precision=color_matching,
+                corner_threshold=corner_threshold,
+                layer_difference=layer_difference,
             )
             preview = torch.from_numpy(np.array(img.convert("RGB")).astype(np.float32) / 255.0)[None,]
             return {"ui": nodes.PreviewImage().save_images(preview).get("ui"), "result": (svg, preview)}

@@ -2,7 +2,7 @@
   "materials": {
     "default": {
       "description": "clean professional surface",
-      "usage_count": 39
+      "usage_count": 53
     },
     "leather": {
       "description": "rich premium leather grain",
@@ -90,7 +90,7 @@
     },
     "neon": {
       "description": "bright illuminated neon tubing",
-      "usage_count": 0
+      "usage_count": 3
     },
     "crystal": {
       "description": "cut translucent crystal facets",
@@ -379,6 +379,10 @@
     "tarnishing": {
       "description": "developing dark oxidation patina spreading across the surface",
       "usage_count": 0
+    },
+    "dalle_text2im": {
+      "description": "dalle.text2im",
+      "usage_count": 1
     }
   },
   "environments": {
@@ -684,15 +688,15 @@
   "styles": {
     "flat_vector": {
       "description": "professional clean flat vector illustration",
-      "usage_count": 14
+      "usage_count": 19
     },
     "creative": {
       "description": "cinematic professional creative direction",
-      "usage_count": 12
+      "usage_count": 22
     },
     "realistic": {
       "description": "ultra-realistic photorealistic 8k textures",
-      "usage_count": 30
+      "usage_count": 33
     },
     "3d_render": {
       "description": "full physically-based 3D octane render with depth",

@@ -978,7 +978,7 @@ class PromptCrafter_VisualCreatorEasy(PromptCrafter_VisualCreator):
             "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO", "negative_prompt": "STRING"}
         }
     def execute(self, instruction, subject, model, negative_prompt="", **kwargs):
-        kwargs.update({"response_mode": "Creative", "temperature": 0.3, "artistry_level": 7, "creativity_level": 7, "logicality_level": 7, "deep_think_refinements": 3, "simplify_for_diffusion": True, "timeout": 120, "max_retries": 2, "safe_mode": True, "local_only_models": True})
+        kwargs.update({"response_mode": "Creative", "temperature": 0.3, "artistry_level": 7, "creativity_level": 7, "logicality_level": 7, "deep_think_refinements": 3, "simplify_for_diffusion": True, "timeout": 120, "max_retries": 2, "safe_mode": True, "debug_mode": False, "critique_strength": "Normal", "max_length_words": 0, "local_only_models": True})
         return super().execute(instruction, subject, model, negative_prompt=negative_prompt, **kwargs)
 
 class PromptCrafter_LyricsCreatorEasy(PromptCrafter_LyricsCreator):
@@ -1003,7 +1003,7 @@ class PromptCrafter_LyricsCreatorEasy(PromptCrafter_LyricsCreator):
             "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO", "negative_prompt": "STRING"}
         }
     def execute(self, instruction, subject, model, negative_prompt="", **kwargs):
-        kwargs.update({"response_mode": "Creative", "temperature": 0.3, "artistry_level": 7, "creativity_level": 7, "logicality_level": 7, "deep_think_refinements": 3, "simplify_for_diffusion": True, "timeout": 120, "max_retries": 2, "safe_mode": True, "local_only_models": True, "use_audio_alignment": True, "fps": 16.0, "scene_splitting_mode": "Structural Tag", "max_scene_duration_seconds": 5.0, "max_scene_frames": 120, "whisper_engine": "faster-whisper", "character_description": "The Women.", "song_theme_style": "cinematic realism", "word_count_min": 30, "word_count_max": 50})
+        kwargs.update({"response_mode": "Creative", "temperature": 0.3, "artistry_level": 7, "creativity_level": 7, "logicality_level": 7, "deep_think_refinements": 3, "simplify_for_diffusion": True, "timeout": 120, "max_retries": 2, "safe_mode": True, "debug_mode": False, "critique_strength": "Normal", "max_length_words": 0, "local_only_models": True, "use_audio_alignment": True, "fps": 16.0, "scene_splitting_mode": "Structural Tag", "max_scene_duration_seconds": 5.0, "max_scene_frames": 120, "whisper_engine": "faster-whisper", "character_description": "The Women.", "song_theme_style": "cinematic realism", "word_count_min": 30, "word_count_max": 50})
         return super().execute(instruction, subject, model, negative_prompt=negative_prompt, **kwargs)
 
 # ------------------------------------------------------------------------------------
