@@ -134,7 +134,20 @@ class PromptCrafter_BaseCreator:
 
     @classmethod
     def _enhance_prompt_with_talent_direction(cls, prompt, original_content="", target_model="Generic Video"):
-        """Placeholder for enhancement. Returns prompt as-is."""
+        """Applies model-specific prompt formatting rules for better generation quality."""
+        if not prompt or not prompt.strip():
+            return prompt
+
+        target_model_lower = target_model.lower() if target_model else ""
+        is_ltx2 = any(kw in target_model_lower for kw in ["ltx-2", "ltx2", "ltx 2"])
+
+        if is_ltx2:
+            # Ensure LTX-2 best practices: single paragraph, present tense, no markdown
+            cleaned = prompt.strip().strip("'\"").strip()
+            cleaned = re.sub(r'\n+', ' ', cleaned)
+            cleaned = re.sub(r'\s+', ' ', cleaned)
+            return cleaned
+
         return prompt
 
     @classmethod
@@ -781,7 +794,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             enhanced_prompt = cls._enhance_prompt_with_talent_direction(
                 utils.TextCleaner.single_paragraph(scene_prompt), 
                 original_content, 
-                run_config.model
+                run_config.target_model_format
             )
             return (True, enhanced_prompt)
         else:
@@ -815,7 +828,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         if config.CACHE.has(cache_key):
             print(f"\033[94m[PromptCrafter] Using cached prompt for scene.\033[0m")
             cached_prompt = config.CACHE.get(cache_key)
-            return cls._enhance_prompt_with_talent_direction(cached_prompt, scene_text, run_config.model)
+            return cls._enhance_prompt_with_talent_direction(cached_prompt, scene_text, run_config.target_model_format)
 
         images = [img for img, _ in images_with_weights]
         tok_ok, mandatory_tokens = utils._extract_mandatory_tokens_with_model(
@@ -826,7 +839,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             mandatory_tokens = {"primary": primary_subjects_from_images, "allowed_list": primary_subjects_from_images}
         if not tok_ok: 
             error_prompt = f"[Error extracting tokens for scene: {mandatory_tokens}]"
-            return cls._enhance_prompt_with_talent_direction(error_prompt, scene_text, run_config.model)
+            return cls._enhance_prompt_with_talent_direction(error_prompt, scene_text, run_config.target_model_format)
 
         ok_draft, draft_or_err = cls._generate_initial_draft(
             mode, scene_text, "", image_context_for_all, mandatory_tokens, images, run_config, primary_subjects_from_images
@@ -834,7 +847,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         
         if not ok_draft: 
             error_prompt = f"[Error generating draft for scene: {draft_or_err}]"
-            return cls._enhance_prompt_with_talent_direction(error_prompt, scene_text, run_config.model)
+            return cls._enhance_prompt_with_talent_direction(error_prompt, scene_text, run_config.target_model_format)
             
         scene_prompt = cls._refine_image_video_prompt(
             draft_or_err, mode, mandatory_tokens, style_rules, run_config
@@ -843,7 +856,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         new_positive, _ = utils._simplify_for_diffusion(scene_prompt, scene_text, run_config)
         
         enhanced_positive = cls._enhance_prompt_with_talent_direction(
-            new_positive, scene_text, run_config.model
+            new_positive, scene_text, run_config.target_model_format
         )
         
         config.CACHE.set(cache_key, enhanced_positive)
@@ -902,7 +915,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             enhanced_prompt = cls._enhance_prompt_with_talent_direction(
                 refined_prompt, 
                 refined_prompt,
-                run_config.model
+                run_config.target_model_format
             )
             return enhanced_prompt
         else:

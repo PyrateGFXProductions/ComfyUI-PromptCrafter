@@ -140,6 +140,39 @@ LOCAL_SERVER_CONFIG = {
 # --- Style and Prompting Configuration ---
 
 SAFE_MODE_RULE = "CRITICAL SAFETY RULE: Do not generate content that is NSFW, sexually explicit, violent, gory, or depicts hate speech. All output must be safe for work."
+
+# --- LTX-2 / LTX-2.3 Prompting Guidelines ---
+
+LTX2_PROMPT_GUIDELINES = """
+LTX-2 / LTX-2.3 PROMPTING GUIDELINES:
+- Write a single flowing paragraph in present tense. Start directly with the main action.
+- Establish the shot using cinematography terms (wide, medium, close-up, over-the-shoulder, etc.).
+- Set the scene: lighting conditions, color palette, surface textures, atmosphere (fog, rain, dust, smoke).
+- Describe the action as a natural sequence flowing from beginning to end.
+- Define characters: age, hairstyle, clothing, distinguishing details. Express emotions through physical cues, NOT emotional labels (e.g., "eyes widen" instead of "surprised").
+- Identify camera movement and when the view shifts: follows, tracks, pans, tilts, dollies in/out, orbits, handheld, static. Focus on the camera's relationship to the subject.
+- Describe audio: ambient sounds, music, speech. For dialogue, place text in quotation marks and optionally specify language/accent.
+- Keep within 200 words. Use 4-8 descriptive sentences to cover all key aspects.
+- Match detail to shot scale: close-ups need more precise detail than wide shots.
+- AVOID: emotional labels without visual cues, text/logos/signage, complex physics or chaotic motion, too many characters or layered actions, inconsistent lighting logic, overly complicated prompts with too many instructions.
+- STRONG SUIT: cinematic compositions, emotive human moments, atmospheric settings, clean camera language, stylized aesthetics (noir, film look, etc.), lighting/mood control, characters speaking/singing.
+""".strip()
+
+LTX2_VIDEO_PROMPT_CATEGORIES = """
+Video prompt categories for LTX-2 / LTX-2.3:
+- Animation: stop-motion, 2D/3D animation, claymation, hand-drawn
+- Stylized: comic book, cyberpunk, 8-bit pixel, surreal, minimalist, painterly, illustrated
+- Cinematic: period drama, film noir, fantasy, epic space opera, thriller, modern romance, documentary
+
+Camera language: follows, tracks, pans across, circles around, tilts upward, pushes in, pulls back, overhead view, handheld movement, over-the-shoulder, wide establishing shot, static frame, dolly in/out, crane up/down, arc left/right, whip pan, locked-off.
+
+Lighting conditions: flickering candles, neon glow, natural sunlight, dramatic shadows, backlighting, soft rim light.
+Textures: rough stone, smooth metal, worn fabric, glossy surfaces.
+Color palette: vibrant, muted, monochromatic, high contrast.
+Atmospheric elements: fog, rain, dust, particles, smoke.
+Film characteristics: jittery stop-motion, pixelated edges, lens flares, film grain.
+Pacing: slow motion, time-lapse, rapid cuts, lingering shot, continuous shot, freeze-frame, fade-in, fade-out.
+""".strip()
 DEFAULT_CHINESE_NEGATIVE_PROMPT = "模糊，畸形，失真，低质量，丑陋，额外肢体，残缺，水印，签名，文本，错误，解剖不当"
 
 NEGATIVE_KEYWORDS = {
@@ -189,6 +222,9 @@ class PromptCrafterRunConfig:
     fps: float = 16.0
     song_length_seconds: float = 0.0
     use_audio_alignment: bool = True
+
+    # Target format / model-specific guidelines
+    target_model_format: str = "Generic (SD1.5, SD2.1)"
 
     # Brain/Lobe controls
     artistry: float = 0.5

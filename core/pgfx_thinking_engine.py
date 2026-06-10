@@ -883,6 +883,9 @@ class ThoughtProcess:
         # one prompt per lyric fragment, separated by '|'.
         # It also needs to respect the positional pairing.
         
+        model_guidelines = self._model_specific_guidelines("Video", self.run_config)
+        guidelines_section = f"--- MODEL-SPECIFIC GUIDELINES ---\n{model_guidelines}\n---\n\n" if model_guidelines else ""
+        
         prompt_template = textwrap.dedent(f"""
             You are an expert music video director and prompt engineer. Your task is to create {num_fragments} distinct, cinematic video prompts, one for each pipe-separated lyric fragment provided below. Each prompt must be designed for a text-to-video generation model.
 
@@ -906,6 +909,7 @@ class ThoughtProcess:
             {pipe_separated_lyrics}
             ---
 
+            {guidelines_section}
             INSTRUCTIONS:
             1.  Generate exactly {num_fragments} prompts, one for each lyric fragment.
             2.  Each prompt should be a detailed, single-sentence description of a visual scene.
@@ -1008,6 +1012,23 @@ class ThoughtProcess:
         # Clamp the final temperature to a safe range (e.g., 0.0 to 1.5)
         return max(0.0, min(1.5, adjusted_temp))
 
+    @staticmethod
+    def _is_ltx2_target(run_config):
+        fmt = getattr(run_config, "target_model_format", "Generic (SD1.5, SD2.1)")
+        return fmt.startswith("LTX-2") or fmt == "Generic Video (Wan, etc.)"
+
+    @staticmethod
+    def _model_specific_guidelines(mode, run_config):
+        guidelines = ""
+        if ThoughtProcess._is_ltx2_target(run_config):
+            guidelines = f"""
+MODEL-SPECIFIC PROMPTING GUIDELINES (LTX-2 / LTX-2.3 Video Generation):
+{config.LTX2_PROMPT_GUIDELINES}
+
+{config.LTX2_VIDEO_PROMPT_CATEGORIES}
+"""
+        return guidelines
+
     def _build_initial_merge_prompt(self, mode, user_text, user_negative_prompt, image_context, mandatory_tokens, images, run_config, all_primary_subjects):
         """
         Constructs the initial, comprehensive prompt for the LLM to generate the first draft.
@@ -1040,7 +1061,10 @@ class ThoughtProcess:
         # --- 4. Format Image Context ---
         image_context_section = f"REFERENCE IMAGE CONTEXT:\n{image_context}\n" if image_context and not image_context.startswith("No reference") else ""
 
-        # --- 5. Assemble the Final Prompt ---
+        # --- 5. Model-Specific Guidelines ---
+        model_guidelines = self._model_specific_guidelines(mode, run_config)
+
+        # --- 6. Assemble the Final Prompt ---
         prompt_template = textwrap.dedent(f"""
             {persona}
             {task_description}
@@ -1058,6 +1082,8 @@ class ThoughtProcess:
             ---
 
             {image_context_section.strip()}
+            ---
+            {model_guidelines}
             ---
 
             **FINAL INSTRUCTIONS:**
@@ -1157,6 +1183,9 @@ class ThoughtProcess:
         print("\033[94m[Studio-Agent 3] Applying art direction and style...\033[0m")
         self.state["style_rules"] = style_rules
         
+        model_guidelines = self._model_specific_guidelines(self.mode, self.run_config)
+        guidelines_section = f"\n**MODEL-SPECIFIC GUIDELINES:**\n{model_guidelines}\n" if model_guidelines else ""
+        
         # Inlined from _refine_image_video_prompt
         refinement_prompt = f"""
 You are an expert cinematic prompt engineer. Your task is to refine a DRAFT prompt by integrating STYLE & COMPOSITION RULES, transforming it into a final, polished, and highly effective prompt for a {self.mode} generation model.
@@ -1170,7 +1199,7 @@ You are an expert cinematic prompt engineer. Your task is to refine a DRAFT prom
 ---
 {json.dumps(style_rules)}
 ---
-
+{guidelines_section}
 **YOUR TASK:**
 1.  **Integrate Rules:** Rewrite the DRAFT to seamlessly and naturally incorporate the STYLE & COMPOSITION RULES.
 2.  **Enhance, Don't Replace:** Build upon the core ideas of the DRAFT. Do not discard its main subjects or intent.
@@ -1683,6 +1712,9 @@ Return ONLY the final, refined prompt.
         """
         Generates a single cinematic prompt for a specific lyric scene.
         """
+        model_guidelines = self._model_specific_guidelines("Video", self.run_config)
+        guidelines_section = f"\n**MODEL-SPECIFIC GUIDELINES:**\n{model_guidelines}\n" if model_guidelines else ""
+
         prompt = textwrap.dedent(f"""
             You are an expert music video director. Your task is to create a single, cinematic prompt for one scene of a music video.
 
@@ -1694,7 +1726,7 @@ Return ONLY the final, refined prompt.
 
             **CURRENT SCENE ({scene_number} of {total_scenes}):**
             - Lyrics for this scene: "{scene_lyrics}"
-
+            {guidelines_section}
             **INSTRUCTIONS:**
             1.  Create a single, descriptive prompt for this specific scene.
             2.  The prompt must be inspired by the scene's lyrics and the global theme.
@@ -1753,6 +1785,9 @@ Return ONLY the final, refined prompt.
             primary_subjects = mandatory_tokens.get('primary', 'None')
         # --- END FIX ---
         
+        model_guidelines = self._model_specific_guidelines("Video", self.run_config)
+        guidelines_section = f"\n**MODEL-SPECIFIC GUIDELINES:**\n{model_guidelines}\n" if model_guidelines else ""
+
         # This prompt is inspired by _generate_prompt_for_lyric_scene and _build_vrg_prompt_instructions
         mega_prompt = textwrap.dedent(f"""
             You are an expert music video director. Your task is to create {num_fragments} distinct, cinematic video prompts, one for each pipe-separated lyric fragment provided below.
@@ -1765,7 +1800,7 @@ Return ONLY the final, refined prompt.
 
             **MANDATORY SUBJECTS (must be included):**
             {primary_subjects}
-
+            {guidelines_section}
             **LYRIC FRAGMENTS (Generate one prompt for each fragment):**
             ---
             {pipe_separated_lyrics}

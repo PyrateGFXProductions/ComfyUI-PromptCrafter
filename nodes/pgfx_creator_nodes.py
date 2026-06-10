@@ -247,6 +247,11 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 describe_result = self._describe_images(images_with_weights, initial_run_config)
                 image_context = describe_result[0] if describe_result else "No reference images provided."
                 
+                target_fmt = initial_run_config.target_model_format
+                ltx2_guidelines = ""
+                if target_fmt.startswith("LTX-2") or target_fmt == "Generic Video (Wan, etc.)":
+                    ltx2_guidelines = f"\n\n**MODEL-SPECIFIC PROMPTING GUIDELINES (LTX-2 / LTX-2.3):**\n{config.LTX2_PROMPT_GUIDELINES}\n\n{config.LTX2_VIDEO_PROMPT_CATEGORIES}\n"
+
                 thinking_prompt = textwrap.dedent(f"""
                     You are an expert prompt engineer and art director. Your task is to brainstorm a creative and detailed prompt for an AI image generator based on the user's request and any reference images.
 
@@ -254,7 +259,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     {user_text}
 
                     **REFERENCE IMAGE CONTEXT:**
-                    {image_context}
+                    {image_context}{ltx2_guidelines}
                     
                     **YOUR TASK:**
                     Think step-by-step. What is the core subject? What is the mood? What composition would be best? What artistic style is requested? What are the key lighting and environmental details?
@@ -404,7 +409,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     )
                     
                     if schedule and schedule.strip() != "{}":
-                        enhanced_schedule = self._enhance_schedule_with_talent_direction(schedule, final_user_text, model, timed_segments=None)
+                        enhanced_schedule = self._enhance_schedule_with_talent_direction(schedule, final_user_text, run_config.target_model_format, timed_segments=None)
                         schedule = enhanced_schedule
 
                     outputs_map = {
@@ -792,6 +797,11 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                         except Exception as e:
                             print(f"\033[91m[PromptCrafter] Audio processing failed: {e}\033[0m")
 
+                target_fmt = run_config.target_model_format
+                ltx2_guidelines = ""
+                if target_fmt.startswith("LTX-2") or target_fmt == "Generic Video (Wan, etc.)":
+                    ltx2_guidelines = f"\n\n**LTX-2 / LTX-2.3 PROMPTING GUIDELINES:**\n{config.LTX2_PROMPT_GUIDELINES}\n\n{config.LTX2_VIDEO_PROMPT_CATEGORIES}\n"
+
                 thinking_prompt = textwrap.dedent(f"""
                     You are a music video director. Your task is to brainstorm a sequence of cinematic scenes for the provided lyrics.
 
@@ -800,7 +810,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     **SONG THEME / STYLE:**
                     {kwargs.get('song_theme_style', 'cinematic')}
                     **CHARACTER:**
-                    {kwargs.get('character_description', 'main singer')}
+                    {kwargs.get('character_description', 'main singer')}{ltx2_guidelines}
                     
                     **TASK:**
                     Think step-by-step. Break the song into logical scenes. For each scene, describe the visual action, the camera shot, and the mood.
@@ -928,9 +938,9 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     return self._handle_creator_exception(Exception("Invalid engine output."))
 
                 if schedule and isinstance(schedule, str) and schedule.strip() != "{}":
-                    schedule = self._enhance_schedule_with_talent_direction(schedule, cl_txt, model, a_meta.get("timed_segments", []))
+                    schedule = self._enhance_schedule_with_talent_direction(schedule, cl_txt, run_config.target_model_format, a_meta.get("timed_segments", []))
                 if prompt: 
-                    prompt = self._enhance_prompt_with_talent_direction(prompt, cl_txt, model)
+                    prompt = self._enhance_prompt_with_talent_direction(prompt, cl_txt, run_config.target_model_format)
                 
                 if spec_pre is not None and isinstance(spec_pre, Image.Image):
                     spec_pre = utils.pil2tensor(spec_pre)
