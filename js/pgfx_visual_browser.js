@@ -250,6 +250,347 @@ const injectStyles = () => {
             color: #888;
             white-space: nowrap;
         }
+
+        /* --- Duplicate Scanner --- */
+        .pgfx-scan-btn {
+            background: #d97706;
+            border: 1px solid #f59e0b;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 10px;
+            white-space: nowrap;
+            line-height: 20px;
+            flex-shrink: 0;
+        }
+        .pgfx-scan-btn:hover {
+            background: #f59e0b;
+        }
+        .pgfx-scan-btn:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .pgfx-scan-btn.scanning {
+            background: #2563eb;
+            border-color: #3b82f6;
+            animation: pgfx-pulse 1s infinite;
+        }
+        @keyframes pgfx-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* --- Overlay Backdrop --- */
+        .pgfx-overlay-backdrop {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(2px);
+        }
+        .pgfx-overlay-backdrop.active {
+            display: flex;
+        }
+        .pgfx-overlay-panel {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            max-width: 90vw;
+            max-height: 85vh;
+            width: 800px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        .pgfx-overlay-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            flex-shrink: 0;
+        }
+        .pgfx-overlay-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: white;
+        }
+        .pgfx-overlay-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .pgfx-overlay-close:hover {
+            background: #333;
+            color: white;
+        }
+        .pgfx-overlay-body {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 200px;
+        }
+        .pgfx-overlay-body::-webkit-scrollbar {
+            width: 6px;
+        }
+        .pgfx-overlay-body::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 3px;
+        }
+        .pgfx-overlay-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 12px;
+            flex-shrink: 0;
+            gap: 8px;
+        }
+        .pgfx-overlay-footer .pgfx-btn {
+            font-size: 11px;
+            padding: 4px 14px;
+        }
+        .pgfx-overlay-footer .pgfx-btn.danger {
+            background: #dc2626;
+            border-color: #ef4444;
+            color: white;
+        }
+        .pgfx-overlay-footer .pgfx-btn.danger:hover {
+            background: #ef4444;
+        }
+        .pgfx-overlay-footer .pgfx-btn.danger:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .pgfx-overlay-footer .pgfx-btn.primary {
+            background: #2563eb;
+            border-color: #3b82f6;
+            color: white;
+        }
+        .pgfx-overlay-footer .pgfx-btn.primary:hover {
+            background: #3b82f6;
+        }
+
+        /* --- Duplicate Groups --- */
+        .pgfx-dup-group {
+            background: #111113;
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .pgfx-dup-group:last-child {
+            margin-bottom: 0;
+        }
+        .pgfx-dup-group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 11px;
+        }
+        .pgfx-dup-group-label {
+            color: #888;
+        }
+        .pgfx-dup-group-label strong {
+            color: #ddd;
+        }
+        .pgfx-dup-group-files {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .pgfx-dup-item {
+            width: 120px;
+            background: #000;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            position: relative;
+            user-select: none;
+        }
+        .pgfx-dup-item:hover {
+            border-color: #06b6d4;
+        }
+        .pgfx-dup-item.selected {
+            border-color: #ef4444;
+            box-shadow: 0 0 8px rgba(239,68,68,0.4);
+        }
+        .pgfx-dup-item img {
+            width: 100%;
+            height: 80px;
+            object-fit: cover;
+            display: block;
+        }
+        .pgfx-dup-item-info {
+            padding: 4px 6px;
+            font-size: 9px;
+            color: #aaa;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            background: #0a0a0a;
+        }
+        .pgfx-dup-item-check {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+            background: rgba(0,0,0,0.7);
+            border: 1px solid #555;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: white;
+            pointer-events: none;
+        }
+        .pgfx-dup-item.selected .pgfx-dup-item-check {
+            background: #ef4444;
+            border-color: #ef4444;
+        }
+        .pgfx-dup-empty {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 13px;
+        }
+        .pgfx-scan-status {
+            text-align: center;
+            padding: 40px;
+            color: #aaa;
+            font-size: 13px;
+        }
+        .pgfx-scan-status .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #333;
+            border-top-color: #06b6d4;
+            border-radius: 50%;
+            animation: pgfx-spin 0.8s linear infinite;
+            margin-bottom: 12px;
+        }
+        @keyframes pgfx-spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* --- Caption Panel --- */
+        .pgfx-caption-panel {
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            border-top: 1px solid #2a2a3e;
+            padding-top: 8px;
+            margin-top: 4px;
+        }
+        .pgfx-caption-panel.active {
+            display: flex;
+        }
+        .pgfx-caption-label {
+            font-size: 10px;
+            color: #888;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .pgfx-caption-label .pgfx-caption-status {
+            color: #555;
+            font-weight: 400;
+            font-size: 9px;
+        }
+        .pgfx-caption-textarea {
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: white;
+            font-size: 11px;
+            padding: 6px 8px;
+            outline: none;
+            resize: vertical;
+            font-family: inherit;
+            min-height: 50px;
+            max-height: 120px;
+            line-height: 1.4;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .pgfx-caption-textarea:focus {
+            border-color: #06b6d4;
+        }
+        .pgfx-caption-textarea::placeholder {
+            color: #555;
+        }
+        .pgfx-caption-actions {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .pgfx-caption-actions .pgfx-btn {
+            font-size: 10px;
+            padding: 2px 10px;
+        }
+        .pgfx-caption-actions .pgfx-btn.save {
+            background: #059669;
+            border-color: #10b981;
+            color: white;
+        }
+        .pgfx-caption-actions .pgfx-btn.save:hover {
+            background: #10b981;
+        }
+        .pgfx-caption-actions .pgfx-btn.save:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .pgfx-caption-actions .pgfx-btn.generate {
+            background: #7c3aed;
+            border-color: #8b5cf6;
+            color: white;
+        }
+        .pgfx-caption-actions .pgfx-btn.generate:hover {
+            background: #8b5cf6;
+        }
+        .pgfx-caption-actions .pgfx-btn.generate:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .pgfx-caption-actions .pgfx-btn.batch {
+            background: #b45309;
+            border-color: #d97706;
+            color: white;
+        }
+        .pgfx-caption-actions .pgfx-btn.batch:hover {
+            background: #d97706;
+        }
+        .pgfx-caption-actions .pgfx-btn.batch:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .pgfx-caption-progress {
+            font-size: 9px;
+            color: #555;
+            padding: 2px 0;
+        }
+        .pgfx-caption-progress.active {
+            color: #06b6d4;
+        }
+        .pgfx-caption-progress.error {
+            color: #ef4444;
+        }
+        .pgfx-caption-progress.success {
+            color: #10b981;
+        }
     `;
     document.head.appendChild(style);
 };
@@ -270,8 +611,12 @@ app.registerExtension({
 
             const folderWidget = node.widgets.find(w => w.name === "folder");
             const selectedImageWidget = node.widgets.find(w => w.name === "selected_image");
+            const captionModelWidget = node.widgets.find(w => w.name === "caption_model");
+            const captionPromptWidget = node.widgets.find(w => w.name === "caption_prompt");
 
             selectedImageWidget.type = "hidden";
+
+            let captionsEnabled = captionModelWidget && captionModelWidget.value && captionModelWidget.value.trim().length > 0;
 
             let currentFolder = folderWidget.value || ".";
 
@@ -309,7 +654,17 @@ app.registerExtension({
                 await refreshAll();
             };
 
+            const scanBtn = document.createElement("button");
+            scanBtn.className = "pgfx-scan-btn";
+            scanBtn.textContent = "🔍 Duplicates";
+            scanBtn.title = "Scan for duplicate images in this folder";
+            scanBtn.onclick = async (e) => {
+                e.stopPropagation();
+                await startDuplicateScan();
+            };
+
             topRow.appendChild(pathBar);
+            topRow.appendChild(scanBtn);
             topRow.appendChild(refreshBtn);
             container.appendChild(topRow);
 
@@ -352,6 +707,108 @@ app.registerExtension({
 
             paginationRow.append(prevBtn, pageInfo, nextBtn);
             container.appendChild(paginationRow);
+
+            // --- Caption Panel ---
+            const captionPanel = document.createElement("div");
+            captionPanel.className = "pgfx-caption-panel";
+
+            const captionLabel = document.createElement("div");
+            captionLabel.className = "pgfx-caption-label";
+            const captionLabelText = document.createElement("span");
+            captionLabelText.textContent = "Caption";
+            const captionStatus = document.createElement("span");
+            captionStatus.className = "pgfx-caption-status";
+            captionStatus.textContent = "";
+            captionLabel.append(captionLabelText, captionStatus);
+
+            const captionTextarea = document.createElement("textarea");
+            captionTextarea.className = "pgfx-caption-textarea";
+            captionTextarea.placeholder = captionsEnabled ? "Select an image to view/edit its caption..." : "Set a caption_model in node inputs to enable captioning.";
+            captionTextarea.disabled = !captionsEnabled;
+
+            const captionActions = document.createElement("div");
+            captionActions.className = "pgfx-caption-actions";
+
+            const saveCaptionBtn = document.createElement("button");
+            saveCaptionBtn.className = "pgfx-btn save";
+            saveCaptionBtn.textContent = "💾 Save";
+            saveCaptionBtn.disabled = true;
+            saveCaptionBtn.title = "Save caption as .txt sidecar file";
+
+            const genCaptionBtn = document.createElement("button");
+            genCaptionBtn.className = "pgfx-btn generate";
+            genCaptionBtn.textContent = "✨ Generate";
+            genCaptionBtn.disabled = true;
+            genCaptionBtn.title = "Generate caption using vision model";
+
+            const batchCaptionBtn = document.createElement("button");
+            batchCaptionBtn.className = "pgfx-btn batch";
+            batchCaptionBtn.textContent = "📝 Caption All";
+            batchCaptionBtn.disabled = true;
+            batchCaptionBtn.title = "Caption all uncaptioned images in folder";
+
+            const captionProgress = document.createElement("div");
+            captionProgress.className = "pgfx-caption-progress";
+            captionProgress.textContent = "";
+
+            captionActions.append(saveCaptionBtn, genCaptionBtn, batchCaptionBtn);
+            captionPanel.append(captionLabel, captionTextarea, captionActions, captionProgress);
+            container.appendChild(captionPanel);
+
+            if (captionsEnabled) {
+                captionPanel.classList.add("active");
+            }
+
+            // --- Duplicate Scan Overlay ---
+            const overlayBackdrop = document.createElement("div");
+            overlayBackdrop.className = "pgfx-overlay-backdrop";
+
+            const overlayPanel = document.createElement("div");
+            overlayPanel.className = "pgfx-overlay-panel";
+
+            const overlayHeader = document.createElement("div");
+            overlayHeader.className = "pgfx-overlay-header";
+            const overlayTitle = document.createElement("span");
+            overlayTitle.className = "pgfx-overlay-title";
+            overlayTitle.textContent = "Scanning for Duplicates...";
+            const overlayClose = document.createElement("button");
+            overlayClose.className = "pgfx-overlay-close";
+            overlayClose.textContent = "✕";
+            overlayHeader.append(overlayTitle, overlayClose);
+
+            const overlayBody = document.createElement("div");
+            overlayBody.className = "pgfx-overlay-body";
+            overlayBody.innerHTML = '<div class="pgfx-scan-status"><div class="spinner"></div><div>Scanning images...</div></div>';
+
+            const overlayFooter = document.createElement("div");
+            overlayFooter.className = "pgfx-overlay-footer";
+            const footerLeft = document.createElement("div");
+            const selectAllBtn = document.createElement("button");
+            selectAllBtn.className = "pgfx-btn primary";
+            selectAllBtn.textContent = "Select All";
+            const deselectAllBtn = document.createElement("button");
+            deselectAllBtn.className = "pgfx-btn";
+            deselectAllBtn.textContent = "Deselect All";
+            footerLeft.append(selectAllBtn, deselectAllBtn);
+            const footerRight = document.createElement("div");
+            const cancelBtn = document.createElement("button");
+            cancelBtn.className = "pgfx-btn";
+            cancelBtn.textContent = "Cancel";
+            const deleteBtn = document.createElement("button");
+            deleteBtn.className = "pgfx-btn danger";
+            deleteBtn.textContent = "Delete Selected (0)";
+            deleteBtn.disabled = true;
+            footerRight.append(cancelBtn, deleteBtn);
+            overlayFooter.append(footerLeft, footerRight);
+
+            overlayPanel.append(overlayHeader, overlayBody, overlayFooter);
+            overlayBackdrop.appendChild(overlayPanel);
+            document.body.appendChild(overlayBackdrop);
+
+            // --- Duplicate scan state ---
+            let dupGroups = [];
+            let dupSelectedFiles = new Set();
+            let isScanning = false;
 
             // --- DOM Widget ---
             const widget = node.addDOMWidget("VisualBrowser", "visual_browser", container, {
@@ -681,6 +1138,7 @@ app.registerExtension({
                         item.classList.add("selected");
                         selectedImageWidget.value = imgData.filename;
                         updateDetails(imgData.filename);
+                        if (captionsEnabled) loadCaption(imgData.filename);
                         node.setDirtyCanvas(true, true);
                     };
 
@@ -738,6 +1196,476 @@ app.registerExtension({
                 }
             };
 
+            // --- Caption functions ---
+            let currentCaptionFile = "";
+
+            const loadCaption = async (filename) => {
+                currentCaptionFile = filename;
+                captionStatus.textContent = "Loading...";
+                saveCaptionBtn.disabled = true;
+                genCaptionBtn.disabled = true;
+
+                if (!filename) {
+                    captionTextarea.value = "";
+                    captionStatus.textContent = "No image selected";
+                    return;
+                }
+
+                try {
+                    const resp = await api.fetchApi(`/pgfx/browser/caption?folder=${encodeURIComponent(currentFolder)}&filename=${encodeURIComponent(filename)}`);
+                    const data = await resp.json();
+                    if (data.error) {
+                        captionTextarea.value = "";
+                        captionStatus.textContent = `Error: ${data.error}`;
+                        return;
+                    }
+                    captionTextarea.value = data.caption || "";
+                    captionStatus.textContent = data.source === "file" ? "📄 Loaded from sidecar" : "No caption file";
+                    saveCaptionBtn.disabled = false;
+                    genCaptionBtn.disabled = false;
+                } catch (e) {
+                    console.error("[PGFX] Caption load error:", e);
+                    captionTextarea.value = "";
+                    captionStatus.textContent = "Error loading caption";
+                }
+            };
+
+            const saveCaption = async () => {
+                const text = captionTextarea.value.trim();
+                if (!currentCaptionFile) return;
+
+                captionStatus.textContent = "Saving...";
+                saveCaptionBtn.disabled = true;
+
+                try {
+                    const resp = await api.fetchApi("/pgfx/browser/save-caption", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            folder: currentFolder,
+                            filename: currentCaptionFile,
+                            caption: text,
+                        }),
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        captionStatus.textContent = "✅ Saved";
+                    } else {
+                        captionStatus.textContent = `⚠️ Error: ${data.error || "Unknown"}`;
+                    }
+                } catch (e) {
+                    console.error("[PGFX] Caption save error:", e);
+                    captionStatus.textContent = "❌ Save failed";
+                } finally {
+                    saveCaptionBtn.disabled = false;
+                }
+            };
+
+            const generateCaption = async () => {
+                if (!currentCaptionFile) return;
+
+                const model = captionModelWidget?.value?.trim();
+                const prompt = captionPromptWidget?.value?.trim() || "Describe this image in detail.";
+
+                if (!model) {
+                    captionStatus.textContent = "⚠️ No caption_model configured";
+                    return;
+                }
+
+                genCaptionBtn.disabled = true;
+                saveCaptionBtn.disabled = true;
+                captionStatus.textContent = "⏳ Generating...";
+                captionTextarea.value = "";
+
+                try {
+                    const resp = await api.fetchApi("/pgfx/browser/generate-caption", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            folder: currentFolder,
+                            filename: currentCaptionFile,
+                            model: model,
+                            prompt: prompt,
+                            temperature: 0.2,
+                        }),
+                    });
+                    const data = await resp.json();
+                    if (data.error) {
+                        captionStatus.textContent = `❌ ${data.error}`;
+                        return;
+                    }
+                    captionTextarea.value = data.caption || "";
+                    captionStatus.textContent = "✨ Generated";
+                    saveCaptionBtn.disabled = false;
+
+                    // Auto-save after generation
+                    await saveCaption();
+
+                } catch (e) {
+                    console.error("[PGFX] Caption generate error:", e);
+                    captionStatus.textContent = "❌ Generation failed";
+                } finally {
+                    genCaptionBtn.disabled = false;
+                }
+            };
+
+            const batchCaption = async () => {
+                const model = captionModelWidget?.value?.trim();
+                const prompt = captionPromptWidget?.value?.trim() || "Describe this image in detail.";
+
+                if (!model) {
+                    captionStatus.textContent = "⚠️ No caption_model configured";
+                    return;
+                }
+
+                if (!confirm(`Caption ALL uncaptioned images in this folder?\n\nModel: ${model}\n\nThis may take a while for large folders.`)) {
+                    return;
+                }
+
+                batchCaptionBtn.disabled = true;
+                captionProgress.textContent = "⏳ Captioning...";
+                captionProgress.className = "pgfx-caption-progress active";
+
+                try {
+                    const resp = await api.fetchApi("/pgfx/browser/caption-batch", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            folder: currentFolder,
+                            model: model,
+                            prompt: prompt,
+                            overwrite: false,
+                            concurrency: 2,
+                        }),
+                    });
+                    const data = await resp.json();
+                    if (data.error) {
+                        captionProgress.textContent = `❌ ${data.error}`;
+                        captionProgress.className = "pgfx-caption-progress error";
+                        return;
+                    }
+                    captionProgress.textContent = `✅ Processed ${data.processed}, skipped ${data.skipped}, failed ${data.failed}`;
+                    captionProgress.className = data.failed > 0 ? "pgfx-caption-progress error" : "pgfx-caption-progress success";
+
+                    // Reload caption for current image if it was just captioned
+                    if (currentCaptionFile) {
+                        loadCaption(currentCaptionFile);
+                    }
+
+                } catch (e) {
+                    console.error("[PGFX] Batch caption error:", e);
+                    captionProgress.textContent = "❌ Batch captioning failed";
+                    captionProgress.className = "pgfx-caption-progress error";
+                } finally {
+                    batchCaptionBtn.disabled = false;
+                    setTimeout(() => {
+                        captionProgress.className = "pgfx-caption-progress";
+                        captionProgress.textContent = "";
+                    }, 5000);
+                }
+            };
+
+            // --- Caption button handlers ---
+            saveCaptionBtn.onclick = saveCaption;
+            genCaptionBtn.onclick = generateCaption;
+            batchCaptionBtn.onclick = batchCaption;
+
+            // Watch for caption_model changes to enable/disable caption panel
+            if (captionModelWidget) {
+                const origCallback = captionModelWidget.callback;
+                captionModelWidget.callback = function(...args) {
+                    origCallback?.apply(this, args);
+                    const hasModel = this.value && this.value.trim().length > 0;
+                    captionsEnabled = hasModel;
+                    captionPanel.classList.toggle("active", hasModel);
+                    captionTextarea.disabled = !hasModel;
+                    captionTextarea.placeholder = hasModel
+                        ? "Select an image to view/edit its caption..."
+                        : "Set a caption_model in node inputs to enable captioning.";
+                    if (!hasModel) {
+                        captionTextarea.value = "";
+                        captionStatus.textContent = "";
+                        saveCaptionBtn.disabled = true;
+                        genCaptionBtn.disabled = true;
+                        batchCaptionBtn.disabled = true;
+                    } else {
+                        batchCaptionBtn.disabled = false;
+                        if (currentCaptionFile) {
+                            loadCaption(currentCaptionFile);
+                        }
+                    }
+                    node.setDirtyCanvas(true, true);
+                };
+            }
+
+            // Update compute size when caption panel visibility changes
+            const origComputeSize = widget.computeSize;
+            widget.computeSize = function(width) {
+                const base = origComputeSize ? origComputeSize.call(this, width) : [width, 440];
+                if (captionsEnabled && captionPanel.classList.contains("active")) {
+                    base[1] = Math.max(base[1], 530);
+                }
+                return base;
+            };
+
+            // --- Duplicate scan overlay functions ---
+            const showOverlay = () => {
+                overlayBackdrop.classList.add("active");
+            };
+
+            const hideOverlay = () => {
+                overlayBackdrop.classList.remove("active");
+                dupGroups = [];
+                dupSelectedFiles.clear();
+            };
+
+            const renderDuplicateGroups = () => {
+                overlayBody.innerHTML = "";
+                if (dupGroups.length === 0) {
+                    overlayBody.innerHTML = '<div class="pgfx-dup-empty">🎉 No duplicate images found!</div>';
+                    return;
+                }
+
+                dupGroups.forEach((group, gi) => {
+                    const groupDiv = document.createElement("div");
+                    groupDiv.className = "pgfx-dup-group";
+
+                    const header = document.createElement("div");
+                    header.className = "pgfx-dup-group-header";
+                    header.innerHTML = `<span class="pgfx-dup-group-label"><strong>Group ${gi + 1}</strong> — ${group.type === "exact" ? "Exact duplicate" : "Near duplicate"} (${group.similarity * 100}% similar)</span>`;
+
+                    const filesDiv = document.createElement("div");
+                    filesDiv.className = "pgfx-dup-group-files";
+
+                    group.files.forEach((file) => {
+                        const item = document.createElement("div");
+                        item.className = "pgfx-dup-item";
+                        item.dataset.path = file.path;
+                        if (dupSelectedFiles.has(file.path)) {
+                            item.classList.add("selected");
+                        }
+
+                        const img = document.createElement("img");
+                        img.src = file.url;
+                        img.loading = "lazy";
+                        img.alt = file.filename;
+
+                        const check = document.createElement("div");
+                        check.className = "pgfx-dup-item-check";
+                        check.textContent = dupSelectedFiles.has(file.path) ? "✕" : "";
+
+                        const info = document.createElement("div");
+                        info.className = "pgfx-dup-item-info";
+                        info.textContent = `${file.filename} (${file.size})`;
+
+                        item.append(img, check, info);
+
+                        item.onclick = (e) => {
+                            e.stopPropagation();
+                            const path = item.dataset.path;
+                            if (dupSelectedFiles.has(path)) {
+                                dupSelectedFiles.delete(path);
+                                item.classList.remove("selected");
+                                check.textContent = "";
+                            } else {
+                                dupSelectedFiles.add(path);
+                                item.classList.add("selected");
+                                check.textContent = "✕";
+                            }
+                            updateDeleteButton();
+                        };
+
+                        filesDiv.appendChild(item);
+                    });
+
+                    groupDiv.append(header, filesDiv);
+                    overlayBody.appendChild(groupDiv);
+                });
+
+                // Auto-select all files from first group onward (skip one per group to keep)
+                if (dupSelectedFiles.size === 0) {
+                    dupGroups.forEach((group) => {
+                        // Keep the first file, mark rest for deletion
+                        for (let i = 1; i < group.files.length; i++) {
+                            dupSelectedFiles.add(group.files[i].path);
+                        }
+                    });
+                }
+                updateDeleteButton();
+                // Re-render to show checkmarks
+                renderDuplicateGroupsChecks();
+            };
+
+            const renderDuplicateGroupsChecks = () => {
+                const items = overlayBody.querySelectorAll(".pgfx-dup-item");
+                items.forEach((item) => {
+                    const path = item.dataset.path;
+                    const check = item.querySelector(".pgfx-dup-item-check");
+                    if (dupSelectedFiles.has(path)) {
+                        item.classList.add("selected");
+                        if (check) check.textContent = "✕";
+                    } else {
+                        item.classList.remove("selected");
+                        if (check) check.textContent = "";
+                    }
+                });
+            };
+
+            const updateDeleteButton = () => {
+                const count = dupSelectedFiles.size;
+                deleteBtn.textContent = `Delete Selected (${count})`;
+                deleteBtn.disabled = count === 0;
+            };
+
+            const startDuplicateScan = async () => {
+                if (isScanning) return;
+                isScanning = true;
+                scanBtn.disabled = true;
+                scanBtn.classList.add("scanning");
+                scanBtn.textContent = "⏳ Scanning...";
+
+                overlayTitle.textContent = "Scanning for Duplicates...";
+                overlayBody.innerHTML = '<div class="pgfx-scan-status"><div class="spinner"></div><div>Scanning images...</div></div>';
+                overlayClose.style.display = "none";
+                deleteBtn.style.display = "none";
+                cancelBtn.textContent = "Cancel";
+                selectAllBtn.style.display = "none";
+                deselectAllBtn.style.display = "none";
+                showOverlay();
+
+                try {
+                    const resp = await api.fetchApi("/pgfx/browser/scan-duplicates", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ folder: currentFolder, threshold: 10 }),
+                    });
+                    const data = await resp.json();
+
+                    if (data.error) {
+                        overlayBody.innerHTML = `<div class="pgfx-dup-empty">Error: ${data.error}</div>`;
+                        return;
+                    }
+
+                    dupGroups = data.groups || [];
+                    const totalDups = data.total_duplicates || 0;
+                    const totalFiles = data.total_files || 0;
+
+                    overlayTitle.textContent = `Duplicate Images Found (${dupGroups.length} groups, ${totalDups} files out of ${totalFiles})`;
+
+                    if (dupGroups.length === 0) {
+                        overlayBody.innerHTML = '<div class="pgfx-dup-empty">🎉 No duplicate images found!</div>';
+                        return;
+                    }
+
+                    overlayClose.style.display = "";
+                    deleteBtn.style.display = "";
+                    selectAllBtn.style.display = "";
+                    deselectAllBtn.style.display = "";
+                    cancelBtn.textContent = "Close";
+
+                    dupSelectedFiles.clear();
+                    renderDuplicateGroups();
+
+                } catch (e) {
+                    console.error("[PGFX] Duplicate scan error:", e);
+                    overlayBody.innerHTML = `<div class="pgfx-dup-empty">Error: ${e.message}</div>`;
+                } finally {
+                    isScanning = false;
+                    scanBtn.disabled = false;
+                    scanBtn.classList.remove("scanning");
+                    scanBtn.textContent = "🔍 Duplicates";
+                }
+            };
+
+            const executeDelete = async () => {
+                const paths = Array.from(dupSelectedFiles);
+                if (paths.length === 0) return;
+
+                if (!confirm(`Are you sure you want to delete ${paths.length} file(s)?\n\nThis action cannot be undone.`)) {
+                    return;
+                }
+
+                deleteBtn.disabled = true;
+                deleteBtn.textContent = "⏳ Deleting...";
+
+                try {
+                    const resp = await api.fetchApi("/pgfx/browser/delete-files", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ files: paths }),
+                    });
+                    const data = await resp.json();
+
+                    const deleted = data.deleted || [];
+                    const failed = data.failed || [];
+
+                    overlayTitle.textContent = `Deleted ${deleted.length} file(s)`;
+
+                    if (failed.length > 0) {
+                        overlayBody.innerHTML = `<div class="pgfx-dup-empty">⚠️ Deleted ${deleted.length}, but ${failed.length} failed:<br>${failed.map(f => `${f.path}: ${f.reason}`).join("<br>")}</div>`;
+                    } else {
+                        overlayBody.innerHTML = `<div class="pgfx-dup-empty">✅ Successfully deleted ${deleted.length} file(s)!</div>`;
+                    }
+
+                    deleteBtn.style.display = "none";
+                    selectAllBtn.style.display = "none";
+                    deselectAllBtn.style.display = "none";
+                    cancelBtn.textContent = "Close";
+                    dupSelectedFiles.clear();
+
+                    // Refresh the image grid
+                    setTimeout(() => refreshAll(), 500);
+
+                } catch (e) {
+                    console.error("[PGFX] Delete error:", e);
+                    overlayBody.innerHTML = `<div class="pgfx-dup-empty">Error: ${e.message}</div>`;
+                    deleteBtn.disabled = false;
+                    deleteBtn.textContent = `Delete Selected (${dupSelectedFiles.size})`;
+                }
+            };
+
+            // --- Overlay event handlers ---
+            overlayClose.onclick = hideOverlay;
+            cancelBtn.onclick = hideOverlay;
+
+            overlayBackdrop.addEventListener("click", (e) => {
+                if (e.target === overlayBackdrop) {
+                    hideOverlay();
+                }
+            });
+
+            selectAllBtn.onclick = () => {
+                const items = overlayBody.querySelectorAll(".pgfx-dup-item");
+                items.forEach((item) => {
+                    dupSelectedFiles.add(item.dataset.path);
+                });
+                renderDuplicateGroupsChecks();
+                updateDeleteButton();
+            };
+
+            deselectAllBtn.onclick = () => {
+                dupSelectedFiles.clear();
+                renderDuplicateGroupsChecks();
+                updateDeleteButton();
+            };
+
+            deleteBtn.onclick = executeDelete;
+
+            // --- Keyboard shortcuts ---
+            document.addEventListener("keydown", (e) => {
+                if (!overlayBackdrop.classList.contains("active")) return;
+
+                if (e.key === "Escape") {
+                    e.preventDefault();
+                    hideOverlay();
+                } else if (e.key === "Delete" || e.key === "Backspace") {
+                    if (dupSelectedFiles.size > 0 && !isScanning) {
+                        e.preventDefault();
+                        executeDelete();
+                    }
+                }
+            });
+
             // --- Init ---
             const init = async () => {
                 if (currentFolder === ".") {
@@ -754,6 +1682,11 @@ app.registerExtension({
                 }
                 renderPathBar();
                 await loadImages(0);
+                if (captionsEnabled && selectedImageWidget.value) {
+                    const selFile = selectedImageWidget.value;
+                    // Small delay to let grid render and select the image
+                    setTimeout(() => loadCaption(selFile), 200);
+                }
             };
 
             setTimeout(init, 100);
