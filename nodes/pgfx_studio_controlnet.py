@@ -48,5 +48,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_Studio_ControlNet": "👄 Studio ControlNet (Viseme Bridge)",
+    "PGFX_Studio_ControlNet": "???? Legacy ?? Studio ControlNet (Viseme Bridge)",
 }

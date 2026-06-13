@@ -340,6 +340,11 @@ def pil2tensor(image: Image.Image) -> torch.Tensor:
     """Converts a PIL image to a PyTorch tensor."""
     return torch.from_numpy(np.array(image).astype(np.float32) / 255.0).unsqueeze(0)
 
+def tensor2pil(tensor: torch.Tensor) -> Image.Image:
+    """Converts a PyTorch tensor to a PIL image (clamps values, removes batch dim if present)."""
+    i = 255. * tensor.cpu().numpy().squeeze()
+    return Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+
 def _add_metadata_to_image(image_path, caption_text):
     """
     Adds the provided caption text to the image's metadata and saves it in place.

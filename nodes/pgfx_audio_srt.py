@@ -2,6 +2,7 @@ import os
 import sys
 import types
 import importlib
+import asyncio
 import torch
 import torch.serialization
 import json
@@ -132,6 +133,20 @@ TORCH_DATALOADER_RESET = False
 TORCH_DATALOADER_CLEAN_INIT = None
 TORCH_DATALOADER_CLEAN_RESET = None
 
+class _PassthroughVAD:
+    """VAD that treats all audio as speech. Used when real VAD model fails to load."""
+    def __call__(self, audio_dict):
+        import numpy as np
+        from pyannote.core import SlidingWindowFeature, SlidingWindow
+
+        waveform = audio_dict["waveform"]
+        sample_rate = audio_dict["sample_rate"]
+        duration = waveform.shape[-1] / float(sample_rate)
+        n_frames = max(1, int(np.ceil(duration / 0.1)))
+        data = np.ones((n_frames, 1), dtype=np.float32)
+        window = SlidingWindow(duration=0.1, step=0.1, start=0.0)
+        return SlidingWindowFeature(data, window)
+
 def _clear_modules(prefixes):
     for name in list(sys.modules):
         for prefix in prefixes:
@@ -150,7 +165,7 @@ def _install_whisperx_pyannote_stub():
         def __init__(self, *args, **kwargs):
             raise RuntimeError(
                 "Pyannote VAD is unavailable in this environment. "
-                "Use vad_method='silero' or fix the pyannote/speechbrain installation."
+                "Use vad_model='silero' or fix the pyannote/speechbrain installation."
             )
 
     stub.Pyannote = Pyannote
@@ -338,11 +353,74 @@ class PromptCrafter_SRTCreator:
     FUNCTION = "execute"
     CATEGORY = "☠️PGFX /Text"
 
-    def _load_transcription_model(self, whisper_model_name, vad_method, debug_mode):
+    def _load_vad_model_safe(self, whisperx_module, debug_mode):
+        """Load VAD model on CPU to avoid cuDNN/weights_only GPU issues. Falls back to passthrough VAD."""
+        _add_pyannote_safe_globals(debug_mode)
+        try:
+            from whisperx.vad import load_vad_model as _load_vad
+            vad_model = _load_vad(torch.device("cpu"))
+            if debug_mode:
+                print("[SRTCreator] VAD model loaded on CPU successfully.")
+            return vad_model
+        except Exception as e:
+            if debug_mode:
+                print(f"[SRTCreator] VAD model loading failed; using passthrough VAD. Reason: {e}")
+            return _PassthroughVAD()
+
+    def _is_cudnn_available(self):
+        """Check if cuDNN ops infer DLL (CTranslate2 8.x) is loadable."""
+        if not torch.cuda.is_available():
+            return False
+        needed = "cudnn_ops_infer64_8.dll"
+        search_dirs = [os.path.join(os.path.dirname(torch.__file__), "lib")]
+        try:
+            import importlib.util
+            spec = importlib.util.find_spec("ctranslate2")
+            if spec is not None and spec.origin:
+                search_dirs.append(os.path.dirname(spec.origin))
+        except Exception:
+            pass
+        for d in search_dirs:
+            d = os.path.abspath(d)
+            dll_path = os.path.join(d, needed)
+            if os.path.exists(dll_path):
+                try:
+                    import ctypes
+                    os.add_dll_directory(d)
+                    ctypes.CDLL(dll_path)
+                    return True
+                except Exception:
+                    pass
+        return False
+
+    def _load_whisperx_model(self, whisperx, model_path_or_name, device, load_kwargs, debug_mode):
+        """Try loading whisperx model on GPU first; fall back to CPU on cuDNN errors."""
+        devices_to_try = [device]
+        if device.startswith("cuda"):
+            devices_to_try.append("cpu")
+        last_error = None
+        for dev in devices_to_try:
+            kw = dict(load_kwargs)
+            if dev == "cpu":
+                kw["compute_type"] = "float32"
+            try:
+                return whisperx.load_model(model_path_or_name, dev, **kw)
+            except Exception as e:
+                last_error = e
+                if debug_mode:
+                    print(f"[SRTCreator] whisperx load_model failed on {dev}; Reason: {e}")
+                if dev == devices_to_try[-1]:
+                    raise last_error
+                continue
+
+    def _load_transcription_model(self, whisper_model_name, vad_method, debug_mode, language="auto-detect"):
         """Loads and caches only the whisperx transcription model (no alignment)."""
         whisperx = _get_whisperx(debug_mode)
         global LOADED_MODELS
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        gpu_ok = torch.cuda.is_available() and self._is_cudnn_available()
+        if torch.cuda.is_available() and not gpu_ok and debug_mode:
+            print("[SRTCreator] cuDNN ops DLL not found; forcing whisper to CPU.")
+        device = "cuda" if gpu_ok else "cpu"
         _ensure_speechbrain_lazy_patch(debug_mode)
 
         if (
@@ -356,7 +434,6 @@ class PromptCrafter_SRTCreator:
             if "/" in whisper_model_name:
                 model_path_or_name = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'models', 'faster-whisper', f"models--{whisper_model_name.replace('/', '--')}")
 
-            vad_options = {}
             selected_vad_method = (vad_method or "silero").lower().strip()
             effective_vad_method = selected_vad_method
             if selected_vad_method == "pyannote" and not WHISPERX_PYANNOTE_AVAILABLE:
@@ -365,30 +442,16 @@ class PromptCrafter_SRTCreator:
                 reason = f": {WHISPERX_PYANNOTE_ERROR}" if WHISPERX_PYANNOTE_ERROR else ""
                 print(f"[SRTCreator] Falling back to Silero VAD{reason}")
 
-            if effective_vad_method == "pyannote":
-                _add_pyannote_safe_globals(debug_mode)
-            try:
-                LOADED_MODELS["transcription_model"] = whisperx.load_model(
-                    model_path_or_name,
-                    device,
-                    compute_type="float16",
-                    vad_method=effective_vad_method,
-                    vad_options=vad_options,
-                )
-            except Exception as e:
-                if effective_vad_method == "pyannote":
-                    if debug_mode:
-                        print(f"[SRTCreator] Pyannote VAD failed; retrying with Silero. Reason: {e}")
-                    _prepare_whisperx_import(debug_mode, force=True)
-                    LOADED_MODELS["transcription_model"] = whisperx.load_model(
-                        model_path_or_name,
-                        device,
-                        compute_type="float16",
-                        vad_method="silero",
-                        vad_options=vad_options,
-                    )
-                else:
-                    raise
+            vad_model = self._load_vad_model_safe(whisperx, debug_mode)
+            load_kwargs = dict(
+                compute_type="float16",
+                vad_model=vad_model,
+                language=None if language == "auto-detect" else language,
+            )
+
+            LOADED_MODELS["transcription_model"] = self._load_whisperx_model(
+                whisperx, model_path_or_name, device, load_kwargs, debug_mode
+            )
             LOADED_MODELS["transcription_model_name"] = whisper_model_name
             LOADED_MODELS["transcription_vad_method"] = effective_vad_method
 
@@ -398,7 +461,10 @@ class PromptCrafter_SRTCreator:
         """Loads and caches whisperx transcription and alignment models."""
         whisperx = _get_whisperx(debug_mode)
         global LOADED_MODELS
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        gpu_ok = torch.cuda.is_available() and self._is_cudnn_available()
+        if torch.cuda.is_available() and not gpu_ok and debug_mode:
+            print("[SRTCreator] cuDNN ops DLL not found; forcing whisper to CPU.")
+        device = "cuda" if gpu_ok else "cpu"
         _ensure_speechbrain_lazy_patch(debug_mode)
 
         # Load Transcription Model
@@ -409,12 +475,10 @@ class PromptCrafter_SRTCreator:
         ):
             if debug_mode: print(f"[SRTCreator] Loading whisper model: {whisper_model_name}")
 
-            # --- ROBUST FIX: Convert clean name back to local path if needed ---
             model_path_or_name = whisper_model_name
-            if "/" in whisper_model_name: # Indicates a potential local model like "Systran/faster-whisper-large-v3"
+            if "/" in whisper_model_name:
                 model_path_or_name = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'models', 'faster-whisper', f"models--{whisper_model_name.replace('/', '--')}")
-            
-            vad_options = {}
+
             selected_vad_method = (vad_method or "silero").lower().strip()
             effective_vad_method = selected_vad_method
             if selected_vad_method == "pyannote" and not WHISPERX_PYANNOTE_AVAILABLE:
@@ -423,40 +487,33 @@ class PromptCrafter_SRTCreator:
                 reason = f": {WHISPERX_PYANNOTE_ERROR}" if WHISPERX_PYANNOTE_ERROR else ""
                 print(f"[SRTCreator] Falling back to Silero VAD{reason}")
 
-            if effective_vad_method == "pyannote":
-                _add_pyannote_safe_globals(debug_mode)
-            try:
-                LOADED_MODELS["transcription_model"] = whisperx.load_model(
-                    model_path_or_name,
-                    device,
-                    compute_type="float16",
-                    vad_method=effective_vad_method,
-                    vad_options=vad_options,
-                )
-            except Exception as e:
-                if effective_vad_method == "pyannote":
-                    if debug_mode:
-                        print(f"[SRTCreator] Pyannote VAD failed; retrying with Silero. Reason: {e}")
-                    _prepare_whisperx_import(debug_mode, force=True)
-                    LOADED_MODELS["transcription_model"] = whisperx.load_model(
-                        model_path_or_name,
-                        device,
-                        compute_type="float16",
-                        vad_method="silero",
-                        vad_options=vad_options,
-                    )
-                else:
-                    raise
+            vad_model = self._load_vad_model_safe(whisperx, debug_mode)
+            load_kwargs = dict(
+                compute_type="float16",
+                vad_model=vad_model,
+                language=None if language == "auto-detect" else language,
+            )
+
+            LOADED_MODELS["transcription_model"] = self._load_whisperx_model(
+                whisperx, model_path_or_name, device, load_kwargs, debug_mode
+            )
             LOADED_MODELS["transcription_model_name"] = whisper_model_name
             LOADED_MODELS["transcription_vad_method"] = effective_vad_method
 
         # Load Alignment Model
         if LOADED_MODELS["align_model"] is None or LOADED_MODELS["align_model_lang"] != language:
             if debug_mode: print(f"[SRTCreator] Loading alignment model for language: {language}")
-            align_model, align_meta = whisperx.load_align_model(language_code=language, device=device)
-            LOADED_MODELS["align_model"] = align_model
-            LOADED_MODELS["align_model_metadata"] = align_meta
-            LOADED_MODELS["align_model_lang"] = language
+            try:
+                align_model, align_meta = whisperx.load_align_model(language_code=language, device=device)
+                LOADED_MODELS["align_model"] = align_model
+                LOADED_MODELS["align_model_metadata"] = align_meta
+                LOADED_MODELS["align_model_lang"] = language
+            except Exception as e:
+                if debug_mode:
+                    print(f"[SRTCreator] Alignment model loading failed; continuing without alignment. Reason: {e}")
+                LOADED_MODELS["align_model"] = None
+                LOADED_MODELS["align_model_metadata"] = None
+                LOADED_MODELS["align_model_lang"] = language
 
         return LOADED_MODELS["transcription_model"], LOADED_MODELS["align_model"], LOADED_MODELS["align_model_metadata"]
 
@@ -615,7 +672,7 @@ class PromptCrafter_SRTCreator:
 
         return ({"data": screenplay_data}, {"characters": characters, "timeline": timeline}, "\n".join(report), False)
 
-    def execute(self, audio, whisper_model, language, vad_method, enable_ai_correction, correction_model, 
+    async def execute(self, audio, whisper_model, language, vad_method, enable_ai_correction, correction_model, 
             enable_translation, debug_mode, segment_duration_seconds, enable_ai_text_refinement, strict_speaker_detection,
             ground_truth_script="", llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS):
         def _empty_outputs(msg):
@@ -657,20 +714,24 @@ class PromptCrafter_SRTCreator:
         total_audio_duration = len(audio_16k) / 16000
         if debug_mode: print(f"[SRTCreator] Audio prepared and resampled to 16kHz.")
 
+        loop = asyncio.get_running_loop()
+
         # --- 1. Load transcription model only (no alignment yet) ---
         if debug_mode: print(f"[SRTCreator] Loading transcription model ({whisper_model})...")
-        transcription_model = self._load_transcription_model(whisper_model, vad_method, debug_mode)
+        transcription_model = await loop.run_in_executor(
+            None, self._load_transcription_model, whisper_model, vad_method, debug_mode, language
+        )
+        await asyncio.sleep(0)  # yield to event loop
 
         # --- 2. FAST Transcription (no batching for speed) ---
         if debug_mode: print("[SRTCreator] Performing transcription...")
         try:
             _fix_speechbrain_dataloader_recursion(debug_mode)
             transcribe_language = None if language == "auto-detect" else language
-            transcription_result = transcription_model.transcribe(
-                audio_16k,
-                batch_size=16,
-                language=transcribe_language,
-                task="transcribe"
+            transcription_result = await loop.run_in_executor(
+                None, lambda: transcription_model.transcribe(
+                    audio_16k, batch_size=16, language=transcribe_language, task="transcribe"
+                )
             )
         except Exception as e:
             if debug_mode:
@@ -678,6 +739,8 @@ class PromptCrafter_SRTCreator:
                 print("[SRTCreator] Transcription exception traceback:")
                 print(traceback.format_exc())
             return _empty_outputs(f"Transcription error: {e}")
+
+        await asyncio.sleep(0)  # yield to event loop
 
         if not transcription_result or not transcription_result.get("segments"):
             return _empty_outputs("No speech detected")
@@ -688,18 +751,23 @@ class PromptCrafter_SRTCreator:
             detected_lang = "en"
         if debug_mode:
             print(f"[SRTCreator] Loading alignment model for language: {detected_lang}")
-        _, align_model, align_meta = self._load_models(whisper_model, detected_lang, vad_method, debug_mode)
+        _, align_model, align_meta = await loop.run_in_executor(
+            None, self._load_models, whisper_model, detected_lang, vad_method, debug_mode
+        )
+        await asyncio.sleep(0)  # yield to event loop
 
         # --- 4. FAST Alignment ---
         if debug_mode: print("[SRTCreator] Aligning...")
         try:
-            final_alignment = whisperx.align(
-                transcription_result["segments"], 
-                align_model, 
-                align_meta, 
-                audio_16k, 
-                device="cuda" if torch.cuda.is_available() else "cpu", 
-                return_char_alignments=False
+            final_alignment = await loop.run_in_executor(
+                None, lambda: whisperx.align(
+                    transcription_result["segments"], 
+                    align_model, 
+                    align_meta, 
+                    audio_16k, 
+                    device="cuda" if torch.cuda.is_available() else "cpu", 
+                    return_char_alignments=False
+                )
             )
         except Exception as e:
             return _empty_outputs(f"Alignment error: {e}")
@@ -748,7 +816,7 @@ class PromptCrafter_SRTCreator:
         # Simple structured script (basic section detection)
         structured_script = self._simple_structure_detection(plain_text_output)
         
-        timed_segments_json_string = json.dumps(srt_segments_list, indent=2)
+        timed_segments_json_string = json.dumps(srt_segments_list)
 
         # --- 4. OPTIONAL Translation (only if needed) ---
         translated_srt_output = ""
@@ -756,25 +824,30 @@ class PromptCrafter_SRTCreator:
         if enable_translation:
             if debug_mode: print("[SRTCreator] Translating...")
             try:
-                translation_result = transcription_model.transcribe(
-                    audio_16k,
-                    batch_size=16,
-                    task="translate",
-                    language=language
+                translation_result = await loop.run_in_executor(
+                    None, lambda: transcription_model.transcribe(
+                        audio_16k, batch_size=16, task="translate", language=language
+                    )
                 )
                 
                 if translation_result and translation_result.get("segments"):
                     translated_plain_text_output = " ".join([seg['text'].strip() for seg in translation_result["segments"]])
                     
                     # Quick alignment for translation
-                    en_align_model, en_align_meta = whisperx.load_align_model(language_code='en', device="cuda" if torch.cuda.is_available() else "cpu")
-                    translated_alignment = whisperx.align(
-                        translation_result["segments"],
-                        en_align_model,
-                        en_align_meta,
-                        audio_16k,
-                        device="cuda" if torch.cuda.is_available() else "cpu",
-                        return_char_alignments=False
+                    en_align_model, en_align_meta = await loop.run_in_executor(
+                        None, lambda: whisperx.load_align_model(
+                            language_code='en', device="cuda" if torch.cuda.is_available() else "cpu"
+                        )
+                    )
+                    translated_alignment = await loop.run_in_executor(
+                        None, lambda: whisperx.align(
+                            translation_result["segments"],
+                            en_align_model,
+                            en_align_meta,
+                            audio_16k,
+                            device="cuda" if torch.cuda.is_available() else "cpu",
+                            return_char_alignments=False
+                        )
                     )
                     
                     translated_word_segments = translated_alignment.get("word_segments", [])
@@ -845,5 +918,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_SRTCreator": "📝 SRT Creator",
+    "PromptCrafter_SRTCreator": "???? Legacy ?? SRT Creator",
 }

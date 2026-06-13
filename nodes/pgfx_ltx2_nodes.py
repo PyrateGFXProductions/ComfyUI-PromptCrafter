@@ -944,9 +944,9 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_Studio_LTX2Queue": "🎬 LTX-2 Queue Manager",
-    "PGFX_Studio_Stitcher": "🎞️ LTX-2 Video Stitcher",
-    "PGFX_LTXVLatentUpsampler": "🎥 PGFX LTXV Latent Upsampler",
-    "PGFX_LTXVCorrectiveMask": "🛡️ PGFX LTXV Corrective Mask",
-    "PGFX_LatentProbe": "🔍 PGFX Latent Probe"
+    "PGFX_Studio_LTX2Queue": "???? Legacy ?? LTX-2 Queue Manager",
+    "PGFX_Studio_Stitcher": "???? Legacy ??? LTX-2 Video Stitcher",
+    "PGFX_LTXVLatentUpsampler": "???? Legacy ?? PGFX LTXV Latent Upsampler",
+    "PGFX_LTXVCorrectiveMask": "???? Legacy ??? PGFX LTXV Corrective Mask",
+    "PGFX_LatentProbe": "???? Legacy ?? PGFX Latent Probe"
 }

@@ -23,6 +23,10 @@ const DYNAMIC_CREATOR_NODE_CONFIG = {
         numStandardOutputs: 20,
         trailingFixedOutputs: [{ name: "schedule_json", type: "STRING" }],
     },
+    PromptCrafter_V3Creator: {
+        numStandardOutputs: 8,
+        manageOutputs: false,
+    },
 };
 
 const DYNAMIC_CREATOR_NODE_CLASSES = Object.keys(DYNAMIC_CREATOR_NODE_CONFIG);
@@ -191,18 +195,6 @@ app.registerExtension({
 
                 const inputPrefix = "image_";
                 const weightPrefix = "image_weight_";
-                const outputPrefix = "reference_image_";
-                const dynamicOutputRegex = /^reference_image_\d+$/;
-
-                // Preserve fixed trailing outputs like schedule_json before
-                // adjusting the dynamic reference image outputs.
-                const preservedTrailingOutputs = trailingFixedOutputs.map((def) => {
-                    const outputIndex = this.outputs.findIndex(output => output.name === def.name);
-                    if (outputIndex !== -1) {
-                        return this.outputs.splice(outputIndex, 1)[0];
-                    }
-                    return { name: def.name, type: def.type, links: null };
-                });
 
                 // Count existing image inputs (excluding other inputs)
                 const currentInputs = this.inputs?.filter(input => /^image_\d+$/.test(input.name)) || [];
@@ -248,40 +240,54 @@ app.registerExtension({
                 
                 updateWeightsJSON(this);
 
-                // Handle dynamic outputs (reference images)
-                const validDynamicOutputs = this.outputs.filter(
-                    output => dynamicOutputRegex.test(output.name)
-                ).length;
+                if (creatorConfig.manageOutputs !== false) {
+                    const outputPrefix = "reference_image_";
+                    const dynamicOutputRegex = /^reference_image_\d+$/;
 
+                    // Preserve fixed trailing outputs like schedule_json before
+                    // adjusting the dynamic reference image outputs.
+                    const preservedTrailingOutputs = trailingFixedOutputs.map((def) => {
+                        const outputIndex = this.outputs.findIndex(output => output.name === def.name);
+                        if (outputIndex !== -1) {
+                            return this.outputs.splice(outputIndex, 1)[0];
+                        }
+                        return { name: def.name, type: def.type, links: null };
+                    });
 
-                if (targetCount < validDynamicOutputs) {
-                    // Remove excess dynamic outputs from the end
-                    for (let i = validDynamicOutputs; i > targetCount; i--) {
-                         const slotToRemove = this.outputs.findIndex(output => output.name === `${outputPrefix}${i}`);
-                         if (slotToRemove !== -1) {
-                             this.removeOutput(slotToRemove);
-                         }
-                    }
-                } else if (targetCount > validDynamicOutputs) {
-                    // Add missing dynamic outputs
-                    for (let i = validDynamicOutputs; i < targetCount; i++) {
-                        const name = `${outputPrefix}${i + 1}`;
-                        // Avoid duplicates
-                        if (!this.outputs.find(output => output.name === name)) {
-                            this.addOutput(name, "IMAGE");
+                    // Handle dynamic outputs (reference images)
+                    const validDynamicOutputs = this.outputs.filter(
+                        output => dynamicOutputRegex.test(output.name)
+                    ).length;
+
+                    if (targetCount < validDynamicOutputs) {
+                        // Remove excess dynamic outputs from the end
+                        for (let i = validDynamicOutputs; i > targetCount; i--) {
+                             const slotToRemove = this.outputs.findIndex(output => output.name === `${outputPrefix}${i}`);
+                             if (slotToRemove !== -1) {
+                                 this.removeOutput(slotToRemove);
+                             }
+                        }
+                    } else if (targetCount > validDynamicOutputs) {
+                        // Add missing dynamic outputs
+                        for (let i = validDynamicOutputs; i < targetCount; i++) {
+                            const name = `${outputPrefix}${i + 1}`;
+                            // Avoid duplicates
+                            if (!this.outputs.find(output => output.name === name)) {
+                                this.addOutput(name, "IMAGE");
+                            }
                         }
                     }
-                }
 
-                // Re-append any preserved fixed trailing outputs in a stable order.
-                for (const def of trailingFixedOutputs) {
-                    const existingIndex = this.outputs.findIndex(output => output.name === def.name);
-                    if (existingIndex !== -1) {
-                        this.outputs.splice(existingIndex, 1);
+                    // Re-append any preserved fixed trailing outputs in a stable order.
+                    for (const def of trailingFixedOutputs) {
+                        const existingIndex = this.outputs.findIndex(output => output.name === def.name);
+                        if (existingIndex !== -1) {
+                            this.outputs.splice(existingIndex, 1);
+                        }
                     }
-                }
-                for (const output of preservedTrailingOutputs) {
-                    this.outputs.push(output);
+                    for (const output of preservedTrailingOutputs) {
+                        this.outputs.push(output);
+                    }
                 }
 
                 this.computeSize();

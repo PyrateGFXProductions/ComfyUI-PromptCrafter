@@ -1395,8 +1395,8 @@ NODE_CLASS_MAPPINGS = {
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_Studio_VRGDGSemanticBridge_V1": "VRGDG Semantic Bridge V1",
-    "PGFX_Studio_VRGDGStoryGroupBridge_V1": "VRGDG StoryGroup Bridge V1",
-    "PGFX_Studio_VRGDGSchedulePromptMap_V1": "VRGDG Schedule -> Prompt Map V1",
-    "PGFX_Studio_VRGDGPromptPackageValidator_V1": "VRGDG Prompt Package Validator V1",
+    "PGFX_Studio_VRGDGSemanticBridge_V1": "???? Legacy \uD83D\uDD17 VRGDG Semantic Bridge V1",
+    "PGFX_Studio_VRGDGStoryGroupBridge_V1": "???? Legacy \uD83D\uDD17 VRGDG StoryGroup Bridge V1",
+    "PGFX_Studio_VRGDGSchedulePromptMap_V1": "???? Legacy \uD83D\uDD17 VRGDG Schedule -> Prompt Map V1",
+    "PGFX_Studio_VRGDGPromptPackageValidator_V1": "???? Legacy \uD83D\uDD17 VRGDG Prompt Package Validator V1",
 }

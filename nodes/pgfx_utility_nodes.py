@@ -39,6 +39,12 @@ from ..core.profiles import pgfx_captioner_profiles as captioner_profiles
 from . import pgfx_creator_nodes as creator_nodes
 from ..core import pgfx_thinking_engine as thinking_process
 
+try:
+    from comfy_api.latest import io as v3_io
+    V3_AVAILABLE = True
+except ImportError:
+    V3_AVAILABLE = False
+
 # Suppress the specific UserWarning from speechbrain that is triggered by whisperx
 # warnings.filterwarnings("ignore", category=UserWarning, module='speechbrain.inference')
 
@@ -4363,6 +4369,320 @@ class PGFX_MultiImagePreview:
     # Actually, ComfyUI handles the 'ui' key in the return dictionary automatically if FUNCTION returns a dict or if we append it.
     # The most robust way is to just return the tuple and let the system handle the OUTPUT_NODE aspect.
 
+if V3_AVAILABLE:
+    class PromptCrafter_CacheUtilityV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PromptCrafter_CacheUtilityV3",
+                display_name="🧹 Cache Utility (V3)",
+                category="☠️PGFX /Utils",
+                description="Clears or checks the size of the PromptCrafter cache.",
+                inputs=[
+                    v3_io.Combo.Input("action", options=["Clear Cache", "Check Size"], default="Clear Cache"),
+                ],
+                outputs=[
+                    v3_io.String.Output(display_name="status"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, action):
+            node = PromptCrafter_CacheUtility()
+            result = node.execute(action)
+            return v3_io.NodeOutput(*result)
+
+    class PromptCrafter_FileOrganizerV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PromptCrafter_FileOrganizerV3",
+                display_name="🗂️ File Organizer (V3)",
+                category="☠️PGFX /Utils",
+                is_output_node=True,
+                description="Organizes files into folders using AI-powered rule-based classification.",
+                inputs=[
+                    v3_io.Combo.Input("model", options=api_clients.get_all_models()),
+                    v3_io.String.Input("input_folder", default="output/unorganized"),
+                    v3_io.String.Input("output_folder", default="output/organized"),
+                    v3_io.Combo.Input("organization_profile", options=organization_profiles.get_organization_profile_options(), default="None (Manual Scheme)"),
+                    v3_io.String.Input("organization_scheme", multiline=True, default="# Define rules, one per line. The first match will be used.\n# Format: CRITERION: VALUE -> FOLDER_NAME\n# Criteria: image_resolution, image_description_contains, captionfile_contains, filename_contains, metadata_contains, content_keyword\n\nimage_resolution: >1920x1080 -> High_Resolution/4K_ish\nimage_resolution: ==512x512 -> Square_Images/512x512\nimage_description_contains: cat -> By_Embedded_Caption/Cats\ncaptionfile_contains: dog -> By_Text_File/Dogs\nfilename_contains: car -> By_Filename/Cars\nmetadata_contains: AnimateDiff -> By_Workflow/Animations\ncontent_keyword: landscape -> By_VLM_Content/Landscapes"),
+                    v3_io.Combo.Input("action", options=["Copy", "Move"], default="Copy"),
+                    v3_io.Boolean.Input("dry_run", default=False),
+                    v3_io.Combo.Input("analysis_priority", options=["Metadata First", "Content First", "Metadata Only"], default="Metadata First"),
+                    v3_io.String.Input("fallback_folder", default="_unorganized"),
+                    v3_io.Boolean.Input("auto_generate_scheme", default=False),
+                    v3_io.Boolean.Input("run_organization", default=False, optional=True),
+                    v3_io.Int.Input("max_workers", default=4, min=1, max=16, optional=True),
+                    v3_io.Boolean.Input("recursive", default=False, optional=True),
+                    v3_io.Boolean.Input("create_log_file", default=False, optional=True),
+                    v3_io.String.Input("log_filename", default="organization_log.txt", optional=True),
+                    v3_io.Boolean.Input("delete_source_folder_on_move", default=False, optional=True),
+                    v3_io.Combo.Input("llm_device", options=config.LLM_DEVICE_OPTIONS, default=config.DEFAULT_LLM_DEVICE, optional=True),
+                    v3_io.Boolean.Input("reset_context", default=config.DEFAULT_LLM_STATELESS, optional=True),
+                ],
+                outputs=[
+                    v3_io.String.Output(display_name="summary"),
+                    v3_io.String.Output(display_name="dry_run_plan"),
+                    v3_io.String.Output(display_name="generated_scheme_out"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, model, input_folder, output_folder, organization_profile, organization_scheme, action, dry_run, analysis_priority, fallback_folder, auto_generate_scheme=False, run_organization=False, max_workers=4, recursive=False, create_log_file=False, log_filename="organization_log.txt", delete_source_folder_on_move=False, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, **kwargs):
+            node = PromptCrafter_FileOrganizer()
+            result = node.execute(model, input_folder, output_folder, organization_profile, organization_scheme, action, dry_run, analysis_priority, fallback_folder, auto_generate_scheme, run_organization, max_workers, recursive, create_log_file, log_filename, delete_source_folder_on_move, llm_device=llm_device, reset_context=reset_context, **kwargs)
+            return v3_io.NodeOutput(*result)
+
+    class PromptCrafter_PromptChunkerV3(v3_io.ComfyNode):
+        MAX_OUTPUTS = 50
+
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PromptCrafter_PromptChunkerV3",
+                display_name="🧩 Prompt Splitter (Pipe) (V3)",
+                category="☠️PGFX /Text",
+                description="Splits a delimited string into multiple outputs for distribution in a workflow.",
+                inputs=[
+                    v3_io.String.Input("pipe_separated_prompts", multiline=True, default=""),
+                    v3_io.Int.Input("scene_count", default=16, min=1, max=cls.MAX_OUTPUTS),
+                    v3_io.String.Input("delimiter", default="|"),
+                ],
+                outputs=[v3_io.String.Output(display_name=f"prompt_scene_{i+1}") for i in range(cls.MAX_OUTPUTS)],
+            )
+
+        @classmethod
+        def execute(cls, pipe_separated_prompts, scene_count, delimiter="|"):
+            node = PromptCrafter_PromptChunker()
+            result = node.execute(pipe_separated_prompts, scene_count, delimiter)
+            return v3_io.NodeOutput(*result)
+
+    class PGFX_MultiImagePreviewV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PGFX_MultiImagePreviewV3",
+                display_name="🖼️ Multi-Image Preview (V3)",
+                category="☠️PGFX /Utils",
+                is_output_node=True,
+                accept_all_inputs=True,
+                description="A professional multi-image comparison and preview node with dynamic inputs and passthrough outputs.",
+                inputs=[
+                    v3_io.Int.Input("image_count", default=4, min=1, max=16),
+                    v3_io.String.Input("image_weights_json", multiline=True, default="{}", optional=True),
+                ],
+                outputs=[v3_io.Image.Output(display_name=f"reference_image_{i}") for i in range(1, 17)],
+            )
+
+        @classmethod
+        def execute(cls, image_count, image_weights_json="{}", **kwargs):
+            node = PGFX_MultiImagePreview()
+            return node.preview_images(image_count, image_weights_json=image_weights_json, **kwargs)
+
+    class PromptCrafter_FormatterV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PromptCrafter_FormatterV3",
+                display_name="📝 Text Formatter (V3)",
+                category="☠️PGFX /Text",
+                description="Formats prompts or schedules. Can apply templates or add prefixes/suffixes to individual prompts or all keyframes in a schedule.",
+                inputs=[
+                    v3_io.Combo.Input("mode", options=["Build from Template", "Edit Single Prompt", "Bulk Edit Schedule"], default="Build from Template"),
+                    v3_io.String.Input("prompt_in", multiline=True, default="", optional=True),
+                    v3_io.String.Input("schedule_in", multiline=True, default="", optional=True),
+                    v3_io.String.Input("template_text", multiline=True, default="A high-quality photo of {a}, in the style of {b}.", optional=True),
+                    v3_io.String.Input("var_a", multiline=False, default="", optional=True),
+                    v3_io.String.Input("var_b", multiline=False, default="", optional=True),
+                    v3_io.String.Input("var_c", multiline=False, default="", optional=True),
+                    v3_io.String.Input("var_d", multiline=False, default="", optional=True),
+                    v3_io.String.Input("prefix", multiline=False, default="", optional=True),
+                    v3_io.String.Input("suffix", multiline=False, default="", optional=True),
+                    v3_io.String.Input("find_text", multiline=False, default="", optional=True),
+                    v3_io.String.Input("replace_with", multiline=False, default="", optional=True),
+                    v3_io.Combo.Input("output_target", options=text_io.OUTPUT_TARGET_OPTIONS, default="Prompt", optional=True),
+                    v3_io.Combo.Input("output_format", options=text_io.FORMAT_OPTIONS, default="Plain Text", optional=True),
+                ],
+                outputs=[
+                    v3_io.String.Output(display_name="formatted_prompt"),
+                    v3_io.String.Output(display_name="formatted_schedule"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, mode, prompt_in="", schedule_in="", template_text="", var_a="", var_b="", var_c="", var_d="", prefix="", suffix="", find_text="", replace_with="", output_target="Prompt", output_format="Plain Text"):
+            node = PromptCrafter_Formatter()
+            result = node.execute(mode, prompt_in, schedule_in, template_text, var_a, var_b, var_c, var_d, prefix, suffix, find_text, replace_with, output_target, output_format)
+            return v3_io.NodeOutput(*result)
+
+    class PromptCrafter_SaveTextFileV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PromptCrafter_SaveTextFileV3",
+                display_name="💾 Save Text File (V3)",
+                category="☠️PGFX /Utils",
+                is_output_node=True,
+                description="Saves text content to a file with dynamic filename templating.",
+                inputs=[
+                    v3_io.String.Input("text_to_save", multiline=True),
+                    v3_io.String.Input("folder_path", default="ComfyUI/output/PromptCrafter"),
+                    v3_io.String.Input("filename_template", default="{seed}_{model_name}.txt"),
+                    v3_io.String.Input("model_name", multiline=False, default="", optional=True),
+                    v3_io.String.Input("seed", multiline=False, default="", optional=True),
+                    v3_io.String.Input("user_text", multiline=False, default="", optional=True),
+                    v3_io.String.Input("custom_var", multiline=False, default="", optional=True),
+                    v3_io.Combo.Input("file_type", options=text_io.FILE_TYPE_OPTIONS, default="txt", optional=True),
+                ],
+                outputs=[
+                    v3_io.String.Output(display_name="save_status"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, text_to_save, folder_path, filename_template, model_name="", seed="", user_text="", custom_var="", file_type="txt"):
+            node = PromptCrafter_SaveTextFile()
+            result = node.execute(text_to_save, folder_path, filename_template, model_name, seed, user_text, custom_var, file_type)
+            return v3_io.NodeOutput(*result)
+
+    class PromptCrafter_QnA_SimpleV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PromptCrafter_QnA_SimpleV3",
+                display_name="💬 Simple Q&A (V3)",
+                category="☠️PGFX /Text",
+                description="Minimal Q&A node. Prompt + model → response.",
+                inputs=[
+                    v3_io.String.Input("prompt", multiline=True, default=config.DEFAULT_PROMPT_TEXT),
+                    v3_io.Combo.Input("model", options=api_clients.get_all_models()),
+                    v3_io.Image.Input("image", optional=True),
+                    v3_io.Int.Input("timeout", default=120, min=30, max=900, step=10, optional=True),
+                    v3_io.Combo.Input("llm_device", options=config.LLM_DEVICE_OPTIONS, default=config.DEFAULT_LLM_DEVICE, optional=True),
+                    v3_io.Boolean.Input("reset_context", default=config.DEFAULT_LLM_STATELESS, optional=True),
+                ],
+                outputs=[v3_io.String.Output(display_name="response")],
+            )
+
+        @classmethod
+        def execute(cls, prompt, model, image=None, timeout=120, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, **kwargs):
+            if image is not None:
+                kwargs["image"] = image
+            kwargs["llm_device"] = llm_device
+            kwargs["reset_context"] = reset_context
+            node = PromptCrafter_QnA_Simple()
+            result = node.execute(prompt, model, image=image, timeout=timeout, **kwargs)
+            return v3_io.NodeOutput(*result)
+
+    class PromptCrafter_CaptionerV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PromptCrafter_CaptionerV3",
+                display_name="🖼️ Image Captioner (V3)",
+                category="☠️PGFX /Text",
+                description="Captions images using vision language models with batch processing support.",
+                inputs=[
+                    v3_io.Combo.Input("vision_model", options=api_clients.get_all_models()),
+                    v3_io.Image.Input("image", optional=True),
+                    v3_io.String.Input("filename", default="", optional=True),
+                    v3_io.Boolean.Input("batch_mode", default=False, optional=True),
+                    v3_io.String.Input("input_folder", default="input/captions_todo", optional=True),
+                    v3_io.Boolean.Input("skip_existing", default=True, optional=True),
+                    v3_io.Combo.Input("captioner_profile", options=captioner_profiles.get_captioner_profile_options(), default="Default (Training Style)", optional=True),
+                    v3_io.Int.Input("max_workers", default=4, min=1, max=16, optional=True),
+                    v3_io.String.Input("caption_prompt", multiline=True, default=config.DEFAULT_CAPTION_PROMPT, optional=True),
+                    v3_io.String.Input("caption_prefix", default="", optional=True),
+                    v3_io.String.Input("trigger_words_folder_path", default="input", optional=True),
+                    v3_io.String.Input("trigger_words_file", default="<none>", optional=True),
+                    v3_io.Boolean.Input("save_caption", default=True, optional=True),
+                    v3_io.Boolean.Input("save_in_input_folder", default=True, optional=True),
+                    v3_io.Boolean.Input("add_caption_to_metadata", default=True, optional=True),
+                    v3_io.Boolean.Input("rename_file_with_caption", default=False, optional=True),
+                    v3_io.String.Input("output_path", default="captions", optional=True),
+                    v3_io.Float.Input("temperature", default=0.2, min=0.0, max=1.0, step=0.01, optional=True),
+                    v3_io.Int.Input("seed", default=-1, min=-1, max=0xffffffffffffffff, optional=True),
+                    v3_io.Int.Input("timeout", default=120, min=30, max=600, step=10, optional=True),
+                    v3_io.Boolean.Input("safe_mode", default=True, optional=True),
+                    v3_io.Boolean.Input("debug_mode", default=False, optional=True),
+                    v3_io.Combo.Input("llm_device", options=config.LLM_DEVICE_OPTIONS, default=config.DEFAULT_LLM_DEVICE, optional=True),
+                    v3_io.Boolean.Input("reset_context", default=config.DEFAULT_LLM_STATELESS, optional=True),
+                ],
+                outputs=[v3_io.String.Output(display_name="caption")],
+            )
+
+        @classmethod
+        def execute(cls, vision_model, image=None, filename="", batch_mode=False, input_folder="input/captions_todo", skip_existing=True, captioner_profile="Default (Training Style)", max_workers=4, caption_prompt=config.DEFAULT_CAPTION_PROMPT, caption_prefix="", trigger_words_folder_path="input", trigger_words_file="<none>", save_caption=True, save_in_input_folder=True, add_caption_to_metadata=True, rename_file_with_caption=False, output_path="captions", temperature=0.2, seed=-1, timeout=120, safe_mode=True, debug_mode=False, llm_device=config.DEFAULT_LLM_DEVICE, reset_context=config.DEFAULT_LLM_STATELESS, **kwargs):
+            node = PromptCrafter_Captioner()
+            result = node.execute(vision_model, image=image, filename=filename, batch_mode=batch_mode, input_folder=input_folder, skip_existing=skip_existing, captioner_profile=captioner_profile, max_workers=max_workers, caption_prompt=caption_prompt, caption_prefix=caption_prefix, trigger_words_folder_path=trigger_words_folder_path, trigger_words_file=trigger_words_file, save_caption=save_caption, save_in_input_folder=save_in_input_folder, add_caption_to_metadata=add_caption_to_metadata, rename_file_with_caption=rename_file_with_caption, output_path=output_path, temperature=temperature, debug_mode=debug_mode, safe_mode=safe_mode, seed=seed, timeout=timeout, llm_device=llm_device, reset_context=reset_context, **kwargs)
+            return v3_io.NodeOutput(*result)
+
+    class PGFX_UniversalSwitchBoxV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PGFX_UniversalSwitchBoxV3",
+                display_name="🔀 PGFX Universal Switch Box (V3)",
+                category="☠️PGFX /Utils",
+                accept_all_inputs=True,
+                description="Intelligently routes multiple inputs based on an index or by auto-detecting which pipeline is active.",
+                outputs=[
+                    v3_io.AnyType.Output(display_name="selected_data"),
+                    v3_io.Int.Output(display_name="selected_index"),
+                ],
+                inputs=[
+                    v3_io.Int.Input("input_count", default=2, min=2, max=16),
+                    v3_io.Combo.Input("switching_mode", options=["Auto-Detect (Priority)", "Chronological (Index)", "Random Select"], default="Auto-Detect (Priority)"),
+                    v3_io.Int.Input("current_index", default=0, min=0, max=1000, optional=True),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, switching_mode, input_count, current_index=0, **kwargs):
+            result = PGFX_UniversalSwitchBox.route_input(switching_mode, input_count, current_index=current_index, **kwargs)
+            if isinstance(result, dict):
+                data = result["result"]
+                ui = result.get("ui")
+                return v3_io.NodeOutput(data[0], data[1], ui=ui)
+            return v3_io.NodeOutput(*result)
+
+    class PromptCrafter_OllamaRouterNodeV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            ollama_opts = _get_ollama_model_options()
+            return v3_io.Schema(
+                node_id="PromptCrafter_OllamaRouterNodeV3",
+                display_name="🦙 Ollama Router Node (V3)",
+                category="☠️PGFX /Text",
+                description="OpenRouter-style utility node that routes requests to local Ollama models.",
+                accept_all_inputs=True,
+                outputs=[
+                    v3_io.String.Output(display_name="Output"),
+                    v3_io.Image.Output(display_name="image"),
+                    v3_io.String.Output(display_name="Stats"),
+                    v3_io.String.Output(display_name="Credits"),
+                ],
+                inputs=[
+                    v3_io.String.Input("system_prompt", multiline=True, default="You are a helpful assistant."),
+                    v3_io.String.Input("user_message_box", multiline=True, default="Hello, how are you?"),
+                    v3_io.Combo.Input("model", options=ollama_opts),
+                    v3_io.Boolean.Input("web_search", default=False),
+                    v3_io.Boolean.Input("cheapest", default=True),
+                    v3_io.Boolean.Input("fastest", default=False),
+                    v3_io.Boolean.Input("image_generation", default=False),
+                    v3_io.Float.Input("temperature", default=1.0, min=0.0, max=2.0, step=0.1),
+                    v3_io.Combo.Input("pdf_engine", options=["auto", "mistral-ocr", "pdf-text"], default="auto"),
+                    v3_io.Boolean.Input("chat_mode", default=False),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, system_prompt, user_message_box, model, web_search=False, cheapest=True, fastest=False, image_generation=False, temperature=1.0, pdf_engine="auto", chat_mode=False, **kwargs):
+            node = PromptCrafter_OllamaRouterNode()
+            result = node.generate_response(system_prompt, user_message_box, model, web_search, cheapest, fastest, temperature, pdf_engine, chat_mode, image_generation=image_generation, pdf_data=None, user_message_input=None, **kwargs)
+            return v3_io.NodeOutput(*result)
+
 NODE_CLASS_MAPPINGS = {
     "PGFX_MultiImagePreview": PGFX_MultiImagePreview,
     "PromptCrafter_QnA": PromptCrafter_QnA,
@@ -4385,25 +4705,36 @@ NODE_CLASS_MAPPINGS = {
     "PGFX_UniversalSwitchBox": PGFX_UniversalSwitchBox,
     "PromptCrafter_PromptChunker": PromptCrafter_PromptChunker,
 }
+if V3_AVAILABLE:
+    NODE_CLASS_MAPPINGS["PromptCrafter_CacheUtilityV3"] = PromptCrafter_CacheUtilityV3
+    NODE_CLASS_MAPPINGS["PromptCrafter_FileOrganizerV3"] = PromptCrafter_FileOrganizerV3
+    NODE_CLASS_MAPPINGS["PromptCrafter_PromptChunkerV3"] = PromptCrafter_PromptChunkerV3
+    NODE_CLASS_MAPPINGS["PGFX_MultiImagePreviewV3"] = PGFX_MultiImagePreviewV3
+    NODE_CLASS_MAPPINGS["PromptCrafter_FormatterV3"] = PromptCrafter_FormatterV3
+    NODE_CLASS_MAPPINGS["PromptCrafter_SaveTextFileV3"] = PromptCrafter_SaveTextFileV3
+    NODE_CLASS_MAPPINGS["PromptCrafter_QnA_SimpleV3"] = PromptCrafter_QnA_SimpleV3
+    NODE_CLASS_MAPPINGS["PromptCrafter_CaptionerV3"] = PromptCrafter_CaptionerV3
+    NODE_CLASS_MAPPINGS["PGFX_UniversalSwitchBoxV3"] = PGFX_UniversalSwitchBoxV3
+    NODE_CLASS_MAPPINGS["PromptCrafter_OllamaRouterNodeV3"] = PromptCrafter_OllamaRouterNodeV3
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_MultiImagePreview": "🖼️ Multi-Image Preview",
     "PromptCrafter_QnA": "💬 Advanced Q&A",
     "PromptCrafter_QnA_Simple": "💬 Simple Q&A",
-    "PromptCrafter_LyricsThink": "🧠 Lyrics Corrector (Think)",
-    "PromptCrafter_LyricsInstruct": "✍️ Lyrics → JSON (Instruct)",
-    "PromptCrafter_VisualThink": "🧠 Visual Concept (Think)",
-    "PromptCrafter_VisualInstruct": "✍️ Concept → JSON (Instruct)",
-    "PromptCrafter_QnAThink": "🧠 Q&A Reasoning (Think)",
-    "PromptCrafter_QnAInstruct": "✍️ Q&A Format (Instruct)",
+    "PromptCrafter_LyricsThink": "⚰️ Legacy 🧠 Lyrics Corrector (Think)",
+    "PromptCrafter_LyricsInstruct": "⚰️ Legacy ✍️ Lyrics → JSON (Instruct)",
+    "PromptCrafter_VisualThink": "⚰️ Legacy 🧠 Visual Concept (Think)",
+    "PromptCrafter_VisualInstruct": "⚰️ Legacy ✍️ Concept → JSON (Instruct)",
+    "PromptCrafter_QnAThink": "⚰️ Legacy 🧠 Q&A Reasoning (Think)",
+    "PromptCrafter_QnAInstruct": "⚰️ Legacy ✍️ Q&A Format (Instruct)",
     "PromptCrafter_Captioner": "🖼️ Image Captioner",
-    "PromptCrafter_AudioSplitter": "🎤 Audio Splitter",
+    "PromptCrafter_AudioSplitter": "⚰️ Legacy 🎤 Audio Splitter",
     "PromptCrafter_CacheUtility": "🧹 Cache Utility",
-    "PromptCrafter_VideoFrameSelector": "🎞️ Frame Selector",
+    "PromptCrafter_VideoFrameSelector": "⚰️ Legacy 🎞️ Frame Selector",
     "PromptCrafter_FileOrganizer": "🗂️ File Organizer",
     "PromptCrafter_Formatter": "📝 Text Formatter",
     "PromptCrafter_SaveTextFile": "💾 Save Text File",
-    "PromptCrafter_LTX2LocalPipelineBuilder": "🎬 LTX-2 Manifest Builder",
+    "PromptCrafter_LTX2LocalPipelineBuilder": "⚰️ Legacy 🎬 LTX-2 Manifest Builder",
     "PromptCrafter_OllamaRouterNode": "🦙 Ollama Router Node",
     "PGFX_UniversalSwitchBox": "🔀 PGFX Universal Switch Box",
     "PromptCrafter_PromptChunker": "🧩 Prompt Splitter (Pipe)",

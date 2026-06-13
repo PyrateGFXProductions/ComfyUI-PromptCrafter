@@ -20,6 +20,12 @@ try:
 except Exception as e:
     print(f"[PGFX Logo Studio] Could not load font manager: {e}")
 
+try:
+    from comfy_api.latest import io as v3_io
+    V3_IO_AVAILABLE = True
+except ImportError:
+    V3_IO_AVAILABLE = False
+
 # ------------------------------------------------------------------------------------
 # Helper function to read node descriptions from HELP.md
 # ------------------------------------------------------------------------------------
@@ -232,6 +238,7 @@ DEFAULT_LIBRARY = {
         "graffiti": {"description": "urban street art style with spray paint overspray and marker textures", "usage_count": 0},
         "baroque": {"description": "dramatic 17th century ornate style with deep chiaroscuro shadow", "usage_count": 0},
     },
+    "design_presets": {},
 }
 
 CATEGORY_ALIASES = {
@@ -776,6 +783,34 @@ class DesignLibrary:
                 if added_key:
                     cls.increment_usage(category, added_key)
 
+    @classmethod
+    def save_preset(cls, name, config):
+        with cls._lock:
+            data = cls.load()
+            if "design_presets" not in data:
+                data["design_presets"] = {}
+            data["design_presets"][name] = config
+            cls.save()
+
+    @classmethod
+    def list_presets(cls):
+        data = cls.load()
+        presets = data.get("design_presets", {})
+        return [{"name": k, "saved_at": v.get("saved_at", "")} for k, v in presets.items()]
+
+    @classmethod
+    def load_preset(cls, name):
+        data = cls.load()
+        return data.get("design_presets", {}).get(name)
+
+    @classmethod
+    def delete_preset(cls, name):
+        with cls._lock:
+            data = cls.load()
+            if "design_presets" in data and name in data["design_presets"]:
+                del data["design_presets"][name]
+                cls.save()
+
 
 _LIB = DesignLibrary.load()
 SHARED_MATS = list(_LIB["materials"].keys())
@@ -787,6 +822,49 @@ SHARED_STYLES = list(_LIB["styles"].keys())
 SHARED_INTENTS = ["vector", "raster"]
 SHARED_BG_MODES = ["simple", "preset", "custom", "none"]
 SHARED_PROMPT_STYLES = ["conversational", "object_list"]
+
+# ---------------------------------------------------------------------------
+# Preset API routes
+# ---------------------------------------------------------------------------
+try:
+    from aiohttp import web
+    from server import PromptServer
+
+    @PromptServer.instance.routes.get("/pgfx/presets/list")
+    async def _list_presets(request):
+        presets = DesignLibrary.list_presets()
+        return web.json_response({"presets": presets})
+
+    @PromptServer.instance.routes.post("/pgfx/presets/save")
+    async def _save_preset(request):
+        data = await request.json()
+        name = (data.get("name", "") or "").strip()
+        config = data.get("config", {})
+        if not name:
+            return web.json_response({"error": "No preset name provided"}, status=400)
+        DesignLibrary.save_preset(name, config)
+        return web.json_response({"status": "ok"})
+
+    @PromptServer.instance.routes.post("/pgfx/presets/delete")
+    async def _delete_preset(request):
+        data = await request.json()
+        name = (data.get("name", "") or "").strip()
+        if not name:
+            return web.json_response({"error": "No preset name provided"}, status=400)
+        DesignLibrary.delete_preset(name)
+        return web.json_response({"status": "ok"})
+
+    @PromptServer.instance.routes.get("/pgfx/presets/load/{name}")
+    async def _load_preset(request):
+        name = request.match_info.get("name", "")
+        config = DesignLibrary.load_preset(name)
+        if config is None:
+            return web.json_response({"error": "Preset not found"}, status=404)
+        return web.json_response({"config": config})
+
+    print("\033[96m[PGFX Logo Studio] Preset API routes registered.\033[0m")
+except Exception as _e:
+    print(f"\033[93m[PGFX Logo Studio] Could not register preset routes: {_e}\033[0m")
 
 
 def _resolve_choice(category, raw_value, choices, default, allow_add, custom_notes, custom_note_key):
@@ -861,27 +939,27 @@ def _style_render_phrase(output_intent, style_mode):
     intent = output_intent if output_intent in SHARED_INTENTS else "raster"
     style_key = style_mode if style_mode in SHARED_STYLES else "creative"
     style_map = {
-        "flat_vector": "crisp flat vector logo styling with clean edges and minimal shading",
-        "creative": "cinematic logo art direction with dramatic polish",
-        "realistic": "high-fidelity realistic surface rendering",
-        "3d_render": "physically based 3D logo rendering with dimensional depth",
-        "tattoo_art": "bold tattoo-flash inspired illustrative rendering (isolated graphic design, NOT on human skin)",
-        "sticker_decal": "clean sticker or decal presentation with strong silhouette separation",
-        "watercolor": "soft diffuse watercolor painting style with paper grain texture and flowing pigment",
-        "oil_painting": "thick impasto oil painting with visible directional brushstrokes on canvas",
-        "pop_art": "bold pop art style with halftone dot gradients and vibrant comic-book colors",
-        "art_deco": "luxurious geometric 1920s art deco styling with metallic gold and chrome accents",
-        "minimal_modern": "clean sparse scandinavian modernism with generous negative space and restrained palette",
-        "woodcut": "bold carved woodblock print style with thick outlines and textured ink relief",
-        "pixel_art": "retro 8-bit pixel art rendering with blocky square pixel grid resolution",
-        "japanese_woodblock": "traditional ukiyo-e woodblock style with flat color fields and flowing sumi-e linework",
-        "graffiti": "urban street art style with spray paint overspray, drips, and marker textures",
-        "baroque": "dramatic 17th century baroque style with deep chiaroscuro and rich ornamental detail",
+        "flat_vector": "master-grade flat vector logo construction with razor-sharp edges, pristine silhouettes, and corporate-grade color blocking optimized for instant brand recognition at any scale",
+        "creative": "visionary cinematic logo art direction with dramatic studio lighting, premium material rendering, and professional advertising-grade polish worthy of a Fortune 500 brand campaign",
+        "realistic": "hyper-realistic physical logo mockup with photorealistic surface fidelity, true-to-life material physics, and commercial print-grade detail that reads as a tangible object in hand",
+        "3d_render": "production-quality 3D logo visualization with dimensional depth, global illumination bounce lighting, subsurface scattering on materials, and physically accurate ray-traced reflections",
+        "tattoo_art": "bold tattoo-flash inspired logo design with heavy dark linework, high-contrast hatching, and illustrative punch — a standalone graphic emblem, not applied to skin",
+        "sticker_decal": "clean die-cut sticker-style logo presentation with crisp silhouette separation, subtle drop shadow, and a tactile vinyl decal finish perfect for merchandise mockups",
+        "watercolor": "artistic watercolor logo treatment with flowing pigment blooms, cold-press paper grain texture, organic edge dispersion, and a hand-painted fine-art brand identity feel",
+        "oil_painting": "rich impasto oil painting logo style with visible directional brushwork, thick paint build-up on canvas, subtle crackle texture, and old-master material quality",
+        "pop_art": "bold pop-art logo treatment with Ben-Day dot halftone gradients, saturated primaries, thick comic-style outlines, and screen-printed poster aesthetic for maximum visual impact",
+        "art_deco": "luxurious art deco logo styling with stepped geometric forms, symmetrical ornamentation, burnished precious metal accents, and the opulent typographic flair of 1920s brandmarks",
+        "minimal_modern": "ultra-clean Scandinavian minimal logo design with generous negative space, restrained monochromatic palette, precise geometric balance, and single-weight line harmony",
+        "woodcut": "bold carved woodblock logo style with thick relief ink lines, textured roller marks, high-contrast chiaroscuro, and a heritage hand-pulled print aesthetic for timeless branding",
+        "pixel_art": "retro 8-bit pixel-art logo style with blocky square-pixel construction, indexed color palette limitations, and authentic arcade-era sprite sharpness at every edge",
+        "japanese_woodblock": "traditional ukiyo-e style logo design with flat color fields, flowing sumi-e brush linework, subtle woodgrain texture overlay, and the restrained elegance of Japanese kamon family crests",
+        "graffiti": "urban street-art logo style with aerosol overspray edges, marker stroke texture, paint drip effects, and raw hand-drawn energy for underground brand identity",
+        "baroque": "dramatic baroque logo aesthetic with tenebristic chiaroscuro lighting, ornate scrolling embellishment, rich jewel-tone color, and the grand compositional weight of 17th-century heraldry",
     }
     base = style_map.get(style_key, DesignLibrary.description("styles", style_key))
     if intent == "vector":
-        return f"{base}, optimized for logo readability and crisp separation"
-    return f"{base}, rendered as a polished raster image"
+        return f"{base}, vector-sharp with no anti-aliasing artifacts and flawless scaling"
+    return f"{base}, rasterized as a polished high-resolution print-ready image"
 
 
 def _geometry_instruction(geometry_adherence):
@@ -1951,14 +2029,270 @@ class PGFX_ImageVectorizer:
             return ("<svg></svg>", None)
 
 
+# ------------------------------------------------------------------------------------
+# V3 Logo Designer Studio — JS canvas frontend
+# ------------------------------------------------------------------------------------
+if V3_IO_AVAILABLE:
+
+    class PGFX_LogoDesignerStudioV3(v3_io.ComfyNode):
+        """V3 wrapper around PGFX_LogoDesignerStudio with JS canvas support."""
+
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PGFX_LogoDesignerStudioV3",
+                display_name="PGFX Logo Designer Studio (V3)",
+                category="☠️PGFX /Design",
+                is_output_node=True,
+                description="Interactive logo design canvas with vector editing, 3D viewport, and prompt generation.",
+                outputs=[
+                    v3_io.Image.Output(display_name="image"),
+                    v3_io.Mask.Output(display_name="mask"),
+                    v3_io.String.Output(display_name="flux_prompt"),
+                    v3_io.Float.Output(display_name="geometry_adherence"),
+                    v3_io.Float.Output(display_name="creative_flair"),
+                ],
+                inputs=[
+                    v3_io.String.Input("text_input", multiline=True, default=""),
+                    v3_io.Combo.Input("output_intent", options=SHARED_INTENTS, default="vector"),
+                    v3_io.Combo.Input("background_mode", options=SHARED_BG_MODES, default="simple"),
+                    v3_io.Combo.Input("background_preset", options=SHARED_ENVS, default="none"),
+                    v3_io.String.Input("background_custom_prompt", multiline=True, default=""),
+                    v3_io.String.Input("scene_interaction", multiline=True, default=""),
+                    v3_io.Combo.Input("material", options=SHARED_MATS, default="default"),
+                    v3_io.Combo.Input("decoration", options=SHARED_DECOR, default="none"),
+                    v3_io.Combo.Input("action", options=SHARED_ACTS, default="none"),
+                    v3_io.Combo.Input("environment_1", options=SHARED_ATMOS, default="none"),
+                    v3_io.Float.Input("environment_1_intensity", default=1.0, min=0.0, max=2.0, step=0.05),
+                    v3_io.Combo.Input("environment_2", options=SHARED_ATMOS, default="none"),
+                    v3_io.Float.Input("environment_2_intensity", default=1.0, min=0.0, max=2.0, step=0.05),
+                    v3_io.Combo.Input("environment_3", options=SHARED_ATMOS, default="none"),
+                    v3_io.Float.Input("environment_3_intensity", default=1.0, min=0.0, max=2.0, step=0.05),
+                    v3_io.Combo.Input("style_mode", options=SHARED_STYLES, default="creative"),
+                    v3_io.Float.Input("intensity", default=1.0, min=0.2, max=2.0),
+                    v3_io.String.Input("extra_instruction", multiline=True, default=""),
+                    v3_io.Int.Input("seed", default=0, min=0, max=0xffffffffffffffff),
+                    v3_io.Float.Input("geometry_adherence", default=1.0, min=0.0, max=1.0, step=0.05),
+                    v3_io.Float.Input("creative_flair", default=0.5, min=0.0, max=1.0, step=0.05),
+                    v3_io.Combo.Input("prompt_style", options=SHARED_PROMPT_STYLES, default="conversational"),
+                    v3_io.String.Input("base64_image_data", multiline=True, default="", optional=True),
+                    v3_io.String.Input("canvas_json_data", multiline=True, default="", optional=True),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, **kwargs):
+            node = PGFX_LogoDesignerStudio()
+            result = node.generate_data(**kwargs)
+            return v3_io.NodeOutput(*result)
+
+
+# ------------------------------------------------------------------------------------
+# V3 Image Vectorizer — raster to SVG
+# ------------------------------------------------------------------------------------
+if V3_IO_AVAILABLE:
+
+    class PGFX_ImageVectorizerV3(v3_io.ComfyNode):
+        """V3 wrapper around PGFX_ImageVectorizer."""
+
+        @classmethod
+        def define_schema(cls):
+            presets = [
+                "Custom (Use Manual Sliders)",
+                "1-Color Silhouette (Ultra Fast)",
+                "2-Color Minimalist",
+                "4-Color Vinyl / Tattoo Decal",
+                "Clean Vector Logo (8 Colors)",
+                "Smooth Curves & Fonts (8 Colors)",
+                "Graphic Art (16 Colors)",
+                "Raster Optimization (32 Colors - Web Safe)",
+                "High Fidelity Raster (64 Colors - Heavy)",
+            ]
+            return v3_io.Schema(
+                node_id="PGFX_ImageVectorizerV3",
+                display_name="📐 PGFX Image Vectorizer (V3)",
+                category="☠️PGFX /Design",
+                is_output_node=True,
+                description="Converts raster images to SVG vector graphics with preset configurations.",
+                outputs=[
+                    v3_io.String.Output(display_name="svg_string"),
+                    v3_io.Image.Output(display_name="image_preview"),
+                ],
+                inputs=[
+                    v3_io.Image.Input("image"),
+                    v3_io.Combo.Input("preset", options=presets, default="Custom (Use Manual Sliders)"),
+                    v3_io.Combo.Input("mode", options=["polygon", "spline"], default="polygon"),
+                    v3_io.Int.Input("posterize_levels", default=32, min=2, max=256),
+                    v3_io.Boolean.Input("dithering", default=False),
+                    v3_io.Combo.Input("layering_mode", options=["stacked", "cutout"], default="stacked"),
+                    v3_io.Int.Input("color_matching", default=8, min=1, max=8),
+                    v3_io.Int.Input("noise_suppression", default=4, min=0, max=128),
+                    v3_io.Int.Input("path_precision", default=3, min=1, max=16),
+                    v3_io.Int.Input("corner_threshold", default=60, min=1, max=100),
+                    v3_io.Int.Input("layer_difference", default=16, min=0, max=255),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, image, preset, mode, posterize_levels, dithering, layering_mode, color_matching, noise_suppression, path_precision, corner_threshold, layer_difference):
+            node = PGFX_ImageVectorizer()
+            result = node.vectorize(image, preset, mode, posterize_levels, dithering, layering_mode, color_matching, noise_suppression, path_precision, corner_threshold, layer_difference)
+            if isinstance(result, dict):
+                return v3_io.NodeOutput(result["result"][0], result["result"][1], ui=result.get("ui"))
+            return v3_io.NodeOutput(*result)
+
+
+# ------------------------------------------------------------------------------------
+# V3 Logo Designer Agent — LLM-powered Studio settings generator
+# ------------------------------------------------------------------------------------
+if V3_IO_AVAILABLE:
+
+    class PGFX_LogoDesignerAgentV3(v3_io.ComfyNode):
+        """V3 wrapper around PGFX_LogoDesignerAgent — converts user intent into Studio settings."""
+
+        @classmethod
+        def define_schema(cls):
+            all_models = api_clients.get_all_models()
+            thinking_default = (
+                config.FALLBACK_VISION_MODEL
+                if hasattr(config, "FALLBACK_VISION_MODEL") and config.FALLBACK_VISION_MODEL in all_models
+                else all_models[0]
+            )
+            instruct_default = (
+                config.FALLBACK_TEXT_MODEL
+                if hasattr(config, "FALLBACK_TEXT_MODEL") and config.FALLBACK_TEXT_MODEL in all_models
+                else all_models[0]
+            )
+
+            return v3_io.Schema(
+                node_id="PGFX_LogoDesignerAgentV3",
+                display_name="PGFX Logo Designer Agent (V3)",
+                category="☠️PGFX /Design",
+                description="LLM-powered agent that converts user intent into precise Logo Designer Studio settings.",
+                accept_all_inputs=True,
+                outputs=[
+                    v3_io.String.Output(display_name="text_input"),
+                    v3_io.String.Output(display_name="output_intent"),
+                    v3_io.String.Output(display_name="background_mode"),
+                    v3_io.String.Output(display_name="background_preset"),
+                    v3_io.String.Output(display_name="background_custom_prompt"),
+                    v3_io.String.Output(display_name="scene_interaction"),
+                    v3_io.String.Output(display_name="material"),
+                    v3_io.String.Output(display_name="decoration"),
+                    v3_io.String.Output(display_name="action"),
+                    v3_io.String.Output(display_name="environment_1"),
+                    v3_io.String.Output(display_name="environment_2"),
+                    v3_io.String.Output(display_name="environment_3"),
+                    v3_io.String.Output(display_name="style_mode"),
+                    v3_io.Float.Output(display_name="intensity"),
+                    v3_io.String.Output(display_name="extra_instruction"),
+                    v3_io.Int.Output(display_name="seed"),
+                    v3_io.Float.Output(display_name="geometry_adherence"),
+                    v3_io.Float.Output(display_name="creative_flair"),
+                    v3_io.Image.Output(display_name="reference_image_1"),
+                    v3_io.Image.Output(display_name="reference_image_2"),
+                    v3_io.Image.Output(display_name="reference_image_3"),
+                    v3_io.Image.Output(display_name="reference_image_4"),
+                    v3_io.Image.Output(display_name="reference_image_5"),
+                    v3_io.Image.Output(display_name="reference_image_6"),
+                    v3_io.Image.Output(display_name="reference_image_7"),
+                    v3_io.Image.Output(display_name="reference_image_8"),
+                ],
+                inputs=[
+                    v3_io.String.Input("user_prompt", multiline=True, placeholder="Describe your vision..."),
+                    v3_io.Combo.Input("thinking_model", options=all_models, default=thinking_default),
+                    v3_io.Combo.Input("instruct_model", options=all_models, default=instruct_default),
+                    v3_io.Int.Input("image_count", default=1, min=1, max=8),
+                    v3_io.Combo.Input("output_intent_override", options=["AI DETERMINED"] + SHARED_INTENTS, default="AI DETERMINED"),
+                    v3_io.Combo.Input("style_mode_override", options=["AI DETERMINED"] + SHARED_STYLES, default="AI DETERMINED"),
+                    v3_io.Float.Input("geometry_adherence", default=1.0, min=0.0, max=1.0, step=0.05, optional=True),
+                    v3_io.Float.Input("creative_flair", default=0.5, min=0.0, max=1.0, step=0.05, optional=True),
+                    v3_io.Int.Input("seed", default=0, min=-1, max=0xffffffffffffffff, optional=True),
+                    v3_io.Int.Input("timeout", default=120, min=30, max=600, optional=True),
+                    v3_io.Float.Input("temperature", default=0.7, min=0.0, max=2.0, step=0.1, optional=True),
+                    v3_io.Int.Input("max_length_words", default=0, min=0, max=1000, optional=True),
+                    v3_io.Boolean.Input("debug_mode", default=False, optional=True),
+                    v3_io.Combo.Input("llm_device", options=config.LLM_DEVICE_OPTIONS, default=config.DEFAULT_LLM_DEVICE, optional=True),
+                    v3_io.Boolean.Input("reset_context", default=True, optional=True),
+                    v3_io.String.Input("image_weights_json", multiline=True, default="{}", optional=True),
+                    v3_io.Int.Input("max_retries", default=3, min=0, max=10, optional=True),
+                    v3_io.Boolean.Input("safe_mode", default=True, optional=True),
+                    v3_io.Combo.Input("critique_strength", options=["None", "Low", "Medium", "High"], default="None", optional=True),
+                    v3_io.Boolean.Input("simplify_for_diffusion", default=True, optional=True),
+                ],
+            )
+
+        @classmethod
+        def execute(
+            cls,
+            user_prompt,
+            thinking_model,
+            instruct_model,
+            image_count,
+            output_intent_override,
+            style_mode_override,
+            geometry_adherence=1.0,
+            creative_flair=0.5,
+            seed=0,
+            timeout=120,
+            temperature=0.7,
+            max_length_words=0,
+            debug_mode=False,
+            llm_device="Default (GPU)",
+            reset_context=True,
+            image_weights_json="{}",
+            max_retries=3,
+            safe_mode=True,
+            critique_strength="None",
+            simplify_for_diffusion=True,
+            **kwargs,
+        ):
+            node = PGFX_LogoDesignerAgent()
+            result = node.think(
+                user_prompt,
+                thinking_model,
+                instruct_model,
+                image_count,
+                output_intent_override,
+                style_mode_override,
+                geometry_adherence=geometry_adherence,
+                creative_flair=creative_flair,
+                seed=seed,
+                timeout=timeout,
+                temperature=temperature,
+                max_length_words=max_length_words,
+                debug_mode=debug_mode,
+                llm_device=llm_device,
+                reset_context=reset_context,
+                image_weights_json=image_weights_json,
+                max_retries=max_retries,
+                safe_mode=safe_mode,
+                critique_strength=critique_strength,
+                simplify_for_diffusion=simplify_for_diffusion,
+                **kwargs,
+            )
+            return v3_io.NodeOutput(*result)
+
+
+# ------------------------------------------------------------------------------------
+# Node Mappings
+# ------------------------------------------------------------------------------------
 NODE_CLASS_MAPPINGS = {
     "PGFX_LogoDesignerStudio": PGFX_LogoDesignerStudio,
     "PGFX_LogoDesignerAgent": PGFX_LogoDesignerAgent,
     "PGFX_ImageVectorizer": PGFX_ImageVectorizer,
 }
+if V3_IO_AVAILABLE:
+    NODE_CLASS_MAPPINGS["PGFX_LogoDesignerStudioV3"] = PGFX_LogoDesignerStudioV3
+    NODE_CLASS_MAPPINGS["PGFX_ImageVectorizerV3"] = PGFX_ImageVectorizerV3
+    NODE_CLASS_MAPPINGS["PGFX_LogoDesignerAgentV3"] = PGFX_LogoDesignerAgentV3
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_LogoDesignerStudio": "PGFX Logo Designer Studio",
     "PGFX_LogoDesignerAgent": "PGFX Logo Designer Agent",
     "PGFX_ImageVectorizer": "📐 PGFX Image Vectorizer",
 }
+if V3_IO_AVAILABLE:
+    NODE_DISPLAY_NAME_MAPPINGS["PGFX_LogoDesignerStudioV3"] = "PGFX Logo Designer Studio (V3)"
+    NODE_DISPLAY_NAME_MAPPINGS["PGFX_ImageVectorizerV3"] = "📐 PGFX Image Vectorizer (V3)"
+    NODE_DISPLAY_NAME_MAPPINGS["PGFX_LogoDesignerAgentV3"] = "PGFX Logo Designer Agent (V3)"

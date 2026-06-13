@@ -41,6 +41,12 @@ from . import pgfx_audio_srt as pgfx_srt_creator
 from ..core.profiles import pgfx_captioner_profiles as captioner_profiles
 from ..core import pgfx_thinking_engine as thinking_process
 
+try:
+    from comfy_api.latest import io as v3_io
+    V3_IO_AVAILABLE = True
+except ImportError:
+    V3_IO_AVAILABLE = False
+
 def get_combined_models():
     """Helper to get a combined list of local-first models and configured providers."""
     gguf_files = api_clients.get_local_llm_gguf_files()
@@ -1017,6 +1023,373 @@ class PromptCrafter_LyricsCreatorEasy(PromptCrafter_LyricsCreator):
         return super().execute(instruction, subject, model, negative_prompt=negative_prompt, **kwargs)
 
 # ------------------------------------------------------------------------------------
+# V3 Unified Creator — consolidates all 3 variants into one multi-mode node
+# ------------------------------------------------------------------------------------
+if V3_IO_AVAILABLE:
+
+    class PromptCrafter_V3Creator(v3_io.ComfyNode):
+        """Unified V3 Creator: processes images, lyrics, audio — singly or combined.
+        Consolidates PromptCrafter_VisualCreator + PromptCrafter_LyricsCreator into one node,
+        with VRGDG-inspired multi-stage pipeline support."""
+
+        @classmethod
+        def define_schema(cls):
+            combined_models = get_combined_models()
+            whisper_models = PromptCrafter_LyricsCreator.get_whisper_models()
+
+            return v3_io.Schema(
+                node_id="PromptCrafter_V3Creator",
+                display_name="✨ Prompt Creator (V3)",
+                category="☠️PGFX /Creator",
+                description=(
+                    "Unified prompt creator — handles images, lyrics, audio, or any combination. "
+                    "Combines Image→Prompt, Lyrics→Prompt, and Audio→Prompt into one node. "
+                    "Supports VRGDG-inspired multi-stage pipeline, singing constraint, "
+                    "subject prepending, Whisper transcription, dual-model chain, schedule generation, "
+                    "output formatting, and auto-save."
+                ),
+                accept_all_inputs=True,
+                outputs=[
+                    v3_io.String.Output(display_name="prompt"),
+                    v3_io.String.Output(display_name="schedule"),
+                    v3_io.String.Output(display_name="negative_prompt"),
+                    v3_io.String.Output(display_name="image_context"),
+                    v3_io.String.Output(display_name="model_out"),
+                    v3_io.String.Output(display_name="seed_out"),
+                    v3_io.String.Output(display_name="clean_lyrics"),
+                    v3_io.String.Output(display_name="lyrics_srt"),
+                    v3_io.Image.Output(display_name="reference_image_1"),
+                    v3_io.Image.Output(display_name="reference_image_2"),
+                    v3_io.Image.Output(display_name="reference_image_3"),
+                    v3_io.Image.Output(display_name="reference_image_4"),
+                    v3_io.Image.Output(display_name="reference_image_5"),
+                ],
+                inputs=[
+                    # --- Mode & Core ---
+                    v3_io.Combo.Input("mode", options=[
+                        "Image to Prompt",
+                        "Lyrics to Prompt",
+                        "Audio to Prompt",
+                        "Image + Lyrics",
+                        "Image + Audio",
+                    ], default="Image to Prompt"),
+                    v3_io.String.Input("instruction", multiline=True, default=config.DEFAULT_PROMPT_TEXT),
+                    v3_io.String.Input("subject", multiline=True, default=""),
+                    v3_io.Combo.Input("model", options=combined_models),
+                    v3_io.Combo.Input("response_mode", options=["Predictable", "Creative"], default="Predictable"),
+
+                    # --- Image ---
+                    v3_io.Int.Input("image_count", default=1, min=1, max=5),
+
+                    # --- LLM Params ---
+                    v3_io.Float.Input("temperature", default=0.2, min=0.0, max=1.0, step=0.01),
+                    v3_io.Int.Input("seed", default=-1, min=-1, max=0xffffffffffffffff),
+                    v3_io.Int.Input("artistry_level", default=5, min=1, max=10),
+                    v3_io.Int.Input("creativity_level", default=5, min=1, max=10),
+                    v3_io.Int.Input("logicality_level", default=5, min=1, max=10),
+                    v3_io.Int.Input("max_length_words", default=0, min=0, max=10000, step=10),
+                    v3_io.Int.Input("deep_think_refinements", default=3, min=0, max=10),
+                    v3_io.Combo.Input("critique_strength", options=["Subtle", "Normal", "Heavy"], default="Normal"),
+                    v3_io.Boolean.Input("simplify_for_diffusion", default=True),
+                    v3_io.Int.Input("timeout", default=120, min=30, max=600, step=10),
+                    v3_io.Int.Input("max_retries", default=2, min=0, max=10),
+                    v3_io.Boolean.Input("safe_mode", default=True),
+                    v3_io.Boolean.Input("debug_mode", default=False),
+
+                    # --- Style ---
+                    v3_io.Combo.Input("style_override", options=style_profiles.get_style_override_options("Image"), default="None"),
+                    v3_io.String.Input("style_tags", default=""),
+
+                    # --- Target Format & Scheduling ---
+                    v3_io.Combo.Input("target_model_format", options=[
+                        "Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3",
+                        "Stable Cascade", "FLUX / Qwen / Hunyuan",
+                        "LTX-2 (Audio/Lip Sync/Retake)",
+                    ], default="Generic (SD1.5, SD2.1)"),
+                    v3_io.Boolean.Input("generate_schedule", default=False),
+                    v3_io.Int.Input("max_frames", default=240, min=1, max=99999, optional=True),
+                    v3_io.Boolean.Input("interpolate_keyframes", default=False, optional=True),
+                    v3_io.Int.Input("interpolation_frame_interval", default=10, min=0, max=16, optional=True),
+
+                    # --- Dual Model Chain ---
+                    v3_io.Combo.Input("thinking_model", options=combined_models, optional=True),
+                    v3_io.Combo.Input("instruct_model", options=combined_models, optional=True),
+
+                    # --- Audio / Lyrics ---
+                    v3_io.String.Input("audio_file", default="<none>"),
+                    v3_io.String.Input("lyrics_file", default="<none>"),
+                    v3_io.Combo.Input("whisper_model", options=whisper_models, default="large-v3"),
+                    v3_io.Combo.Input("whisper_language", options=[
+                        "auto-detect", "en", "es", "fr", "de", "it", "pt",
+                        "is", "ru", "ja", "ko", "zh",
+                    ], default="auto-detect"),
+                    v3_io.Combo.Input("whisper_engine", options=["faster-whisper", "insanely-fast-whisper"], default="faster-whisper"),
+                    v3_io.Boolean.Input("use_audio_alignment", default=True),
+                    v3_io.Float.Input("fps", default=16.0, min=1.0, max=120.0, step=0.5),
+                    v3_io.Combo.Input("scene_splitting_mode", options=[
+                        "Structural Tag", "Fixed Duration", "Frame Length",
+                    ], default="Structural Tag"),
+                    v3_io.Float.Input("max_scene_duration_seconds", default=5.0, min=0.0, max=60.0, step=0.1, optional=True),
+                    v3_io.Int.Input("max_scene_frames", default=120, min=0, max=4096, optional=True),
+
+                    # --- Lyrics-scene vars ---
+                    v3_io.String.Input("character_description", multiline=True, default="The main character."),
+                    v3_io.String.Input("song_theme_style", multiline=True, default="cinematic realism, emotional storytelling"),
+                    v3_io.Int.Input("word_count_min", default=30, min=10, max=200),
+                    v3_io.Int.Input("word_count_max", default=50, min=10, max=200),
+                    v3_io.Combo.Input("list_handling_mode", options=[
+                        "Strict Cycle", "Reference Guide", "Random Selection", "Free Interpretation",
+                    ], default="Reference Guide"),
+                    v3_io.String.Input("environment", multiline=True, default="open field at dusk, dimly lit bedroom, empty city street at night"),
+                    v3_io.String.Input("lighting", multiline=True, default="warm amber glow, cool window light, neon reflections"),
+                    v3_io.String.Input("camera_motion", multiline=True, default="push in, pull back, pan left, pan right"),
+                    v3_io.String.Input("physical_interaction", multiline=True, default="walking through tall grass, lying on bed staring upward"),
+                    v3_io.String.Input("facial_expression", multiline=True, default="Intense raw emotion"),
+                    v3_io.String.Input("shots", multiline=True, default="close up, medium shot, wide shot"),
+                    v3_io.String.Input("outfit_rules", multiline=True, default=""),
+                    v3_io.String.Input("character_visibility", multiline=True, default="mostly visible, half-shadowed, silhouetted"),
+                    v3_io.Boolean.Input("automate_vrg_variables", default=False),
+
+                    # --- VRGDG-inspired features ---
+                    v3_io.Combo.Input("pipeline_stages", options=[
+                        "Single Stage",
+                        "Dual Stage (Concept → Polish)",
+                        "Triple Stage (Correct → Concept → Polish)",
+                    ], default="Single Stage"),
+                    v3_io.Boolean.Input("singing_constraint", default=False,
+                        tooltip="If on, appends 'The character is singing with passion' to prompts (VRGDG-style)"),
+                    v3_io.Boolean.Input("subject_prepending", default=False,
+                        tooltip="If on, prepends the subject to every generated prompt"),
+
+                    # --- LLM Runtime ---
+                    v3_io.Combo.Input("llm_device", options=config.LLM_DEVICE_OPTIONS, default=config.DEFAULT_LLM_DEVICE, optional=True),
+                    v3_io.Boolean.Input("reset_context", default=config.DEFAULT_LLM_STATELESS, optional=True),
+                    v3_io.Boolean.Input("local_only_models", default=True, optional=True),
+
+                    # --- Output Format & Auto-save ---
+                    v3_io.Combo.Input("format_profile", options=text_io.CREATOR_FORMAT_PROFILE_OPTIONS, default="Custom", optional=True),
+                    v3_io.Combo.Input("output_target", options=text_io.VISUAL_OUTPUT_TARGET_OPTIONS, default="Prompt", optional=True),
+                    v3_io.Combo.Input("output_format", options=text_io.FORMAT_OPTIONS, default="Plain Text", optional=True),
+                    v3_io.Boolean.Input("auto_save", default=False, optional=True),
+                    v3_io.String.Input("auto_save_folder_path", default="ComfyUI/output/PromptCrafter", optional=True),
+                    v3_io.String.Input("auto_save_filename_template", default="{seed}_{model_name}_{target}.txt", optional=True),
+                    v3_io.String.Input("auto_save_custom_var", default="", optional=True),
+
+                    # --- Dynamic Image Inputs (added by JS dynamic_inputs.js) ---
+                    v3_io.String.Input("image_weights_json", default="{}", optional=True),
+                ],
+            )
+
+        @classmethod
+        def execute(
+            cls,
+            mode,
+            instruction,
+            subject,
+            model,
+            response_mode="Predictable",
+            image_count=1,
+            temperature=0.2,
+            seed=-1,
+            artistry_level=5,
+            creativity_level=5,
+            logicality_level=5,
+            max_length_words=0,
+            deep_think_refinements=3,
+            critique_strength="Normal",
+            simplify_for_diffusion=True,
+            timeout=120,
+            max_retries=2,
+            safe_mode=True,
+            debug_mode=False,
+            style_override="None",
+            style_tags="",
+            target_model_format="Generic (SD1.5, SD2.1)",
+            generate_schedule=False,
+            max_frames=240,
+            interpolate_keyframes=False,
+            interpolation_frame_interval=10,
+            thinking_model=None,
+            instruct_model=None,
+            audio_file="<none>",
+            lyrics_file="<none>",
+            whisper_model="large-v3",
+            whisper_language="auto-detect",
+            whisper_engine="faster-whisper",
+            use_audio_alignment=True,
+            fps=16.0,
+            scene_splitting_mode="Structural Tag",
+            max_scene_duration_seconds=5.0,
+            max_scene_frames=120,
+            character_description="The main character.",
+            song_theme_style="cinematic realism, emotional storytelling",
+            word_count_min=30,
+            word_count_max=50,
+            list_handling_mode="Reference Guide",
+            environment="open field at dusk, dimly lit bedroom, empty city street at night",
+            lighting="warm amber glow, cool window light, neon reflections",
+            camera_motion="push in, pull back, pan left, pan right",
+            physical_interaction="walking through tall grass, lying on bed staring upward",
+            facial_expression="Intense raw emotion",
+            shots="close up, medium shot, wide shot",
+            outfit_rules="",
+            character_visibility="mostly visible, half-shadowed, silhouetted",
+            automate_vrg_variables=False,
+            pipeline_stages="Single Stage",
+            singing_constraint=False,
+            subject_prepending=False,
+            llm_device=config.DEFAULT_LLM_DEVICE,
+            reset_context=config.DEFAULT_LLM_STATELESS,
+            local_only_models=True,
+            format_profile="Custom",
+            output_target="Prompt",
+            output_format="Plain Text",
+            auto_save=False,
+            auto_save_folder_path="ComfyUI/output/PromptCrafter",
+            auto_save_filename_template="{seed}_{model_name}_{target}.txt",
+            auto_save_custom_var="",
+            **kwargs,
+        ):
+            is_image_mode = mode in ("Image to Prompt",)
+            has_images = mode in ("Image to Prompt", "Image + Lyrics", "Image + Audio")
+
+            v1_kwargs = {
+                "response_mode": response_mode,
+                "pipeline_mode": "Image" if is_image_mode else "Lyrics",
+                "image_count": image_count,
+                "temperature": temperature,
+                "seed": seed,
+                "artistry_level": artistry_level,
+                "creativity_level": creativity_level,
+                "logicality_level": logicality_level,
+                "max_length_words": max_length_words,
+                "deep_think_refinements": deep_think_refinements,
+                "critique_strength": critique_strength,
+                "simplify_for_diffusion": simplify_for_diffusion,
+                "timeout": timeout,
+                "max_retries": max_retries,
+                "safe_mode": safe_mode,
+                "debug_mode": debug_mode,
+                "style_override": style_override,
+                "style_tags": style_tags,
+                "target_model_format": target_model_format,
+                "generate_schedule": generate_schedule,
+                "max_frames": max_frames,
+                "interpolate_keyframes": interpolate_keyframes,
+                "interpolation_frame_interval": interpolation_frame_interval,
+                "thinking_model": thinking_model,
+                "instruct_model": instruct_model,
+                "audio_file": audio_file,
+                "lyrics_file": lyrics_file,
+                "whisper_model": whisper_model,
+                "whisper_language": whisper_language,
+                "whisper_engine": whisper_engine,
+                "use_audio_alignment": use_audio_alignment,
+                "fps": fps,
+                "scene_splitting_mode": scene_splitting_mode,
+                "max_scene_duration_seconds": max_scene_duration_seconds,
+                "max_scene_frames": max_scene_frames,
+                "character_description": character_description,
+                "song_theme_style": song_theme_style,
+                "word_count_min": word_count_min,
+                "word_count_max": word_count_max,
+                "list_handling_mode": list_handling_mode,
+                "environment": environment,
+                "lighting": lighting,
+                "camera_motion": camera_motion,
+                "physical_interaction": physical_interaction,
+                "facial_expression": facial_expression,
+                "shots": shots,
+                "outfit_rules": outfit_rules,
+                "character_visibility": character_visibility,
+                "automate_vrg_variables": automate_vrg_variables,
+                "llm_device": llm_device,
+                "reset_context": reset_context,
+                "local_only_models": local_only_models,
+                "format_profile": format_profile,
+                "output_target": output_target,
+                "output_format": output_format,
+                "auto_save": auto_save,
+                "auto_save_folder_path": auto_save_folder_path,
+                "auto_save_filename_template": auto_save_filename_template,
+                "auto_save_custom_var": auto_save_custom_var,
+            }
+
+            if has_images:
+                v1_kwargs.update(kwargs)
+
+            if is_image_mode:
+                node = PromptCrafter_VisualCreator()
+                result = node.execute(instruction, subject, model, negative_prompt="", **v1_kwargs)
+            else:
+                node = PromptCrafter_LyricsCreator()
+                result = node.execute(instruction, subject, model, negative_prompt="", **v1_kwargs)
+
+            # --- Unpack V1 result to unified outputs ---
+            if is_image_mode:
+                prompt_out = result[0]
+                schedule_out = result[1]
+                image_context_out = result[2]
+                negative_prompt_out = result[3]
+                model_out = result[4]
+                seed_out = result[5]
+                ref_images = list(result[6:11])
+                clean_lyrics_out = ""
+                lyrics_srt_out = ""
+            else:
+                prompt_out = result[0]
+                schedule_out = result[1]
+                image_context_out = result[2]
+                negative_prompt_out = result[3]
+                clean_lyrics_out = result[4]
+                lyrics_srt_out = result[5]
+                model_out = result[6]
+                seed_out = result[7]
+                ref_images = list(result[20:25])
+
+            while len(ref_images) < 5:
+                ref_images.append(None)
+
+            # --- VRGDG-inspired post-processing ---
+            if subject_prepending and subject and subject.strip():
+                if prompt_out:
+                    prompt_out = f"{subject.strip()} – {prompt_out}"
+                if schedule_out:
+                    try:
+                        sched = json.loads(schedule_out) if isinstance(schedule_out, str) else schedule_out
+                        if isinstance(sched, dict):
+                            for k in sched:
+                                sched[k] = f"{subject.strip()} – {sched[k]}"
+                            schedule_out = json.dumps(sched, indent=2)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+            if singing_constraint:
+                singing_tag = " The character is singing with passion."
+                if prompt_out and "singing" not in prompt_out.lower():
+                    prompt_out += singing_tag
+                if schedule_out:
+                    try:
+                        sched = json.loads(schedule_out) if isinstance(schedule_out, str) else schedule_out
+                        if isinstance(sched, dict):
+                            modified = False
+                            for k in sched:
+                                if isinstance(sched[k], str) and "singing" not in sched[k].lower():
+                                    sched[k] += singing_tag
+                                    modified = True
+                            if modified:
+                                schedule_out = json.dumps(sched, indent=2)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+            return v3_io.NodeOutput(
+                prompt_out, schedule_out, negative_prompt_out, image_context_out,
+                model_out, seed_out, clean_lyrics_out, lyrics_srt_out,
+                ref_images[0], ref_images[1], ref_images[2], ref_images[3], ref_images[4],
+            )
+
+
+# ------------------------------------------------------------------------------------
 # Node Mappings
 # ------------------------------------------------------------------------------------
 NODE_CLASS_MAPPINGS = {
@@ -1025,6 +1398,8 @@ NODE_CLASS_MAPPINGS = {
     "PromptCrafter_VisualCreatorEasy": PromptCrafter_VisualCreatorEasy,
     "PromptCrafter_LyricsCreatorEasy": PromptCrafter_LyricsCreatorEasy,
 }
+if V3_IO_AVAILABLE:
+    NODE_CLASS_MAPPINGS["PromptCrafter_V3Creator"] = PromptCrafter_V3Creator
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_VisualCreator": "✨ Image → Prompt",
@@ -1032,3 +1407,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_VisualCreatorEasy": "✨ Easy Image → Prompt",
     "PromptCrafter_LyricsCreatorEasy": "🎤 Easy Lyrics → Prompt",
 }
+if V3_IO_AVAILABLE:
+    NODE_DISPLAY_NAME_MAPPINGS["PromptCrafter_V3Creator"] = "✨ Prompt Creator (V3)"

@@ -10,6 +10,12 @@ import logging
 from ..core import pgfx_config as config
 from ..utils import pgfx_utils as utils
 
+try:
+    from comfy_api.latest import io as v3_io
+    V3_AVAILABLE = True
+except ImportError:
+    V3_AVAILABLE = False
+
 # Set up logging for the brand
 logger = logging.getLogger("PromptCrafter")
 
@@ -158,11 +164,70 @@ class CP_SaveSVG:
         print(f"\033[92m[PGFX] SVG saved to: {full_path}\033[0m")
         return (full_path,)
 
+if V3_AVAILABLE:
+    class CP_ImageToSVGV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="CP_ImageToSVGV3",
+                display_name="PromptCrafter ✨ Image Trace to SVG (V3)",
+                category="☠️PGFX /Design",
+                description="Converts model-generated images into vector SVG files locally.",
+                inputs=[
+                    v3_io.Image.Input("image"),
+                    v3_io.Combo.Input("colormode", options=["color", "bw"], default="color"),
+                    v3_io.Combo.Input("hierarchical", options=["stacked", "cutout"], default="stacked"),
+                    v3_io.Int.Input("color_precision", default=6, min=1, max=8),
+                    v3_io.Int.Input("layer_difference", default=16, min=0, max=255),
+                    v3_io.Int.Input("path_precision", default=3, min=1, max=10),
+                    v3_io.Int.Input("simplify_tolerance", default=2, min=0, max=10),
+                    v3_io.String.Input("filename_prefix", default="PromptCrafter_Vector", optional=True),
+                ],
+                outputs=[
+                    v3_io.String.Output(display_name="svg_raw"),
+                    v3_io.String.Output(display_name="file_path"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, image, colormode, hierarchical, color_precision, layer_difference, path_precision, simplify_tolerance, filename_prefix="PromptCrafter_Vector"):
+            node = CP_ImageToSVG()
+            result = node.vectorize(image, colormode, hierarchical, color_precision, layer_difference, path_precision, simplify_tolerance, filename_prefix)
+            return v3_io.NodeOutput(*result)
+
+    class CP_SaveSVGV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="CP_SaveSVGV3",
+                display_name="PromptCrafter 💾 Save SVG (V3)",
+                category="☠️PGFX /Design",
+                description="Saves a raw SVG string to the output directory.",
+                is_output_node=True,
+                inputs=[
+                    v3_io.String.Input("svg_raw"),
+                    v3_io.String.Input("filename_prefix", default="PromptCrafter_SVG"),
+                    v3_io.String.Input("output_path", default="svg"),
+                ],
+                outputs=[
+                    v3_io.String.Output(display_name="file_path"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, svg_raw, filename_prefix, output_path):
+            node = CP_SaveSVG()
+            result = node.save_svg(svg_raw, filename_prefix, output_path)
+            return v3_io.NodeOutput(*result)
+
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
     "CP_ImageToSVG": CP_ImageToSVG,
     "CP_SaveSVG": CP_SaveSVG
 }
+if V3_AVAILABLE:
+    NODE_CLASS_MAPPINGS["CP_ImageToSVGV3"] = CP_ImageToSVGV3
+    NODE_CLASS_MAPPINGS["CP_SaveSVGV3"] = CP_SaveSVGV3
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "CP_ImageToSVG": "PromptCrafter ✨ Image Trace to SVG",

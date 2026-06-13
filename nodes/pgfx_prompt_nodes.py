@@ -1,3 +1,10 @@
+try:
+    from comfy_api.latest import io as v3_io
+    V3_AVAILABLE = True
+except ImportError:
+    V3_AVAILABLE = False
+
+
 class BatchPromptProcessor:
     @classmethod
     def INPUT_TYPES(cls):
@@ -98,10 +105,65 @@ class KeyframePromptScheduler:
             
         return (selected_prompt.strip(),)
 
+if V3_AVAILABLE:
+    class BatchPromptProcessorV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="BatchPromptProcessorV3",
+                display_name="🧰 Batch Prompt Processor (V3)",
+                category="☠️PGFX /Text",
+                description="Processes prompts in batches with prepend/append text.",
+                inputs=[
+                    v3_io.String.Input("prepend_text", multiline=True, default=""),
+                    v3_io.String.Input("prompts", multiline=True),
+                    v3_io.String.Input("append_text", multiline=True, default=""),
+                    v3_io.Int.Input("batch_size", default=1, min=1, max=1000),
+                    v3_io.Int.Input("start_index", default=0, min=0),
+                ],
+                outputs=[
+                    v3_io.String.Output(display_name="prompts", is_output_list=True),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, prepend_text, prompts, append_text, batch_size, start_index):
+            node = BatchPromptProcessor()
+            result = node.process_batch(prepend_text, prompts, append_text, batch_size, start_index)
+            return v3_io.NodeOutput(*result)
+
+    class KeyframePromptSchedulerV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="KeyframePromptSchedulerV3",
+                display_name="⏱️ Keyframe Prompt Scheduler (V3)",
+                category="☠️PGFX /Text",
+                description="Schedules prompts based on keyframe timing.",
+                inputs=[
+                    v3_io.String.Input("keyframe_prompts", multiline=True, default='{"0": "prompt 1",\n"10": "prompt 2",\n"20": "prompt 3"}'),
+                    v3_io.Int.Input("frame_number", default=0, min=0),
+                    v3_io.String.Input("prepend_text", multiline=True, default=""),
+                    v3_io.String.Input("append_text", multiline=True, default=""),
+                ],
+                outputs=[
+                    v3_io.String.Output(display_name="prompt"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, keyframe_prompts, frame_number, prepend_text, append_text):
+            node = KeyframePromptScheduler()
+            result = node.get_prompt(keyframe_prompts, frame_number, prepend_text, append_text)
+            return v3_io.NodeOutput(*result)
+
 NODE_CLASS_MAPPINGS = {
     "BatchPromptProcessor": BatchPromptProcessor,
     "KeyframePromptScheduler": KeyframePromptScheduler,
 }
+if V3_AVAILABLE:
+    NODE_CLASS_MAPPINGS["BatchPromptProcessorV3"] = BatchPromptProcessorV3
+    NODE_CLASS_MAPPINGS["KeyframePromptSchedulerV3"] = KeyframePromptSchedulerV3
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "BatchPromptProcessor": "🧰 Batch Prompt Processor",

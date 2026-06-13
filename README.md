@@ -1,6 +1,6 @@
 # ☠️ PGFX PromptCrafter — ComfyUI Node Pack
 
-**Agentic creative tooling for ComfyUI.** A modular node pack that brings LLM-driven prompt engineering, video production pipelines, and a full vector design studio into your graph — optimized for local reasoning models (DeepSeek-R1, Llama 3.3, etc.) and modern ComfyUI Frontend V2.
+**Agentic creative tooling for ComfyUI.** A modular node pack that brings LLM-driven prompt engineering, creative asset tools, and a full vector design studio into your graph — optimized for local reasoning models (DeepSeek-R1, Llama 3.3, etc.) and modern ComfyUI Frontend V2.
 
 ---
 
@@ -8,12 +8,11 @@
 
 | If you... | You'll find... |
 |-----------|----------------|
-| Build production ComfyUI workflows | A film-production metaphor with pipeline orchestration nodes (Producer, Director, Cinematographer, Editor, PostMaster) |
-| Want LLM-powered prompt generation | A QnA engine with Think/Instruct dual-model chaining, forced JSON output, and automatic context summarization |
-| Design assets in-comsole | A persistent Fabric.js vector design studio with full toolbar, layer management, and keyboard shortcuts — embedded directly in your graph |
-| Work with LTX video models | LTX-2/LTXV specialized patching, sampling, and corrective masking |
-| Need audio/video lip-sync | Viseme-based mouth animation guides with phonetic G2P conversion |
+| Want LLM-powered prompt engineering | A QnA engine with dual-model chaining, forced JSON output, context summarization, and visual/lyrics creator nodes |
+| Design assets in-comsole | A persistent Fabric.js vector design studio with full toolbar, layer management, and keyboard shortcuts |
+| Browse, caption, and organize image datasets | An embedded visual folder browser with dataset captioning workspace and duplicate scanner |
 | Care about production safety | ComfyGuard — a runtime interceptor that protects your environment from broken pip installs and CUDA downgrades |
+| Have legacy workflows (Studio/Film/Viseme/LTX) | All previous nodes still load with a ⚰️ Legacy badge — they work but are no longer actively developed |
 
 ---
 
@@ -36,19 +35,22 @@ pip install --no-deps torchaudio faster-whisper whisperx speechbrain
 
 Nodes are organized into 12 categories in the ComfyUI menu under `☠️PGFX /`:
 
-| Category | Nodes | Stability |
-|----------|-------|-----------|
-| **/Text** | QnA, Think/Instruct (Lyrics, Visual, QnA), Captioner, Formatter, Prompt Chunker, Ollama Router, SRT Creator | ✅ Stable / 🔧 Beta |
-| **/Audio** | Audio Splitter (v2 + Legacy), Audio Load, Audio Preview, Audio Output | 🔧 Beta / ⚠️ Experimental |
-| **/Video** | Frame Selector, Viseme Suite (Script-Guided, Universal Guide, Cinema Rig), Audio Subtitles | ⚠️ Experimental |
-| **/Film** | Project Controller, Character Registry, Shot Architect, Assembler, Audio Loader/Segmenter, Render Project, Shot Config Extractor | ⚠️ Experimental |
-| **/Studio** | Full Film Crew pipeline (Producer → PostMaster), Director, Screenwriter, Cinematographer, Editor, Stylist, Animator, Project Context, Store/Load Text | 🔧 Beta |
-| **/Studio/Adapters** | Data contract validators/normalizers (PROJECT_CONFIG, TIMING_MAP, SHOT_LIST, CHARACTER_TRACK, AutoQueue) | 🔧 Beta |
-| **/Utils** | Universal Switch Box, Multi-Image Preview, Save Text File, File Organizer, Cache Utility, Visual Browser | ✅ Stable |
+| Category | Nodes | Status |
+|----------|-------|--------|
 | **/Creator** | Visual Creator, Lyrics Creator (full + easy variants) | ✅ Stable |
-| **/Design** | Logo Designer Studio, Logo Designer Agent, Image Vectorizer (SVG) | ✅ Stable (Studio) / 🔧 Beta (Agent) |
-| **/LLM** | LLM Router node | ✅ Stable |
-| **/Security** | ComfyGuard startup interceptor | ✅ Stable |
+| **/Design** | Logo Designer Studio, Logo Designer Agent, Image Vectorizer (SVG) | ✅ Stable |
+| **/Visual Browser** | Folder Image Loader (browse, caption, save, scan) | ✅ Active |
+| **/Utils** | QnA (Advanced, Simple), Universal Switch Box, Multi-Image Preview, Save Text File, File Organizer, Cache Utility, Formatter, Prompt Chunker, Captioner, Ollama Router | ✅ Stable |
+| **/Text** | Batch Prompt Processor, Keyframe Prompt Scheduler | ✅ Stable |
+| **/LLM** | LLM Output Saver | ✅ Stable |
+| **/Security** | ComfyGuard Health Check | ✅ Stable |
+| **/Studio** | Full Film Crew pipeline (Producer → PostMaster, all adapters) | ⚰️ Legacy |
+| **/Film** | Project Controller, Character Registry, Shot Architect, Assembler, etc. | ⚰️ Legacy |
+| **/Viseme** | Cinema Rig, Script-Guided, Universal Guide, Word Timing, Conditioning Bridge | ⚰️ Legacy |
+| **/LTX2 / LTXV** | Queue Manager, Stitcher, Latent Upsampler, Corrective Mask, In Context Sampler | ⚰️ Legacy |
+| **/Audio** | Audio Splitter (v1 + v2), ACE-Step 1.5 Advanced, SRT Creator, Subtitle Styler | ⚰️ Legacy |
+| **/VRGDG** | Semantic Bridge, StoryGroup Bridge, Schedule Prompt Map, Prompt Package Validator | ⚰️ Legacy |
+| **/Director** | Director Agent | ⚰️ Legacy |
 
 ---
 
@@ -67,6 +69,35 @@ A production-grade vector design environment (Fabric.js) embedded in your graph:
 - Three environment slots with per-slot intensity controls
 - Keyboard nudging (Figma/Illustrator-style arrow key + Shift)
 - SVG export, server-side image persistence, no workflow file bloat
+
+### Visual Folder Browser — PGFX_VisualFolderLoader
+
+A **dual-mode Load/Save** image node with an embedded visual browser, dataset captioning workspace, duplicate scanner, and path explorer — all inside your graph.
+
+#### Dual Load/Save Mode
+- **Load Mode** (default, no input connected): Browse a folder's images in the built-in grid, select one, and it outputs the image + mask + caption. Supports pagination, search, and subfolder navigation via clickable path breadcrumbs.
+- **Save Mode** (connect the `images` input): Any incoming image tensor is saved directly to the folder with timestamped filenames (`20260610_143022_000_0000.png`) and passed through as output. **No separate save node needed** — the same folder you browse is the folder you save to, keeping generation, upscale, and animation workflows in sync.
+- **Caption on Save** (save mode + `caption_on_save = Enabled`): Every image saved through the `images` input is automatically captioned by the vision model and a `.txt` sidecar is written alongside it — zero extra steps. The first image's caption is also exposed via the `caption` output pin.
+- The `folder` path supports absolute paths or paths relative to ComfyUI's output directory. Editable by double-clicking the path bar.
+
+#### Dataset Captioning Workspace
+- **Ground Truth Prompting:** When you enter text in `caption_prompt` (e.g. "Super Hero"), it's injected as **ground truth context** into a comprehensive caption instruction: *"Describe this image in detail. Use the following as ground truth context for what is depicted: Super Hero"* — no more generic "man in tights" descriptions.
+- **✨ Generate (Single Image):** Generates a caption using any vision model (Ollama, GGUF, HuggingFace — auto-listed in the `caption_model` dropdown). Auto-saves to a `.txt` sidecar file next to the image. Combined status shows `✨ Generated ✅ Saved` or `✨ Generated ⚠️ Auto-save failed`.
+- **📝 Caption All (Batch):** Captions every image in the folder (or only missing ones). Each caption is **automatically saved** as a `.txt` sidecar after generation (not just displayed). **Time warning** — shows estimated duration before starting (e.g. `~12 minutes` for 50 images) because captioning can take 5–30+ seconds per image. Live progress counter, per-image save status, and a **🛑 Stop Batch** button to cancel mid-way.
+- **💾 Save:** Manually edit any caption in the textarea and save it as a `.txt` sidecar.
+- **Caption Output Format** (`caption_output` widget): Choose between **Sidecar .txt** (one `.txt` file per image — default), **Single JSON** (all captions in a single `captions.json` file keyed by image name), or **Single TXT Append** (all captions appended to a single `captions.txt` file with `filename: caption` entries). This applies to Generate, Batch Caption, Caption on Save, and execution-time auto-captioning.
+- **Real-Time TXT Badges:** Images with existing sidecar `.txt` files display a green `TXT` badge in the grid corner.
+- **Execution-Time Auto-Captioning:** The node's `auto_captioning` input (`Disabled` / `Always (Overwrite)` / `If Missing`) runs the vision model during workflow queue execution, writing sidecar files automatically. The generated caption is also exposed via the third `caption` output pin.
+- **Duplicate Scanner 🔍:** Scans the current folder for exact (MD5) and near-duplicate (perceptual dhash) images. Results are displayed in an overlay with selectable duplicates, group-by-group previews, and bulk deletion.
+
+#### Path Bar & Navigation
+- Clickable breadcrumb segments let you jump directly to any parent folder.
+- Folder dropdown (📂 ▼) lists all subfolders with a parent "Up" option and shows the resolved absolute path.
+- Double-click the path bar to type a path manually.
+- Pagination (`◀ Prev` / `Next ▶`) with per-page info.
+- Search input filters filenames in real-time (250ms debounce).
+- Image details bar shows resolution, file size, date, and format for the selected image.
+- Keyboard support: Escape closes overlays, Delete/Backspace triggers bulk deletion in the duplicate scanner.
 
 ### ComfyGuard
 Runtime protection that activates at startup:
@@ -94,6 +125,13 @@ Runtime protection that activates at startup:
 | ✅ **Stable** | Production-ready, regularly used in primary workflows |
 | 🔧 **Beta** | Feature-complete; minor edge cases possible |
 | ⚠️ **Experimental** | Active development; architecture complete but not fully field-tested |
+| ⚰️ **Legacy** | Still loads and works in existing workflows, but **no longer actively developed**. Displayed with a ⚰️ Legacy badge in the node menu. Will not be migrated to ComfyUI V3 API. Consider replacing with alternatives where possible. |
+
+### Legacy Node Policy
+
+Legacy nodes remain registered in `NODE_CLASS_MAPPINGS` so **all existing workflows continue to work without changes**. They are marked in `NODE_DISPLAY_NAME_MAPPINGS` with a ⚰️ Legacy prefix in the Add Node menu. No new features, V3 migration, or bug fixes will be made to legacy nodes.
+
+**What stays:** Creator nodes, Logo Designer Studio, Visual Browser, QnA variants, core utilities, ComfyGuard, and Text nodes are actively maintained.
 
 ---
 

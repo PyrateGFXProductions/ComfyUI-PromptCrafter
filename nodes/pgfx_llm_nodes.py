@@ -8,6 +8,12 @@ import folder_paths
 # Local module imports
 from ..utils import pgfx_json_utils as json_utils
 
+try:
+    from comfy_api.latest import io as v3_io
+    V3_AVAILABLE = True
+except ImportError:
+    V3_AVAILABLE = False
+
 class PGFX_LLM_OutputSaver:
     """
     Robustly saves LLM output per batch and auto-combines on final batch.
@@ -150,9 +156,39 @@ class PGFX_LLM_OutputSaver:
         print("\033[94m[PGFX] ========== LLM OUTPUT SAVER END ==========\033[0m")
         return (combined_text,)
 
+if V3_AVAILABLE:
+    class PGFX_LLM_OutputSaverV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PGFX_LLM_OutputSaverV3",
+                display_name="☠️ PGFX LLM Output Saver (Robust) (V3)",
+                category="☠️PGFX /LLM",
+                is_output_node=True,
+                description="Robustly saves LLM output per batch and auto-combines on final batch.",
+                inputs=[
+                    v3_io.String.Input("text", multiline=True, force_input=True),
+                    v3_io.Int.Input("batch_index"),
+                    v3_io.Boolean.Input("is_final_batch"),
+                    v3_io.String.Input("output_folder", multiline=False, placeholder="FULL path, e.g. A:/ComfyUI/output/llm_results"),
+                    v3_io.String.Input("base_filename", default="LLM_Output"),
+                ],
+                outputs=[
+                    v3_io.String.Output(display_name="combined_text"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, text, batch_index, is_final_batch, output_folder, base_filename):
+            node = PGFX_LLM_OutputSaver()
+            result = node.run(text, batch_index, is_final_batch, output_folder, base_filename)
+            return v3_io.NodeOutput(*result)
+
 NODE_CLASS_MAPPINGS = {
     "PGFX_LLM_OutputSaver": PGFX_LLM_OutputSaver
 }
+if V3_AVAILABLE:
+    NODE_CLASS_MAPPINGS["PGFX_LLM_OutputSaverV3"] = PGFX_LLM_OutputSaverV3
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_LLM_OutputSaver": "☠️ PGFX LLM Output Saver (Robust)"

@@ -234,6 +234,20 @@ const injectStyles = () => {
             border-color: #06b6d4;
             box-shadow: 0 0 10px rgba(6, 182, 212, 0.5);
         }
+        .pgfx-browser-item.has-caption::after {
+            content: "TXT";
+            position: absolute;
+            bottom: 4px;
+            right: 4px;
+            background: rgba(16, 185, 129, 0.85);
+            color: white;
+            font-size: 8px;
+            font-weight: bold;
+            padding: 1px 3px;
+            border-radius: 2px;
+            pointer-events: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        }
         .pgfx-browser-item img {
             width: 100%;
             height: 100%;
@@ -600,7 +614,7 @@ const thumbCache = new Map();
 app.registerExtension({
     name: "PromptCrafter.VisualFolderLoader",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name !== "PGFX_VisualFolderLoader") return;
+        if (nodeData.name !== "PGFX_VisualFolderLoader" && nodeData.name !== "PGFX_VisualFolderLoaderV3") return;
 
         injectStyles();
 
@@ -613,6 +627,7 @@ app.registerExtension({
             const selectedImageWidget = node.widgets.find(w => w.name === "selected_image");
             const captionModelWidget = node.widgets.find(w => w.name === "caption_model");
             const captionPromptWidget = node.widgets.find(w => w.name === "caption_prompt");
+            const captionOutputWidget = node.widgets.find(w => w.name === "caption_output");
 
             selectedImageWidget.type = "hidden";
 
@@ -712,6 +727,12 @@ app.registerExtension({
             const captionPanel = document.createElement("div");
             captionPanel.className = "pgfx-caption-panel";
 
+            const captionHelp = document.createElement("div");
+            captionHelp.className = "pgfx-caption-help";
+            captionHelp.style.cssText = "font-size: 9px; color: #888; background: #1a1a2e; border: 1px solid rgba(6, 182, 212, 0.2); border-radius: 4px; padding: 6px; margin-bottom: 6px; line-height: 1.3;";
+            captionHelp.innerHTML = `<strong>💡 Dataset Captioning:</strong> This panel manages <code>.txt</code> sidecar files containing tags/prompts next to your images. Set a <strong>caption_model</strong> and prompt above to use AI vision. Use <strong>✨ Generate</strong> for individual images or <strong>📝 Caption All</strong> to queue the entire folder.<br><br><strong>⚠️ Time Warning:</strong> Captioning can take <strong>5–30+ seconds per image</strong> depending on model/hardware. A batch of 100 images could take <strong>several minutes to an hour</strong>. Plan accordingly.`;
+            captionPanel.append(captionHelp);
+
             const captionLabel = document.createElement("div");
             captionLabel.className = "pgfx-caption-label";
             const captionLabelText = document.createElement("span");
@@ -733,7 +754,7 @@ app.registerExtension({
             saveCaptionBtn.className = "pgfx-btn save";
             saveCaptionBtn.textContent = "💾 Save";
             saveCaptionBtn.disabled = true;
-            saveCaptionBtn.title = "Save caption as .txt sidecar file";
+            saveCaptionBtn.title = "Save caption to file (format: caption_output)";
 
             const genCaptionBtn = document.createElement("button");
             genCaptionBtn.className = "pgfx-btn generate";
@@ -1114,9 +1135,12 @@ app.registerExtension({
                     if (selectedImageWidget.value === imgData.filename) {
                         item.classList.add("selected");
                     }
+                    if (imgData.has_caption) {
+                        item.classList.add("has-caption");
+                    }
 
                     const img = document.createElement("img");
-                    const thumbUrl = imgData.url;
+                    const thumbUrl = imgData.url + "&preview=true";
                     const cached = thumbCache.get(thumbUrl);
                     if (cached && cached.complete && cached.naturalWidth > 0) {
                         img.src = thumbUrl;
@@ -1220,7 +1244,7 @@ app.registerExtension({
                         return;
                     }
                     captionTextarea.value = data.caption || "";
-                    captionStatus.textContent = data.source === "file" ? "📄 Loaded from sidecar" : "No caption file";
+                    captionStatus.textContent = data.caption ? "📄 Caption loaded" : "No caption found";
                     saveCaptionBtn.disabled = false;
                     genCaptionBtn.disabled = false;
                 } catch (e) {
@@ -1229,6 +1253,8 @@ app.registerExtension({
                     captionStatus.textContent = "Error loading caption";
                 }
             };
+
+            const getCaptionOutput = () => captionOutputWidget?.value || "Sidecar .txt";
 
             const saveCaption = async () => {
                 const text = captionTextarea.value.trim();
@@ -1245,6 +1271,7 @@ app.registerExtension({
                             folder: currentFolder,
                             filename: currentCaptionFile,
                             caption: text,
+                            caption_output: getCaptionOutput(),
                         }),
                     });
                     const data = await resp.json();
@@ -1265,7 +1292,10 @@ app.registerExtension({
                 if (!currentCaptionFile) return;
 
                 const model = captionModelWidget?.value?.trim();
-                const prompt = captionPromptWidget?.value?.trim() || "Describe this image in detail.";
+                const userPrompt = captionPromptWidget?.value?.trim();
+                const prompt = userPrompt
+                    ? `Describe this image in detail. Use the following as ground truth context for what is depicted: ${userPrompt}`
+                    : "Describe this image in detail, focusing on the subject, setting, composition, lighting, and style. Include the subject's appearance, pose, background, mood, and any notable visual elements.";
 
                 if (!model) {
                     captionStatus.textContent = "⚠️ No caption_model configured";
@@ -1277,13 +1307,17 @@ app.registerExtension({
                 captionStatus.textContent = "⏳ Generating...";
                 captionTextarea.value = "";
 
+                // Capture file reference to avoid race if user clicks another image
+                const targetFile = currentCaptionFile;
+                const targetFolder = currentFolder;
+
                 try {
                     const resp = await api.fetchApi("/pgfx/browser/generate-caption", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            folder: currentFolder,
-                            filename: currentCaptionFile,
+                            folder: targetFolder,
+                            filename: targetFile,
                             model: model,
                             prompt: prompt,
                             temperature: 0.2,
@@ -1294,75 +1328,204 @@ app.registerExtension({
                         captionStatus.textContent = `❌ ${data.error}`;
                         return;
                     }
-                    captionTextarea.value = data.caption || "";
-                    captionStatus.textContent = "✨ Generated";
-                    saveCaptionBtn.disabled = false;
+                    const captionText = data.caption || "";
 
-                    // Auto-save after generation
-                    await saveCaption();
+                    // Only update UI if still on the same image
+                    if (currentCaptionFile === targetFile) {
+                        captionTextarea.value = captionText;
+                        captionStatus.textContent = "✨ Generated";
+                        saveCaptionBtn.disabled = false;
+                    }
+
+                    // Auto-save — show combined status
+                    let saveResult = "ok";
+                    try {
+                        const saveResp = await api.fetchApi("/pgfx/browser/save-caption", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                folder: targetFolder,
+                                filename: targetFile,
+                                caption: captionText,
+                                caption_output: getCaptionOutput(),
+                            }),
+                        });
+                        const saveData = await saveResp.json();
+                        if (!saveData.success) {
+                            saveResult = `Save: ${saveData.error || "Unknown"}`;
+                        }
+                    } catch (saveErr) {
+                        console.error("[PGFX] Auto-save error:", saveErr);
+                        saveResult = "Auto-save failed";
+                    }
+
+                    if (currentCaptionFile === targetFile) {
+                        captionStatus.textContent = saveResult === "ok" ? "✨ Generated ✅ Saved" : `✨ Generated ⚠️ ${saveResult}`;
+                        saveCaptionBtn.disabled = false;
+                    }
+
+                    // Refresh grid to update TXT badges
+                    loadImages(currentPage).catch(err => console.error("[PGFX] Grid refresh error:", err));
 
                 } catch (e) {
                     console.error("[PGFX] Caption generate error:", e);
                     captionStatus.textContent = "❌ Generation failed";
                 } finally {
                     genCaptionBtn.disabled = false;
+                    if (currentCaptionFile === targetFile) {
+                        saveCaptionBtn.disabled = false;
+                    }
                 }
             };
 
+            let batchCancelled = false;
+
             const batchCaption = async () => {
                 const model = captionModelWidget?.value?.trim();
-                const prompt = captionPromptWidget?.value?.trim() || "Describe this image in detail.";
+                const userPrompt = captionPromptWidget?.value?.trim();
+                const prompt = userPrompt
+                    ? `Describe this image in detail. Use the following as ground truth context for what is depicted: ${userPrompt}`
+                    : "";
 
                 if (!model) {
                     captionStatus.textContent = "⚠️ No caption_model configured";
                     return;
                 }
 
-                if (!confirm(`Caption ALL uncaptioned images in this folder?\n\nModel: ${model}\n\nThis may take a while for large folders.`)) {
-                    return;
-                }
+                const overwrite = confirm("Do you want to overwrite existing captions?\n\n- Click OK to overwrite existing captions.\n- Click Cancel to only caption images that don't have captions yet.");
 
-                batchCaptionBtn.disabled = true;
-                captionProgress.textContent = "⏳ Captioning...";
+                captionProgress.textContent = "⏳ Scanning folder...";
                 captionProgress.className = "pgfx-caption-progress active";
+                batchCaptionBtn.textContent = "🛑 Stop Batch";
+                batchCaptionBtn.onclick = () => {
+                    batchCancelled = true;
+                    batchCaptionBtn.textContent = "Stopping...";
+                    batchCaptionBtn.disabled = true;
+                };
 
                 try {
-                    const resp = await api.fetchApi("/pgfx/browser/caption-batch", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            folder: currentFolder,
-                            model: model,
-                            prompt: prompt,
-                            overwrite: false,
-                            concurrency: 2,
-                        }),
-                    });
+                    const resp = await api.fetchApi(`/pgfx/browser/images?folder=${encodeURIComponent(currentFolder)}&per_page=999999`);
                     const data = await resp.json();
-                    if (data.error) {
-                        captionProgress.textContent = `❌ ${data.error}`;
-                        captionProgress.className = "pgfx-caption-progress error";
+                    const images = data.images || [];
+
+                    let toProcess = [];
+                    if (overwrite) {
+                        toProcess = images;
+                    } else {
+                        toProcess = images.filter(img => !img.has_caption);
+                    }
+
+                    const total = toProcess.length;
+                    if (total === 0) {
+                        captionProgress.textContent = "ℹ️ No images need captioning.";
+                        captionProgress.className = "pgfx-caption-progress success";
+                        resetBatchBtn();
                         return;
                     }
-                    captionProgress.textContent = `✅ Processed ${data.processed}, skipped ${data.skipped}, failed ${data.failed}`;
-                    captionProgress.className = data.failed > 0 ? "pgfx-caption-progress error" : "pgfx-caption-progress success";
 
-                    // Reload caption for current image if it was just captioned
-                    if (currentCaptionFile) {
-                        loadCaption(currentCaptionFile);
+                    const estSeconds = total * 15;
+                    const timeStr = estSeconds < 60
+                        ? `~${estSeconds} seconds`
+                        : `~${Math.round(estSeconds / 60)} minutes (${estSeconds} seconds)`;
+                    if (!confirm(`⚠️  TIME WARNING\n\nFound ${total} images to caption using model: ${model}.\nEstimated time: ${timeStr} (at ~15s per image).\n\nProceed?`)) {
+                        captionProgress.textContent = "Batch cancelled.";
+                        captionProgress.className = "pgfx-caption-progress";
+                        resetBatchBtn();
+                        return;
                     }
+
+                    batchCancelled = false;
+                    let successCount = 0;
+                    let failCount = 0;
+
+                    for (let i = 0; i < total; i++) {
+                        if (batchCancelled) {
+                            captionProgress.textContent = `🛑 Stopped. Processed ${successCount}, failed ${failCount}.`;
+                            captionProgress.className = "pgfx-caption-progress error";
+                            break;
+                        }
+
+                        const img = toProcess[i];
+                        captionProgress.textContent = `⏳ Captioning ${i + 1}/${total} (${Math.round((i/total)*100)}%): ${img.filename}...`;
+
+                        try {
+                            const genResp = await api.fetchApi("/pgfx/browser/generate-caption", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    folder: currentFolder,
+                                    filename: img.filename,
+                                    model: model,
+                                    prompt: prompt,
+                                    temperature: 0.2,
+                                }),
+                            });
+                            const genData = await genResp.json();
+                            if (genData.error) {
+                                failCount++;
+                                console.error(`Failed to caption ${img.filename}:`, genData.error);
+                            } else {
+                                // Save the caption file
+                                let saved = false;
+                                try {
+                                    const saveResp = await api.fetchApi("/pgfx/browser/save-caption", {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({
+                                            folder: currentFolder,
+                                            filename: img.filename,
+                                            caption: genData.caption || "",
+                                            caption_output: getCaptionOutput(),
+                                        }),
+                                    });
+                                    const saveData = await saveResp.json();
+                                    saved = saveData.success;
+                                } catch (saveErr) {
+                                    console.error(`Failed to save caption for ${img.filename}:`, saveErr);
+                                }
+
+                                if (saved) {
+                                    successCount++;
+                                } else {
+                                    failCount++;
+                                }
+
+                                if (currentCaptionFile === img.filename) {
+                                    captionTextarea.value = genData.caption || "";
+                                    captionStatus.textContent = saved ? "✨ Generated ✅ Saved" : "✨ Generated ⚠️ Save failed";
+                                    saveCaptionBtn.disabled = false;
+                                }
+                            }
+                        } catch (err) {
+                            failCount++;
+                            console.error(`Error captioning ${img.filename}:`, err);
+                        }
+                    }
+
+                    if (!batchCancelled) {
+                        captionProgress.textContent = `✅ Completed! Processed ${successCount}, failed ${failCount}.`;
+                        captionProgress.className = failCount > 0 ? "pgfx-caption-progress error" : "pgfx-caption-progress success";
+                    }
+
+                    await loadImages(currentPage);
 
                 } catch (e) {
                     console.error("[PGFX] Batch caption error:", e);
                     captionProgress.textContent = "❌ Batch captioning failed";
                     captionProgress.className = "pgfx-caption-progress error";
                 } finally {
-                    batchCaptionBtn.disabled = false;
+                    resetBatchBtn();
                     setTimeout(() => {
                         captionProgress.className = "pgfx-caption-progress";
                         captionProgress.textContent = "";
                     }, 5000);
                 }
+            };
+
+            const resetBatchBtn = () => {
+                batchCaptionBtn.textContent = "📝 Caption All";
+                batchCaptionBtn.disabled = false;
+                batchCaptionBtn.onclick = batchCaption;
             };
 
             // --- Caption button handlers ---
@@ -1446,7 +1609,7 @@ app.registerExtension({
                         }
 
                         const img = document.createElement("img");
-                        img.src = file.url;
+                        img.src = file.url + "&preview=true";
                         img.loading = "lazy";
                         img.alt = file.filename;
 
@@ -1682,10 +1845,12 @@ app.registerExtension({
                 }
                 renderPathBar();
                 await loadImages(0);
-                if (captionsEnabled && selectedImageWidget.value) {
-                    const selFile = selectedImageWidget.value;
-                    // Small delay to let grid render and select the image
-                    setTimeout(() => loadCaption(selFile), 200);
+                if (captionsEnabled) {
+                    batchCaptionBtn.disabled = false;
+                    if (selectedImageWidget.value) {
+                        const selFile = selectedImageWidget.value;
+                        setTimeout(() => loadCaption(selFile), 200);
+                    }
                 }
             };
 

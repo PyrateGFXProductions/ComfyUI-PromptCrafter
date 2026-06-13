@@ -889,6 +889,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFXTextEncodeAceStepAudio15Advanced": "Text Encode Ace Step Audio 1.5 (PGFX Advanced)",
-    "PGFXAceStep15LatentTimelineOffset": "ACE-Step 1.5 Latent Timeline Offset (PGFX)",
+    "PGFXTextEncodeAceStepAudio15Advanced": "???? Legacy \uD83C\uDFB5 Text Encode Ace Step Audio 1.5 (PGFX Advanced)",
+    "PGFXAceStep15LatentTimelineOffset": "???? Legacy \uD83C\uDFB5 ACE-Step 1.5 Latent Timeline Offset (PGFX)",
 }

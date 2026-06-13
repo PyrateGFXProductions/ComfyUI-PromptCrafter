@@ -842,6 +842,7 @@ class LogoStudioUI {
                 this.scheduleNodeStateSync();
                 if (loadingOverlay) loadingOverlay.style.display = 'none';
             }
+            this._refreshPresetList();
         } catch (err) {
             console.error("[PGFX Studio] Critical startup error:", err);
             if (loadingStatus) loadingStatus.innerHTML = `<span style="color: #ef4444;">❌ Studio Failed to Start: ${err.message}</span><br><br><button onclick="window.location.reload()" class="pgfx-btn">Reload Page</button>`;
@@ -1244,7 +1245,6 @@ class LogoStudioUI {
             // Polygon / Polyline
             this.canvas._nodeControls = poly.points.map((p, index) => {
                 const point = poly.points[index];
-                // Compute initial absolute screen coordinates of control using 2D transform matrix & pathOffset
                 const matrix = poly.calcTransformMatrix();
                 const canvasPoint = fabric.util.transformPoint({
                     x: point.x - poly.pathOffset.x,
@@ -1266,7 +1266,6 @@ class LogoStudioUI {
                 });
 
                 control.on('moving', () => {
-                    // Convert control's canvas coordinates back to polygon local coordinates using inverse matrix
                     const invMatrix = fabric.util.invertTransform(poly.calcTransformMatrix());
                     const localPoint = fabric.util.transformPoint({
                         x: control.left,
@@ -1280,9 +1279,240 @@ class LogoStudioUI {
 
                 return control;
             });
+
+            // ─── Midpoint controls for arc segments ──────────────────────
+            if (!poly.pgfx_curves) poly.pgfx_curves = {};
+            this.canvas._midControls = [];
+            const n = poly.points.length;
+            for (let i = 0; i < n; i++) {
+                const j = (i + 1) % n;
+                const pA = poly.points[i];
+                const pB = poly.points[j];
+                const mx = (pA.x + pB.x) / 2;
+                const my = (pA.y + pB.y) / 2;
+                const segKey = `${i}-${j}`;
+                const curve = poly.pgfx_curves[segKey];
+
+                const matrix = poly.calcTransformMatrix();
+                const basePoint = fabric.util.transformPoint({
+                    x: mx - poly.pathOffset.x,
+                    y: my - poly.pathOffset.y
+                }, matrix);
+                let ctrlPt = { x: basePoint.x, y: basePoint.y };
+                if (curve) {
+                    const invMatrix = fabric.util.invertTransform(poly.calcTransformMatrix());
+                    const localCurve = fabric.util.transformPoint({ x: curve.cx, y: curve.cy }, invMatrix);
+                    const offset = { x: localCurve.x - mx, y: localCurve.y - my };
+                    ctrlPt = {
+                        x: basePoint.x + offset.x,
+                        y: basePoint.y + offset.y,
+                    };
+                }
+
+                const midCtrl = new fabric.Circle({
+                    radius: 5,
+                    fill: curve ? '#f59e0b' : '#fbbf24',
+                    stroke: 'white',
+                    strokeWidth: 1.5,
+                    left: ctrlPt.x,
+                    top: ctrlPt.y,
+                    originX: 'center',
+                    originY: 'center',
+                    hasBorders: false,
+                    hasControls: false,
+                    name: 'mid_control',
+                    pgfx_segKey: segKey,
+                });
+
+                midCtrl.on('moving', () => {
+                    const invMatrix = fabric.util.invertTransform(poly.calcTransformMatrix());
+                    const localPt = fabric.util.transformPoint({
+                        x: midCtrl.left,
+                        y: midCtrl.top
+                    }, invMatrix);
+                    const rawMx = (pA.x + pB.x) / 2;
+                    const rawMy = (pA.y + pB.y) / 2;
+                    poly.pgfx_curves[segKey] = {
+                        cx: localPt.x,
+                        cy: localPt.y,
+                    };
+                    midCtrl.fill = '#f59e0b';
+                    this._updatePolyCurveOverlay(poly);
+                    this.canvas.requestRenderAll();
+                });
+
+                this.canvas._midControls.push(midCtrl);
+            }
+
+            // Create or update the curve overlay path
+            this._updatePolyCurveOverlay(poly);
+            if (poly.pgfx_overlay) {
+                if (!this.canvas.contains(poly.pgfx_overlay)) {
+                    this.canvas.add(poly.pgfx_overlay);
+                }
+            }
+
+            // Dim original polygon while editing with arcs
+            if (Object.keys(poly.pgfx_curves).length > 0) {
+                poly.opacity = 0.4;
+            }
         }
 
         this.canvas.add(...this.canvas._nodeControls);
+        if (this.canvas._midControls) {
+            this.canvas.add(...this.canvas._midControls);
+        }
+
+        // Show Clear Arcs button when editing polygon/polyline
+        const clearBtn = document.getElementById('pgfx-clear-arcs');
+        if (clearBtn) {
+            clearBtn.style.display = poly.type === 'polygon' || poly.type === 'polyline' ? 'inline-block' : 'none';
+        }
+        this.canvas.requestRenderAll();
+    }
+
+    // ─── Curved polygon helpers ──────────────────────────────────────────
+
+    _updatePolyCurveOverlay(poly) {
+        if (!poly.pgfx_curves || Object.keys(poly.pgfx_curves).length === 0) {
+            if (poly.pgfx_overlay && this.canvas) {
+                this.canvas.remove(poly.pgfx_overlay);
+                poly.pgfx_overlay = null;
+            }
+            return;
+        }
+        const pts = poly.points;
+        const n = pts.length;
+        const pathCommands = [];
+        for (let i = 0; i < n; i++) {
+            const j = (i + 1) % n;
+            const pA = pts[i];
+            const pB = pts[j];
+            const segKey = `${i}-${j}`;
+            const curve = poly.pgfx_curves[segKey];
+            if (i === 0) {
+                pathCommands.push(['M', pA.x, pA.y]);
+            }
+            if (curve) {
+                pathCommands.push(['Q', curve.cx, curve.cy, pB.x, pB.y]);
+            } else {
+                pathCommands.push(['L', pB.x, pB.y]);
+            }
+        }
+        pathCommands.push(['Z']);
+
+        const path = new fabric.Path(pathCommands, {
+            fill: poly.fill || '#ffffff',
+            stroke: poly.stroke || 'transparent',
+            strokeWidth: poly.strokeWidth || 0,
+            opacity: 0.85,
+            selectable: false,
+            evented: false,
+            name: 'curve_overlay',
+        });
+        path.set(poly.calcTransformMatrix());
+        path.setCoords();
+
+        if (poly.pgfx_overlay) {
+            this.canvas.remove(poly.pgfx_overlay);
+        }
+        poly.pgfx_overlay = path;
+        this.canvas.add(path);
+        this.canvas.requestRenderAll();
+    }
+
+    _polygonToCurvedPath(poly) {
+        const pts = poly.points;
+        const n = pts.length;
+        const curves = poly.pgfx_curves || {};
+        const pathCommands = [];
+        for (let i = 0; i < n; i++) {
+            const j = (i + 1) % n;
+            const pA = pts[i];
+            const pB = pts[j];
+            const segKey = `${i}-${j}`;
+            const curve = curves[segKey];
+            if (i === 0) {
+                pathCommands.push(['M', pA.x, pA.y]);
+            }
+            if (curve) {
+                pathCommands.push(['Q', curve.cx, curve.cy, pB.x, pB.y]);
+            } else {
+                pathCommands.push(['L', pB.x, pB.y]);
+            }
+        }
+        pathCommands.push(['Z']);
+
+        const path = new fabric.Path(pathCommands, {
+            left: poly.left,
+            top: poly.top,
+            fill: poly.fill || '#ffffff',
+            stroke: poly.stroke || 'transparent',
+            strokeWidth: poly.strokeWidth || 0,
+            opacity: poly.opacity,
+            angle: poly.angle,
+            skewX: poly.skewX,
+            skewY: poly.skewY,
+            scaleX: poly.scaleX,
+            scaleY: poly.scaleY,
+            flipX: poly.flipX,
+            flipY: poly.flipY,
+            shadow: poly.shadow ? fabric.util.object.clone(poly.shadow) : null,
+            pgfx_curves: poly.pgfx_curves || {},
+        });
+        path.setCoords();
+        return path;
+    }
+
+    _replaceCanvasObject(oldObj, newObj) {
+        if (!this.canvas) return newObj;
+        const index = this.canvas.getObjects().indexOf(oldObj);
+        this.canvas.remove(oldObj);
+        if (index >= 0) {
+            this.canvas.insertAt(newObj, index, false);
+        } else {
+            this.canvas.add(newObj);
+        }
+        this.canvas.setActiveObject(newObj);
+        this.canvas.requestRenderAll();
+        return newObj;
+    }
+
+    _clearPolyCurves() {
+        const poly = this.currentlyEditingPoly;
+        if (!poly) return;
+        if (poly.pgfx_curves) {
+            poly.pgfx_curves = {};
+        }
+        if (poly.pgfx_overlay && this.canvas) {
+            this.canvas.remove(poly.pgfx_overlay);
+            poly.pgfx_overlay = null;
+        }
+        poly.opacity = 1;
+        // Reset mid-control fills and positions
+        if (this.canvas && this.canvas._midControls) {
+            this.canvas._midControls.forEach(ctrl => {
+                ctrl.fill = '#fbbf24';
+                // Snap back to geometric midpoint
+                const segKey = ctrl.pgfx_segKey;
+                if (segKey) {
+                    const parts = segKey.split('-').map(Number);
+                    const pA = poly.points[parts[0]];
+                    const pB = poly.points[parts[1]];
+                    if (pA && pB) {
+                        const matrix = poly.calcTransformMatrix();
+                        const mx = (pA.x + pB.x) / 2;
+                        const my = (pA.y + pB.y) / 2;
+                        const canvasPt = fabric.util.transformPoint({
+                            x: mx - poly.pathOffset.x,
+                            y: my - poly.pathOffset.y
+                        }, matrix);
+                        ctrl.left = canvasPt.x;
+                        ctrl.top = canvasPt.y;
+                    }
+                }
+            });
+        }
         this.canvas.requestRenderAll();
     }
 
@@ -1297,6 +1527,28 @@ class LogoStudioUI {
         if (this.canvas) {
             this.canvas.remove(...(this.canvas._nodeControls || []));
             this.canvas._nodeControls = [];
+            this.canvas.remove(...(this.canvas._midControls || []));
+            this.canvas._midControls = [];
+        }
+
+        // Remove curve overlay and convert to path if arcs exist
+        const hasCurves = poly.pgfx_curves && Object.keys(poly.pgfx_curves).length > 0;
+        if (hasCurves) {
+            if (poly.pgfx_overlay && this.canvas) {
+                this.canvas.remove(poly.pgfx_overlay);
+                poly.pgfx_overlay = null;
+            }
+            poly.opacity = 1;
+            const path = this._polygonToCurvedPath(poly);
+            this._replaceCanvasObject(poly, path);
+        } else {
+            if (poly.pgfx_overlay && this.canvas) {
+                this.canvas.remove(poly.pgfx_overlay);
+                poly.pgfx_overlay = null;
+            }
+            poly.opacity = 1;
+            poly._setPositionDimensions({});
+            poly.setCoords();
         }
 
         const btn = document.getElementById('pgfx-tool-node');
@@ -1304,11 +1556,11 @@ class LogoStudioUI {
             btn.classList.remove('pgfx-btn-primary');
         }
 
-        // Recalculate dimensions based on final points/segments position
-        poly._setPositionDimensions({});
-        poly.setCoords();
-
         this.currentlyEditingPoly = null;
+
+        // Hide Clear Arcs button
+        const clearBtn = document.getElementById('pgfx-clear-arcs');
+        if (clearBtn) clearBtn.style.display = 'none';
 
         if (this.canvas) {
             this.canvas.requestRenderAll();
@@ -1707,6 +1959,17 @@ class LogoStudioUI {
             _valEl('pgfx-letter-spacing-val', String(Math.round(letterVal)));
             _valEl('pgfx-line-spacing-val', parseFloat(lineVal).toFixed(2));
             _valEl('pgfx-text-curvature-val', String(Math.round(curvatureVal)));
+        }
+
+        // Rect-specific: corner radius
+        const cornerRow = document.getElementById('pgfx-corner-row');
+        if (active.type === 'rect') {
+            cornerRow.style.display = 'flex';
+            const r = active.rx || 0;
+            document.getElementById('pgfx-corner-radius').value = r;
+            _valEl('pgfx-corner-radius-val', String(Math.round(r)));
+        } else {
+            cornerRow.style.display = 'none';
         }
     }
 
@@ -2179,6 +2442,114 @@ class LogoStudioUI {
         input.click();
     }
 
+    // ─── Preset Management ───────────────────────────────────────────────
+
+    _presetAutoName() {
+        const getVal = (name) => {
+            const w = this.node?.widgets?.find(w => w.name === name);
+            return w ? w.value : '';
+        };
+        const style = getVal('style_mode') || 'creative';
+        const material = getVal('material') || 'default';
+        const text = (this.lastCanvasText || getVal('text_input') || '');
+        const words = text.trim().split(/\s+/).filter(Boolean);
+        const keyword = words.length > 0 ? words.slice(0, 2).join('_') : 'untitled';
+        const styleLabel = style.replace(/_/g, ' ');
+        const matLabel = material.replace(/_/g, ' ');
+        return `${styleLabel} - ${matLabel} - ${keyword}`;
+    }
+
+    async _refreshPresetList() {
+        const select = document.getElementById('pgfx-preset-select');
+        if (!select) return;
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">-- Select preset --</option>';
+        try {
+            const res = await fetch('/pgfx/presets/list');
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.presets) {
+                for (const p of data.presets) {
+                    const opt = document.createElement('option');
+                    opt.value = p.name;
+                    opt.textContent = p.name;
+                    select.appendChild(opt);
+                }
+            }
+            if (currentVal) {
+                const exists = [...select.options].some(o => o.value === currentVal);
+                if (exists) select.value = currentVal;
+            }
+        } catch (e) {
+            console.warn('[PGFX] Failed to fetch presets:', e);
+        }
+    }
+
+    async _savePreset() {
+        const suggested = this._presetAutoName();
+        const name = prompt('Save design preset as:', suggested);
+        if (!name || !name.trim()) return;
+        const config = this.collectProjectState();
+        config.name = name.trim();
+        try {
+            const res = await fetch('/pgfx/presets/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name.trim(), config }),
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                alert('Failed to save preset: ' + (err.error || 'unknown error'));
+                return;
+            }
+            await this._refreshPresetList();
+        } catch (e) {
+            alert('Failed to save preset: ' + e.message);
+        }
+    }
+
+    async _loadPreset() {
+        const select = document.getElementById('pgfx-preset-select');
+        if (!select || !select.value) return;
+        const name = select.value;
+        try {
+            const res = await fetch(`/pgfx/presets/load/${encodeURIComponent(name)}`);
+            if (!res.ok) {
+                alert('Preset not found');
+                return;
+            }
+            const data = await res.json();
+            if (data.config) {
+                this._restoreProjectState(data.config);
+                console.log(`[PGFX] Loaded preset: ${name}`);
+            }
+        } catch (e) {
+            alert('Failed to load preset: ' + e.message);
+        }
+    }
+
+    async _deletePreset() {
+        const select = document.getElementById('pgfx-preset-select');
+        if (!select || !select.value) return;
+        const name = select.value;
+        if (!confirm(`Delete preset "${name}"?`)) return;
+        try {
+            const res = await fetch('/pgfx/presets/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                alert('Failed to delete preset: ' + (err.error || 'unknown error'));
+                return;
+            }
+            await this._refreshPresetList();
+        } catch (e) {
+            alert('Failed to delete preset: ' + e.message);
+        }
+    }
+
     _restoreProjectState(state) {
         // 1. Restore editor settings
         if (state.editor) {
@@ -2383,6 +2754,11 @@ class LogoStudioUI {
         document.getElementById('pgfx-save-project').onclick = () => this.saveProject();
         document.getElementById('pgfx-load-project').onclick = () => this.loadProject();
 
+        // Presets
+        document.getElementById('pgfx-preset-save-btn').onclick = () => this._savePreset();
+        document.getElementById('pgfx-preset-load-btn').onclick = () => this._loadPreset();
+        document.getElementById('pgfx-preset-delete-btn').onclick = () => this._deletePreset();
+
         // --- ADD ELEMENTS ---
         document.getElementById('pgfx-add-text').onclick = () => {
             const font = document.getElementById('pgfx-font-select').value;
@@ -2399,7 +2775,8 @@ class LogoStudioUI {
         document.getElementById('pgfx-add-rect').onclick = () => {
             const rect = new fabric.Rect({
                 left: this.targetWidth / 2, top: this.targetHeight / 2,
-                width: 200, height: 200, fill: '#ffffff', originX: 'center', originY: 'center'
+                width: 200, height: 200, fill: '#ffffff', originX: 'center', originY: 'center',
+                rx: 0, ry: 0
             });
             this.canvas.add(rect);
             this.canvas.setActiveObject(rect);
@@ -2757,6 +3134,19 @@ class LogoStudioUI {
             const active = this.canvas.getActiveObject();
             if (active) {
                 active.set('strokeWidth', parseInt(e.target.value));
+                commitCanvasChange();
+            }
+        };
+
+        // Corner radius (rects only)
+        document.getElementById('pgfx-corner-radius').oninput = (e) => {
+            const valEl = document.getElementById('pgfx-corner-radius-val');
+            if (valEl) valEl.textContent = e.target.value;
+            const active = this.canvas.getActiveObject();
+            if (active && active.type === 'rect') {
+                const v = parseInt(e.target.value);
+                active.set('rx', v);
+                active.set('ry', v);
                 commitCanvasChange();
             }
         };
@@ -3504,6 +3894,11 @@ class LogoStudioUI {
                 commitCanvasChange();
                 console.log("[PGFX Studio] Cleared " + objects.length + " sketch elements.");
             }
+        };
+
+        // Clear Arcs (in node edit mode)
+        document.getElementById('pgfx-clear-arcs').onclick = () => {
+            this._clearPolyCurves();
         };
 
         // --- CAMERA OVERLAY EVENTS ---
@@ -5421,6 +5816,13 @@ class LogoStudioUI {
                                     <input type="range" id="pgfx-stroke-width" min="0" max="100" value="0" style="flex: 1;">
                                     <span id="pgfx-stroke-width-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">0</span>
                                 </div>
+
+                                <!-- CORNER RADIUS (Rect only) -->
+                                <div class="pgfx-row" id="pgfx-corner-row" style="display: none;">
+                                    <span style="font-size: 11px; color:#aaa; width: 60px;">Radius</span>
+                                    <input type="range" id="pgfx-corner-radius" min="0" max="100" value="0" style="flex: 1;">
+                                    <span id="pgfx-corner-radius-val" style="font-size: 10px; color:#71717a; font-family: monospace; width: 38px; text-align: right;">0</span>
+                                </div>
                             </div>
 
                             <!-- EFFECTS & DEPTH -->
@@ -5607,6 +6009,7 @@ class LogoStudioUI {
                                 </div>
                                 <div class="pgfx-toolbar-separator"></div>
                                 <button id="pgfx-clear-draw" class="pgfx-btn pgfx-btn-danger" title="Clear all free-draw paths">🧹 Clear Sketch</button>
+                                <button id="pgfx-clear-arcs" class="pgfx-btn pgfx-btn-danger" style="display: none;" title="Clear all arc curves and convert back to straight segments">🌀 Clear Arcs</button>
                             </div>
 
                             <div class="pgfx-studio-canvas-wrapper">
@@ -5685,6 +6088,22 @@ class LogoStudioUI {
                                     <button id="pgfx-load-project" class="pgfx-btn" style="width: 100%; font-size: 10px; padding: 6px 2px;" title="Load project file">📂 Load</button>
                                 </div>
                             </div>
+
+                            <!-- PRESETS -->
+                            <div class="pgfx-input-group" style="padding: 10px 8px;">
+                                <label class="pgfx-label" style="font-size: 9px;">
+                                    Design Presets
+                                    <span style="font-weight: normal; opacity: 0.6; font-size: 8px;">save / load</span>
+                                </label>
+                                <select id="pgfx-preset-select" class="pgfx-select" style="width: 100%; font-size: 10px; margin-bottom: 4px;">
+                                    <option value="">-- Select preset --</option>
+                                </select>
+                                <div style="display: flex; gap: 4px;">
+                                    <button id="pgfx-preset-save-btn" class="pgfx-btn" style="flex: 1; font-size: 10px; padding: 6px 2px;" title="Save current settings as a new preset">💾 Save</button>
+                                    <button id="pgfx-preset-load-btn" class="pgfx-btn" style="flex: 1; font-size: 10px; padding: 6px 2px;" title="Load selected preset">📂 Load</button>
+                                    <button id="pgfx-preset-delete-btn" class="pgfx-btn pgfx-btn-danger" style="flex: 0; font-size: 10px; padding: 6px 6px;" title="Delete selected preset">✕</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -5711,7 +6130,7 @@ app.registerExtension({
     name: "PGFX.LogoDesignerStudio",
     async nodeCreated(node) {
         try {
-            if (node.comfyClass !== "PGFX_LogoDesignerStudio") return;
+            if (node.comfyClass !== "PGFX_LogoDesignerStudio" && node.comfyClass !== "PGFX_LogoDesignerStudioV3") return;
 
             // â”€â”€ Internal data widgets (optional inputs managed by JS, not user-facing) â”€â”€â”€â”€â”€
             const base64Widget = node.widgets.find(w => w.name === "base64_image_data");
@@ -5741,6 +6160,12 @@ app.registerExtension({
             // â”€â”€ LiteGraph node preview via onDrawForeground â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             // We detect changes by comparing the current widget value src to what we last loaded.
             // The save button resets _pgfxLastSrc so the next draw picks up the new image.
+            const getSrcFingerprint = (src) => {
+                if (!src) return "";
+                if (src.length < 1000) return src;
+                return src.length + "_" + src.substring(0, 100) + "_" + src.substring(src.length - 100);
+            };
+
             const origDrawFg = node.onDrawForeground?.bind(node);
             node.onDrawForeground = function(ctx) {
                 try {
@@ -5749,10 +6174,13 @@ app.registerExtension({
                     const currentSrc = base64Widget?.value || "";
                     if (!currentSrc) return;
 
-                    // If the src changed (or was reset by the save button), reload the image
-                    if (!this._pgfxPreviewImg || this._pgfxLastSrc !== currentSrc) {
-                        this._pgfxLastSrc    = currentSrc;
-                        this._pgfxPreviewImg = null;
+                    const srcFingerprint = getSrcFingerprint(currentSrc);
+
+                    // If the src changed, reload the image using a fast fingerprint comparison
+                    if (!this._pgfxPreviewImg || this._pgfxLastFingerprint !== srcFingerprint) {
+                        this._pgfxLastFingerprint = srcFingerprint;
+                        this._pgfxLastSrc         = currentSrc;
+                        this._pgfxPreviewImg      = null;
                         const img = new Image();
                         img.onload  = () => { app.graph?.setDirtyCanvas(true, true); };
                         img.onerror = () => { this._pgfxPreviewImg = null; };
@@ -5857,7 +6285,7 @@ app.registerExtension({
 app.registerExtension({
     name: "PGFX.ImageVectorizer",
     async nodeCreated(node) {
-        if (node.comfyClass !== "PGFX_ImageVectorizer") return;
+        if (node.comfyClass !== "PGFX_ImageVectorizer" && node.comfyClass !== "PGFX_ImageVectorizerV3") return;
 
         // Use a helper to find widgets by name to be 100% sure we don't mix up indices
         const getWidget = (name) => node.widgets?.find(w => w.name === name);

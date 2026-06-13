@@ -582,5 +582,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_LTXVInContextSampler": "PGFX LTXV In Context Sampler",
+    "PGFX_LTXVInContextSampler": "???? Legacy \uD83C\uDFA5 PGFX LTXV In Context Sampler",
 }

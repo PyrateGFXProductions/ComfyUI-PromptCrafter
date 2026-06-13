@@ -5,13 +5,19 @@ For full feature showcases and installation guides, see `README.md`.
 
 ---
 
-## `PGFX_VisualFolderLoader` (Visual Folder Browser)
-A high-performance image explorer designed for massive output collections.
+## `PGFX_VisualFolderLoader` (Visual Folder Browser & Dataset Curation Workspace)
+A high-performance image explorer and dataset curator designed to preview directories and manage image captions.
 
 **Key Technical Behaviors:**
 - **Recursive Deep-Scan:** Uses advanced directory walking to find every subfolder within your output path, no matter how deep.
-- **Thumbnail Optimization:** Appends `&preview=true` to all internal requests, forcing the server to send small, compressed previews. This prevents browser lag when viewing hundreds of high-res images.
-- **Strict Pagination:** Limits rendering to 12 items per page to maintain high frame rates in the ComfyUI canvas.
+- **Thumbnail Optimization:** Forces compressed previews when listing folders, preventing browser lag when viewing hundreds of high-res images.
+- **Strict Pagination:** Limits rendering page size to maintain high canvas rendering frame rates.
+- **Dataset Captioning Workspace:**
+  - Manages `.txt` sidecar files stored next to each image, ideal for model/LoRA training datasets.
+  - Displays a green `TXT` badge in the bottom-right corner of already-captioned thumbnails in the grid.
+  - Supports on-demand single-image caption generation (`✨ Generate`) and sequential, cancelable batch captioning (`📝 Caption All` with a `🛑 Stop Batch` control).
+  - Includes a background `auto_captioning` execution switch (`Always`, `If Missing`, `Disabled`) to write sidecar text files on the fly during workflow runs.
+- **Canvas Prompt Output:** Outputs a third parameter (`caption` as a `STRING`) representing the loaded image's caption text, making it easy to route tags/prompts directly into CLIP encoders.
 - **Technical Metadata Panel:** Real-time extraction of file size, resolution, and format upon selection.
 
 ---

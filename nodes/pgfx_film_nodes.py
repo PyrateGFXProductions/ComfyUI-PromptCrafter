@@ -1546,14 +1546,14 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_FilmProjectController": "Film Project Controller",
-    "PGFX_FilmCharacterRegistry": "Film Character Registry",
-    "PGFX_FilmShotArchitect": "Film Shot Architect",
-    "PGFX_FilmSaveShotVideo": "Film Save Shot Video",
-    "PGFX_FilmAudioLoader": "Film Audio Loader",
-    "PGFX_FilmAssembler": "Film Assembler",
-    "PGFX_FilmRenderProject": "Film Render Project",
-    "PGFX_FilmShotConfigExtractor": "Film Shot Config Extractor",
-    "PGFX_FilmAudioSegmenter": "Film Audio Segmenter",
-    "PGFX_FilmAutoShotIndex": "Film Auto Shot Index",
+    "PGFX_FilmProjectController": "???? Legacy \uD83C\uDFAC Film Project Controller",
+    "PGFX_FilmCharacterRegistry": "???? Legacy \uD83C\uDFAC Film Character Registry",
+    "PGFX_FilmShotArchitect": "???? Legacy \uD83C\uDFAC Film Shot Architect",
+    "PGFX_FilmSaveShotVideo": "???? Legacy \uD83C\uDFAC Film Save Shot Video",
+    "PGFX_FilmAudioLoader": "???? Legacy \uD83C\uDFAC Film Audio Loader",
+    "PGFX_FilmAssembler": "???? Legacy \uD83C\uDFAC Film Assembler",
+    "PGFX_FilmRenderProject": "???? Legacy \uD83C\uDFAC Film Render Project",
+    "PGFX_FilmShotConfigExtractor": "???? Legacy \uD83C\uDFAC Film Shot Config Extractor",
+    "PGFX_FilmAudioSegmenter": "???? Legacy \uD83C\uDFAC Film Audio Segmenter",
+    "PGFX_FilmAutoShotIndex": "???? Legacy \uD83C\uDFAC Film Auto Shot Index",
 }

@@ -182,5 +182,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_SubtitleStyler": "📝 Subtitle Styler"
+    "PromptCrafter_SubtitleStyler": "???? Legacy ?? Subtitle Styler"
 }

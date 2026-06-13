@@ -996,5 +996,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_AudioSplitter_v2": "🎤 Audio Splitter v2",
+    "PromptCrafter_AudioSplitter_v2": "???? Legacy ?? Audio Splitter v2",
 }

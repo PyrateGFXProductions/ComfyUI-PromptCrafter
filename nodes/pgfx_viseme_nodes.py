@@ -1282,9 +1282,9 @@ NODE_CLASS_MAPPINGS = {
     "PGFX_VisemeCondImagePrep": PGFX_VisemeCondImagePrep,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_CinemaVisemeRig": "👄 Cinema Viseme Rig",
-    "PGFX_ScriptGuidedVisemes": "👄 Script-Guided Visemes",
-    "PGFX_UniversalVisemeGuides": "👄 Universal Viseme Guides",
-    "PGFX_WordTimingJsonBuilder": "📝 Word Timing JSON Builder",
-    "PGFX_VisemeCondImagePrep": "🎭 Viseme → Conditioning Bridge",
+    "PGFX_CinemaVisemeRig": "???? Legacy ?? Cinema Viseme Rig",
+    "PGFX_ScriptGuidedVisemes": "???? Legacy ?? Script-Guided Visemes",
+    "PGFX_UniversalVisemeGuides": "???? Legacy ?? Universal Viseme Guides",
+    "PGFX_WordTimingJsonBuilder": "???? Legacy ?? Word Timing JSON Builder",
+    "PGFX_VisemeCondImagePrep": "???? Legacy ?? Viseme  Conditioning Bridge",
 }

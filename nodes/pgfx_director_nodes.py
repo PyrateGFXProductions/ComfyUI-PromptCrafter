@@ -176,5 +176,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PromptCrafter_DirectorAgent": "🎬 Director Agent"
+    "PromptCrafter_DirectorAgent": "???? Legacy ?? Director Agent"
 }

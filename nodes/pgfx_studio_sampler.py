@@ -139,5 +139,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PGFX_Studio_Sampler": "🎛️ Studio Sampler (Universal)"
+    "PGFX_Studio_Sampler": "???? Legacy ??? Studio Sampler (Universal)"
 }
