@@ -120,7 +120,7 @@ class PGFX_VisualFolderLoader:
                 "caption_model": (api_clients.get_all_models(), {"tooltip": "Vision-capable model for auto-captioning."}),
             },
             "optional": {
-                "caption_prompt": ("STRING", {"default": "", "multiline": True, "placeholder": "Describe this image in detail, focusing on the subject, setting, composition, lighting, and style. Include the subject's appearance, pose, background, mood, and any notable visual elements.", "tooltip": "Custom prompt sent to the vision model when generating captions. Leave blank to use the built-in default captioning prompt."}),
+                "caption_prompt": ("STRING", {"default": "", "multiline": True, "placeholder": "Describe this image.", "tooltip": "Custom prompt sent to the vision model when generating captions. Leave blank to use the built-in default captioning prompt."}),
                 "auto_captioning": (["Disabled", "Always (Overwrite)", "If Missing"], {"default": "Disabled", "tooltip": "Controls when auto-captioning runs during workflow execution. 'Always' overwrites existing .txt files; 'If Missing' only creates captions for images that don't already have one."}),
             },
         }
@@ -139,11 +139,11 @@ class PGFX_VisualFolderLoader:
             if not p_text or not p_text.strip():
                 original_prompt = _extract_original_prompt(image_path)
                 if original_prompt:
-                    p_text = f"Describe this image in detail. Use the following as ground truth context for what is depicted: {original_prompt}"
+                    p_text = f"Describe this image. Original prompt: {original_prompt}"
                 else:
-                    p_text = "Describe this image in detail, focusing on the subject, setting, composition, lighting, and style. Include the subject's appearance, pose, background, mood, and any notable visual elements."
+                    p_text = "Describe this image."
             else:
-                p_text = f"Describe this image in detail. Use the following as ground truth context for what is depicted: {p_text}"
+                p_text = f"Describe this image. Context: {p_text}"
             with Image.open(image_path) as pimg:
                 img_tensor = utils.pil2tensor(pimg.convert("RGB"))
             ok, caption = api_clients.query_model_auto(
@@ -238,11 +238,11 @@ class PGFX_VisualFolderLoader:
                     if not p_text or not p_text.strip():
                         original_prompt = _extract_original_prompt(image_path)
                         if original_prompt:
-                            p_text = f"Describe this image in detail. Use the following as ground truth context for what is depicted: {original_prompt}"
+                            p_text = f"Describe this image. Original prompt: {original_prompt}"
                         else:
-                            p_text = "Describe this image in detail, focusing on the subject, setting, composition, lighting, and style. Include the subject's appearance, pose, background, mood, and any notable visual elements."
+                            p_text = "Describe this image."
                     else:
-                        p_text = f"Describe this image in detail. Use the following as ground truth context for what is depicted: {p_text}"
+                        p_text = f"Describe this image. Context: {p_text}"
                     with Image.open(image_path) as pimg:
                         img_tensor = utils.pil2tensor(pimg.convert("RGB"))
                     ok, caption = api_clients.query_model_auto(
@@ -639,11 +639,11 @@ async def generate_caption(request):
         if not user_prompt or not user_prompt.strip():
             original_prompt = _extract_original_prompt(image_path)
             if original_prompt:
-                prompt_text = f"Describe this image in detail. Use the following as ground truth context for what is depicted: {original_prompt}"
+                prompt_text = f"Describe this image. Original prompt: {original_prompt}"
             else:
-                prompt_text = "Describe this image in detail, focusing on the subject, setting, composition, lighting, and style. Include the subject's appearance, pose, background, mood, and any notable visual elements."
+                prompt_text = "Describe this image."
         else:
-            prompt_text = f"Describe this image in detail. Use the following as ground truth context for what is depicted: {user_prompt}"
+            prompt_text = f"Describe this image. Context: {user_prompt}"
 
         with Image.open(image_path) as img:
             img_tensor = utils.pil2tensor(img.convert("RGB"))
@@ -722,11 +722,11 @@ async def caption_batch(request):
                 if not user_prompt or not user_prompt.strip():
                     original_prompt = _extract_original_prompt(entry.path)
                     if original_prompt:
-                        local_prompt = f"Describe this image in detail. Use the following as ground truth context for what is depicted: {original_prompt}"
+                        local_prompt = f"Describe this image. Original prompt: {original_prompt}"
                     else:
-                        local_prompt = "Describe this image in detail, focusing on the subject, setting, composition, lighting, and style. Include the subject's appearance, pose, background, mood, and any notable visual elements."
+                        local_prompt = "Describe this image."
                 else:
-                    local_prompt = f"Describe this image in detail. Use the following as ground truth context for what is depicted: {user_prompt}"
+                    local_prompt = f"Describe this image. Context: {user_prompt}"
                 ok, caption = api_clients.query_model_auto(
                     model, prompt=local_prompt, images=[img_tensor],
                     prefer_chat=True, temperature=0.2, seed=42, timeout=120,
