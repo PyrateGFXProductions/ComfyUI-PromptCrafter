@@ -963,6 +963,36 @@ async def delete_files(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+if V3_AVAILABLE:
+    class PGFX_VisualFolderLoaderV3(v3_io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return v3_io.Schema(
+                node_id="PGFX_VisualFolderLoaderV3",
+                display_name="🖼️ PGFX Folder Image Loader (V3)",
+                category="☠️PGFX /Utils",
+                description=get_node_description("PGFX_VisualFolderLoader"),
+                inputs=[
+                    v3_io.String.Input("folder", default=".", multiline=False),
+                    v3_io.String.Input("selected_image", default="", multiline=False),
+                    v3_io.Combo.Input("caption_model", options=api_clients.get_all_models()),
+                    v3_io.String.Input("caption_prompt", default="", multiline=True, optional=True),
+                    v3_io.Combo.Input("auto_captioning", options=["Disabled", "Always (Overwrite)", "If Missing"], default="Disabled", optional=True),
+                ],
+                outputs=[
+                    v3_io.Image.Output(display_name="image"),
+                    v3_io.Mask.Output(display_name="mask"),
+                    v3_io.String.Output(display_name="caption"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, folder, selected_image, caption_model, caption_prompt=None, auto_captioning="Disabled"):
+            node = PGFX_VisualFolderLoader()
+            result = node.load_image(folder, selected_image, caption_model, caption_prompt, auto_captioning)
+            return v3_io.NodeOutput(*result)
+
+
 NODE_CLASS_MAPPINGS = {
     "PGFX_VisualFolderLoader": PGFX_VisualFolderLoader,
 }
@@ -970,3 +1000,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_VisualFolderLoader": "🖼️ PGFX Folder Image Loader",
 }
+
+if V3_AVAILABLE:
+    NODE_CLASS_MAPPINGS["PGFX_VisualFolderLoaderV3"] = PGFX_VisualFolderLoaderV3
+

@@ -1715,6 +1715,18 @@ class OllamaClient:
                 
                 # Check for rate limit or service unavailable
                 if status_code in [429, 503] and retry_count < config.MAX_RETRIES:
+                    # Special check: If it's a 429 (Rate Limit) but the message indicates a hard/weekly usage limit, stop retrying.
+                    if status_code == 429 and hasattr(e, 'response') and e.response is not None:
+                        try:
+                            err_text = e.response.text.lower()
+                            if "usage limit" in err_text or "upgrade for" in err_text:
+                                print(f"\033[91m[PromptCrafter] Hard usage limit reached ({self.provider}). Skipping retries.\033[0m")
+                                if isinstance(e, requests.exceptions.HTTPError):
+                                    return False, self._format_http_error(e), status_code
+                                return False, f"{self.provider.capitalize()} API Error: Hard usage limit reached.", status_code
+                        except Exception:
+                            pass
+
                     sleep_time = (config.RETRY_BACKOFF_FACTOR ** retry_count) * 2  # Exponential backoff
                     print(f"\033[93m[PromptCrafter] {self.provider.capitalize()} API returned {status_code}. Retrying in {sleep_time:.1f}s (Attempt {retry_count + 1}/{config.MAX_RETRIES})...\033[0m")
                     time.sleep(sleep_time)

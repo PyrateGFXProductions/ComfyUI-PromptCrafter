@@ -18,6 +18,7 @@ const injectStyles = () => {
             font-family: 'Inter', system-ui, sans-serif;
             pointer-events: auto;
             box-sizing: border-box;
+            will-change: transform;
         }
         .pgfx-pathbar {
             display: flex;
@@ -1862,6 +1863,8 @@ app.registerExtension({
         nodeType.prototype.onNodeCreated = function() {
             if (!this.addDOMWidget) {
                 this.addDOMWidget = (name, type, element, options = {}) => {
+                    if (element._pgfx_widget) return element._pgfx_widget;
+
                     const widget = {
                         type: type,
                         name: name,
@@ -1873,14 +1876,19 @@ app.registerExtension({
                         computeSize(width) { return [width, 440]; },
                         height: 440,
                     };
+                    element._pgfx_widget = widget;
 
                     element.style.position = "absolute";
                     element.style.zIndex = 10;
                     element.style.boxSizing = "border-box";
+                    element.style.left = "0px";
+                    element.style.top = "0px";
                     this.widgets.push(widget);
 
                     const canvasParent = app.canvas.el.parentElement;
-                    canvasParent.appendChild(element);
+                    if (element.parentElement !== canvasParent) {
+                        canvasParent.appendChild(element);
+                    }
 
                     const onRemoved = this.onRemoved;
                     this.onRemoved = function() {
@@ -1888,49 +1896,63 @@ app.registerExtension({
                         onRemoved?.apply(this, arguments);
                     };
 
-                    let lastX, lastY, lastW, lastScale, lastCollapsed;
+                    let lastX, lastY, lastW, lastScale, lastCollapsed, lastYOffset;
 
                     const updatePosition = () => {
-                        if (!this.graph || !element.parentElement) return;
+                        if (!this.graph || !element.parentElement || !app.canvas?.ds) return;
                         
                         const scale = app.canvas.ds.scale;
                         const offset = app.canvas.ds.offset;
                         const collapsed = !!this.flags?.collapsed;
                         
+                        if (collapsed) {
+                            if (lastCollapsed !== true) {
+                                element.style.display = "none";
+                                lastCollapsed = true;
+                            }
+                            return;
+                        }
+
                         const widgetIndex = this.widgets.indexOf(widget);
                         let yOffset = 0;
-                        for (let i = 0; i < widgetIndex; i++) {
-                            yOffset += this.widgets[i].computeSize ? this.widgets[i].computeSize()[1] : 20;
+                        if (widgetIndex > 0) {
+                            for (let i = 0; i < widgetIndex; i++) {
+                                const w = this.widgets[i];
+                                if (w.computeSize) {
+                                    const sz = w.computeSize(this.size[0]);
+                                    yOffset += (sz && sz[1]) ? sz[1] : 20;
+                                } else if (w.height) {
+                                    yOffset += w.height;
+                                } else {
+                                    yOffset += 20;
+                                }
+                            }
                         }
 
                         const x = (this.pos[0] + offset[0]) * scale;
                         const y = (this.pos[1] + offset[1] + 60 + yOffset) * scale;
                         const w = (this.size[0] - 20) * scale;
 
-                        if (x === lastX && y === lastY && w === lastW && scale === lastScale && collapsed === lastCollapsed) {
+                        if (x === lastX && y === lastY && w === lastW && scale === lastScale && yOffset === lastYOffset && lastCollapsed === false) {
                             return;
                         }
 
-                        lastX = x; lastY = y; lastW = w; lastScale = scale; lastCollapsed = collapsed;
-
-                        if (collapsed) {
-                            element.style.display = "none";
-                            return;
-                        }
+                        lastX = x; lastY = y; lastW = w; lastScale = scale; lastYOffset = yOffset; lastCollapsed = false;
 
                         element.style.display = "flex";
-                        element.style.left = `${x}px`;
-                        element.style.top = `${y}px`;
                         element.style.width = `${w}px`;
                         element.style.transformOrigin = "top left";
-                        element.style.transform = `scale(${scale})`;
+                        element.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
                     };
 
                     const origDraw = this.onDrawForeground;
-                    this.onDrawForeground = function() {
-                        updatePosition();
-                        return origDraw?.apply(this, arguments);
-                    };
+                    if (!origDraw || !origDraw._pgfx_wrapped) {
+                        this.onDrawForeground = function() {
+                            updatePosition();
+                            return origDraw?.apply(this, arguments);
+                        };
+                        this.onDrawForeground._pgfx_wrapped = true;
+                    }
 
                     return widget;
                 };

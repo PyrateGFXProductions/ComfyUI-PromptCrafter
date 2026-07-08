@@ -545,11 +545,40 @@ The final output must be in {language} only.{safety_rule}"""
         return result if ok and isinstance(result, dict) else {}
 
     @classmethod
-    def _handle_creator_exception(cls, e, num_returns=2):
+    def _handle_creator_exception(cls, e):
         import traceback
+        import torch
         error_message = f"[PromptCrafter] Error: {e}"
         print(f"\033[91m{error_message}\n{traceback.format_exc()}\033[0m")
-        return (error_message,) + (None,) * (num_returns - 1)
+        
+        # Dynamically determine the correct number of returns and their types
+        return_types = getattr(cls, "RETURN_TYPES", ("STRING", "STRING"))
+        results = []
+        for i, t in enumerate(return_types):
+            if i == 0:
+                results.append(error_message)
+            elif t == "IMAGE":
+                # Return a dummy black 64x64 tensor to prevent downstream nodes from crashing on .shape access
+                results.append(torch.zeros((1, 64, 64, 3)))
+            elif t == "MASK":
+                results.append(torch.zeros((64, 64)))
+            elif t == "LATENT":
+                results.append({"samples": torch.zeros((1, 4, 8, 8))})
+            elif t == "CONDITIONING":
+                results.append([[torch.zeros((1, 1, 1024)), {}]])
+            elif t == "AUDIO":
+                results.append({"waveform": torch.zeros((1, 1, 1024)), "sample_rate": 44100})
+            elif t == "DICT":
+                results.append({})
+            elif t == "INT":
+                results.append(0)
+            elif t == "FLOAT":
+                results.append(0.0)
+            elif t == "BOOLEAN":
+                results.append(False)
+            else:
+                results.append("")
+        return tuple(results)
 
     @staticmethod
     def _collect_images_with_weights(**kwargs):
