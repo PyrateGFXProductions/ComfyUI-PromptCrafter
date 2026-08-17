@@ -104,6 +104,9 @@ pgfx_vrgdg_bridge_nodes = _safe_import(
 image_to_svg = _safe_import(".nodes.image_to_svg", "image_to_svg")
 pgfx_logo_designer = _safe_import(".nodes.pgfx_logo_designer", "pgfx_logo_designer")
 pgfx_visual_browser = _safe_import(".nodes.pgfx_visual_browser", "pgfx_visual_browser")
+pgfx_minimax_music_nodes = _safe_import(
+    ".nodes.pgfx_minimax_music_nodes", "pgfx_minimax_music_nodes"
+)
 
 # --- MERGE ALL MAPPINGS ---
 NODE_CLASS_MAPPINGS = {}
@@ -130,6 +133,7 @@ NODE_MODULES = [
     image_to_svg,
     pgfx_logo_designer,
     pgfx_visual_browser,
+    pgfx_minimax_music_nodes,
 ]
 NODE_MODULES = [m for m in NODE_MODULES if m is not None]
 

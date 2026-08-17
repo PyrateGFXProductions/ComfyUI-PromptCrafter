@@ -830,12 +830,18 @@ try:
     from aiohttp import web
     from server import PromptServer
 
-    @PromptServer.instance.routes.get("/pgfx/presets/list")
+    def _route(method, path):
+        instance = getattr(PromptServer, "instance", None)
+        if instance is None:
+            return lambda func: func
+        return getattr(instance.routes, method)(path)
+
+    @_route("get", "/pgfx/presets/list")
     async def _list_presets(request):
         presets = DesignLibrary.list_presets()
         return web.json_response({"presets": presets})
 
-    @PromptServer.instance.routes.post("/pgfx/presets/save")
+    @_route("post", "/pgfx/presets/save")
     async def _save_preset(request):
         data = await request.json()
         name = (data.get("name", "") or "").strip()
@@ -845,7 +851,7 @@ try:
         DesignLibrary.save_preset(name, config)
         return web.json_response({"status": "ok"})
 
-    @PromptServer.instance.routes.post("/pgfx/presets/delete")
+    @_route("post", "/pgfx/presets/delete")
     async def _delete_preset(request):
         data = await request.json()
         name = (data.get("name", "") or "").strip()
@@ -854,7 +860,7 @@ try:
         DesignLibrary.delete_preset(name)
         return web.json_response({"status": "ok"})
 
-    @PromptServer.instance.routes.get("/pgfx/presets/load/{name}")
+    @_route("get", "/pgfx/presets/load/{name}")
     async def _load_preset(request):
         name = request.match_info.get("name", "")
         config = DesignLibrary.load_preset(name)

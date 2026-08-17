@@ -138,15 +138,17 @@ class PromptCrafter_BaseCreator:
         if not prompt or not prompt.strip():
             return prompt
 
-        target_model_lower = target_model.lower() if target_model else ""
-        is_ltx2 = any(kw in target_model_lower for kw in ["ltx-2", "ltx2", "ltx 2"])
-
-        if is_ltx2:
-            # Ensure LTX-2 best practices: single paragraph, present tense, no markdown
+        if config.is_ltx23_target(target_model):
+            # LTX-2.3 performs best with one flowing paragraph and no planning markup.
             cleaned = prompt.strip().strip("'\"").strip()
+            cleaned = re.sub(r"(?m)^\s*#{1,6}\s*", "", cleaned)
+            cleaned = re.sub(r"(?m)^\s*[-*]\s+", "", cleaned)
             cleaned = re.sub(r'\n+', ' ', cleaned)
             cleaned = re.sub(r'\s+', ' ', cleaned)
             return cleaned
+
+        if config.is_h3_target(target_model):
+            return prompt.strip()
 
         return prompt
 
@@ -746,7 +748,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             image_context_for_all, primary_subjects_from_images = "", []
         style_rules = cls._build_style_and_composition_rules(mode, images, run_config, user_text, "", image_context_for_all)
         user_negative_prompt = kwargs.get("negative_prompt", "")
-        ai_negative_prompt = utils._generate_negative_prompt(user_text, run_config, user_negative_prompt="")
+        ai_negative_prompt = "" if config.is_flux2_target(run_config.target_model_format) else utils._generate_negative_prompt(user_text, run_config, user_negative_prompt="")
         parts = [p for p in [user_negative_prompt, ai_negative_prompt] if p and p.strip()]
         base_negative_prompt = ", ".join(parts)
 
@@ -820,8 +822,9 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
         
         if ok and scene_prompt:
             original_content = f"{user_instructions} {user_context}".strip()
+            draft_text = scene_prompt if config.is_h3_target(run_config.target_model_format) else utils.TextCleaner.single_paragraph(scene_prompt)
             enhanced_prompt = cls._enhance_prompt_with_talent_direction(
-                utils.TextCleaner.single_paragraph(scene_prompt), 
+                draft_text,
                 original_content, 
                 run_config.target_model_format
             )
@@ -837,7 +840,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             elif target_format == "Fooocus": return f"{prompt_text} --style cinematic-default"
             elif target_format == "Stable Diffusion 3": return prompt_text
             elif target_format == "Stable Cascade": return prompt_text
-            elif target_format == "FLUX / Qwen / Hunyuan": return f"{prompt_text}, masterpiece, high quality, 8k"
+            elif config.is_flux2_target(target_format): return prompt_text
             elif target_format in ("LTX-2 (Audio/Lip Sync/Retake)", "Generic Video (Wan, etc.)"): return prompt_text
             else: return prompt_text
 
@@ -852,7 +855,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
 
         primary_subjects_from_images = [str(s).strip() for s in primary_subjects_from_images if s and str(s).strip()]
 
-        config_key_parts = (run_config.model, run_config.language, run_config.temperature, run_config.use_chat_api, run_config.max_length_words, run_config.seed, run_config.max_retries, run_config.critique_strength, run_config.simplify_for_diffusion, run_config.use_deep_think, str(run_config.style_profile))
+        config_key_parts = (run_config.model, run_config.language, run_config.temperature, run_config.use_chat_api, run_config.max_length_words, run_config.seed, run_config.max_retries, run_config.critique_strength, run_config.simplify_for_diffusion, run_config.use_deep_think, run_config.target_model_format, str(run_config.style_profile))
         cache_key = utils._get_cache_key("gen_prompt_for_scene_v1", scene_text, mode, images_with_weights, image_context_for_all, style_rules, primary_subjects_from_images, config_key_parts)
         if config.CACHE.has(cache_key):
             print(f"\033[94m[PromptCrafter] Using cached prompt for scene.\033[0m")
@@ -882,7 +885,10 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
             draft_or_err, mode, mandatory_tokens, style_rules, run_config
         )
         
-        new_positive, _ = utils._simplify_for_diffusion(scene_prompt, scene_text, run_config)
+        if config.is_h3_target(run_config.target_model_format):
+            new_positive = scene_prompt
+        else:
+            new_positive, _ = utils._simplify_for_diffusion(scene_prompt, scene_text, run_config)
         
         enhanced_positive = cls._enhance_prompt_with_talent_direction(
             new_positive, scene_text, run_config.target_model_format
@@ -906,6 +912,7 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
     def _build_refinement_prompt(current_prompt, mode, primary_items, secondary_items, style_rules, run_config, ask_for_json=False):
         """Build a refinement prompt for iterative prompt improvement."""
         style_inspiration = style_rules.get("inspiration", "") if style_rules else ""
+        model_guidelines = config.get_model_prompt_guidelines(run_config.target_model_format, mode)
         refinement_prompt = textwrap.dedent(f"""
         You are an expert prompt engineer for AI image/video generation. Your task is to refine and improve the following prompt.
 
@@ -914,6 +921,8 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
 
             **Mode:** {mode}
             **Style Inspiration:** {style_inspiration}
+
+            {model_guidelines}
 
             **Your Task:**
             Refine the prompt to be more vivid, detailed, and optimized for {mode} generation. Enhance descriptive language while maintaining the core concept.
@@ -936,7 +945,8 @@ Return ONLY the single-paragraph creative instruction. No commentary.""" .strip(
                 temperature=run_config.temperature, seed=run_config.seed, timeout=90, 
                 debug_mode=run_config.debug_mode, debug_title="Image/Video Refine (Single Pass)"
             )
-            refined_prompt = utils.TextCleaner.single_paragraph(revised_prompt if ok else current_prompt)
+            refined_text = revised_prompt if ok else current_prompt
+            refined_prompt = refined_text if config.is_h3_target(run_config.target_model_format) else utils.TextCleaner.single_paragraph(refined_text)
         else:
             refined_prompt = current_prompt
         

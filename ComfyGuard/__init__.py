@@ -250,13 +250,26 @@ class ComfyGuardInterceptor(original_popen):
 
         super().__init__(args, **kwargs)
 
-# Activate the Interceptor
-subprocess.Popen = ComfyGuardInterceptor
-ensure_runtime_rescue_snapshot()
+# Process interception changes behavior for every custom node in the host process.
+# Keep it opt-in so installing PromptCrafter cannot rewrite another node's pip calls.
+if os.getenv("PGFX_ENABLE_COMFYGUARD_INTERCEPTOR") == "1":
+    subprocess.Popen = ComfyGuardInterceptor
+    ensure_runtime_rescue_snapshot()
+    print("[ComfyGuard] Global pip interceptor enabled.")
+else:
+    print("[ComfyGuard] Global pip interceptor disabled. Set PGFX_ENABLE_COMFYGUARD_INTERCEPTOR=1 to enable it.")
+
+
+def _route(method, path):
+    """Register an optional route without requiring PromptServer during module import."""
+    instance = getattr(PromptServer, "instance", None)
+    if instance is None:
+        return lambda func: func
+    return getattr(instance.routes, method)(path)
 
 # --- API ROUTES FOR THE UI ---
 
-@PromptServer.instance.routes.get("/comfyguard/status")
+@_route("get", "/comfyguard/status")
 async def get_status(request):
     auditor = ComfyGuardAuditor()
     status_msg = auditor.audit_cuda()
@@ -268,7 +281,7 @@ async def get_status(request):
         "status_msg": status_msg
     })
 
-@PromptServer.instance.routes.post("/comfyguard/repair")
+@_route("post", "/comfyguard/repair")
 async def do_repair(request):
     global GUARD_DISABLED
     GUARD_DISABLED = True
@@ -317,7 +330,7 @@ async def do_repair(request):
     GUARD_DISABLED = False
     return web.json_response({"status": "success"})
 
-@PromptServer.instance.routes.post("/comfyguard/generate_launcher")
+@_route("post", "/comfyguard/generate_launcher")
 async def create_launcher(request):
     auditor = ComfyGuardAuditor()
     auditor.check_hardware_presence()
@@ -327,7 +340,7 @@ async def create_launcher(request):
         "message": f"Optimized Launcher created at: {path}\nFlags applied: {flags}"
     })
 
-@PromptServer.instance.routes.post("/comfyguard/update_shield")
+@_route("post", "/comfyguard/update_shield")
 async def update_shield(request):
     """Force-updates the sticky_shield.txt with the current environment."""
     shield_path = BASE_PATH / "sticky_shield.txt"

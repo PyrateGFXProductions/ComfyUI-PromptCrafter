@@ -54,7 +54,14 @@ def get_custom_fonts():
             custom_fonts.append({"name": name, "filename": f})
     return sorted(custom_fonts, key=lambda x: x["name"].lower())
 
-@PromptServer.instance.routes.get("/pgfx/fonts/list")
+def _route(method, path):
+    instance = getattr(PromptServer, "instance", None)
+    if instance is None:
+        return lambda func: func
+    return getattr(instance.routes, method)(path)
+
+
+@_route("get", "/pgfx/fonts/list")
 async def list_fonts(request):
     """Return both system and custom fonts."""
     system_fonts = get_system_fonts()
@@ -64,7 +71,7 @@ async def list_fonts(request):
         "custom": custom_fonts
     })
 
-@PromptServer.instance.routes.post("/pgfx/fonts/upload")
+@_route("post", "/pgfx/fonts/upload")
 async def upload_font(request):
     """Save an uploaded font file to the custom fonts directory."""
     post = await request.post()
@@ -90,7 +97,7 @@ async def upload_font(request):
     name = os.path.splitext(filename)[0]
     return web.json_response({"success": True, "name": name, "filename": filename})
 
-@PromptServer.instance.routes.get("/pgfx/fonts/serve/{filename}")
+@_route("get", "/pgfx/fonts/serve/{filename}")
 async def serve_font(request):
     """Serve a custom font file for the browser FontFace API."""
     filename = request.match_info.get("filename", "")

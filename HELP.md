@@ -134,3 +134,104 @@ Profiles are stored in the repo root and control dropdown presets:
 - `organization_profiles.json`
 
 After editing profiles, restart ComfyUI to refresh dropdown options.
+
+---
+
+## `PromptCrafter_MiniMaxMusic3Creator`
+Creates structured prompts (Caption + Lyrics) for the MiniMax-Music3 model from song ideas.
+
+**Key Features (adapted from HOT-Step-PGFX-Edition):**
+- **Multi-Genre Mixing:** Build an ordered genre blend list. First genre added = PRIMARY (dictates song structure: verse count, section order). Each additional genre = seasoning (influences vocabulary/tone only, with 85%→35% sliding-scale weights). Use the `genre_add` dropdown to pick genres one at a time, or type directly into the `genres` field (comma-separated).
+- **237 Genre Options:** Full dropdown covering Pop, Rock, Electronic, Hip-Hop, R&B/Soul, Metal, Jazz, Classical, Country, Folk, Blues, Reggae (incl. Patois variants), DJ/Turntablism, Latin, Soundtrack, Experimental, Traditional/World, and more.
+- **Auto-Gen Subject:** Generate random song subjects from 18 relational role templates (e.g., "something the protagonist is trying to get back to"). Avoids repeats across runs via deque tracking.
+- **🎲 Random Buttons:** Toggle randomize for BPM (genre-appropriate ranges), Key, and Scale.
+- **🎲 Random Genre:** Replaces the primary genre (first in list) while keeping any seasoning genres intact.
+- **Instrumental Mode:** Toggle to generate instrumental tracks — omits the Vocal Details section from the caption entirely.
+- **Audio Duration:** Set target track length from 15s to 300s (5 minutes).
+- **Content Safety:** Optional `safe_mode` filters inappropriate content from generated captions and lyrics.
+- **Slop Word Replacement:** Automatically replaces generic AI words (ethereal, shimmer, cascade, neon) with genre-appropriate alternatives.
+- **Caption Validation:** Checks output has all 3 required sections (Global Metadata, Vocal Details, Arrangement) with correct word count (250–450 words).
+
+**Required Inputs:**
+- `song_idea` — Describe your song idea, mood, or vibe (empty if using Auto-Gen)
+- `model` — LLM for caption/lyric generation
+- `genre_add` — Dropdown picker to add genres to the blend list
+- `genres` — Active genre blend (comma-separated, ordered). Edit directly or use picker above
+- `clear_genres` — Wipe the genre list and start fresh
+- `randomize_genre` — Replace primary genre with random selection
+- `instrumental` — Generate instrumental (no vocals)
+- `audio_duration` — Target length in seconds (15–300)
+- `bpm` / `randomize_bpm` — Tempo (40–240 BPM)
+- `key` / `randomize_key` — Musical key
+- `scale` / `randomize_scale` — Major or Minor
+- `lyrics` — Song lyrics with section tags (if empty, lyrics auto-generate)
+- `subject_mode` — Manual / Auto-Gen / Hybrid
+- `lyric_language` — Language for auto-generated lyrics (10 languages)
+- `vram_optimization` — VRAM tier (8GB–24GB+)
+- `temperature` — LLM creativity (0.0–1.0)
+- `seed` — Random seed (-1 for random)
+- `timeout` — LLM call timeout in seconds
+- `debug_mode` — Verbose logging
+
+**Optional Inputs (Advanced):**
+- `emotional_progression` — Emotional arc description
+- `listening_scenario` — Where/when would someone listen?
+- `production_profile` — Production style description
+- `vocal_gender`, `vocal_timbre`, `vocal_style` — Vocal characteristics
+- `harmony_backing`, `vocal_fx` — Backing vocals and effects
+- `primary_instruments`, `secondary_instruments` — Instrumentation
+- `groove_progression`, `embellishments` — Rhythm and texture details
+- `section_arrangement`, `arrangement_notes` — Custom section layout
+- `temperature_lyrics` — Lyric generation creativity (0.0–1.0)
+- `max_retries` — LLM retry attempts (0–5)
+- `safe_mode` — Content safety filtering
+
+**Outputs:**
+- `caption` — 3-section structured music description (Global Metadata + Vocal Details + Arrangement)
+- `lyrics` — Song text with section tags [Intro] [Verse] [Pre-Chorus] [Chorus] [Post-Chorus] [Bridge] [Instrumental] [Solo] [Outro]
+- `full_prompt` — Combined caption for reference
+- `song_idea_expanded` — Expanded concept text
+- `model_info` — JSON with generation parameters
+- `vram_usage` — JSON with VRAM optimization details
+- `api_payload` — Ready-to-use API payload for the connector node
+
+---
+
+## `PromptCrafter_MiniMaxMusic3APIConnector`
+Sends structured caption + lyrics to a MiniMax Music 3 server and returns generated audio.
+
+**Key Features:**
+- **Official API Format:** Sends POST to `/v1/audio/speech` with `input` (lyrics), `instructions` (caption), `seed`, `max_duration`, `stream`, `response_format`, `tiled_decode`.
+- **VRAM-Aware Duration:** Set max_duration from 10s to 300s (5 minutes).
+- **Tiled Decode:** Overlapping tile decoding to reduce VRAM usage (slight risk of seams).
+- **Auto-Save:** Saves generated WAV to ComfyUI output directory.
+
+**Inputs:**
+- `api_url` — URL of running MiniMax Music 3 server (default: `http://127.0.0.1:8000`)
+- `structured_caption` — From the Creator node's caption output
+- `lyrics` — From the Creator node's lyrics output
+- `seed` — Random seed for reproducibility (0 = random)
+- `max_duration` — Target song length in seconds (10–300)
+- `tiled_decode` — Enable tiled VAE decode for low VRAM
+- `timeout` — Connection/generation timeout in seconds (60–3600, default: 1200)
+- `output_path` — Custom output filename (default: `minimax_music3_output.wav`)
+- `debug_mode` — Verbose logging
+
+**Outputs:**
+- `output_path` — Path to generated WAV file
+- `status_message` — Success/error message
+- `success` — Boolean indicating if generation succeeded
+
+---
+
+## `PromptCrafter_MiniMaxMusic3CreatorV3`
+V3 API version of the MiniMax Music 3 Creator node. Same functionality as the V1 version, using the ComfyUI V3 API schema system.
+
+See `PromptCrafter_MiniMaxMusic3Creator` for full feature description.
+
+---
+
+## `PromptCrafter_MiniMaxMusic3APIConnectorV3`
+V3 API version of the MiniMax Music 3 API Connector node. Same functionality as the V1 version, using the ComfyUI V3 API schema system.
+
+See `PromptCrafter_MiniMaxMusic3APIConnector` for full feature description.

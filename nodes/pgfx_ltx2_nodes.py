@@ -95,32 +95,39 @@ def _manual_attention_fallback(q, k, v, heads, mask=None):
         attn = torch.softmax(attn, dim=-1)
         return torch.matmul(attn, v).transpose(1, 2).reshape(q.shape[0], q.shape[2], -1)
 
-def _patched_optimized_attention(q, k, v, heads, mask=None, attn_precision=None, transformer_options={}):
+def _patched_optimized_attention(q, k, v, heads, mask=None, attn_precision=None, transformer_options=None, **kwargs):
     # Diagnostic logging (can be noisy, but needed for this specific crash)
     # print(f"### [PGFX] Attention: q={q.shape}, k={k.shape}, v={v.shape}, heads={heads}, device={q.device}", file=sys.stderr)
     
     # Fallback conditions:
     # 1. Any tensor is on CPU (xformers/flash-attn are CUDA-only)
-    # 2. Tensors are 3D (B, T, C) while heads > 1 (xformers expects B, T, H, D)
-    # 3. Tensors are sparse (as suggested by the 'sparse_coo' error message)
+    # 2. Tensors are sparse (as suggested by the 'sparse_coo' error message)
+    #
+    # ComfyUI's optimized attention routinely receives 3D (B, T, C) tensors and
+    # handles reshaping itself. Treating all 3D GPU attention as a fallback case
+    # hijacks attention for unrelated models and caused compatibility failures as
+    # ComfyUI added new keyword arguments.
     is_cpu = q.device.type == "cpu" or k.device.type == "cpu" or v.device.type == "cpu"
-    is_3d = q.ndim == 3 or k.ndim == 3 or v.ndim == 3
     is_sparse = q.is_sparse or k.is_sparse or v.is_sparse
     
-    if is_cpu or (is_3d and heads > 1) or is_sparse:
+    if is_cpu or is_sparse:
         if is_sparse:
              print(f"### [PGFX] Detected Sparse Tensor! q={q.shape}, sparse={is_sparse}", file=sys.stderr)
         
         try:
              # Try the standard comfy fallback first
-             return comfy.ldm.modules.attention.attention_pytorch(q, k, v, heads, mask, attn_precision, transformer_options)
+             return comfy.ldm.modules.attention.attention_pytorch(
+                 q, k, v, heads, mask=mask, attn_precision=attn_precision,
+                 transformer_options=transformer_options, **kwargs
+             )
         except Exception:
              # If it fails (dimensions, unpacking, etc), use our robust manual fallback
              return _manual_attention_fallback(q, k, v, heads, mask)
         
-    return _original_optimized_attention(q, k, v, heads, mask, attn_precision, transformer_options)
-        
-    return _original_optimized_attention(q, k, v, heads, mask, attn_precision, transformer_options)
+    return _original_optimized_attention(
+        q, k, v, heads, mask=mask, attn_precision=attn_precision,
+        transformer_options=transformer_options, **kwargs
+    )
 
 if not hasattr(comfy.ldm.modules.attention, "_pgfx_patched"):
     print("### [PGFX] Applying CPU-safe Attention Patch...", file=sys.stderr)

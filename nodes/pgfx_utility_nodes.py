@@ -102,13 +102,20 @@ def _resolve_llm_runtime_kwargs(source):
         "reset_context": bool(source.get("reset_context", config.DEFAULT_LLM_STATELESS)),
     }
 
-def _collect_visual_dynamic_images(image_count=1, image_weights_json="{}", **kwargs):
+def _visual_image_optional_inputs(max_images=5, tooltip_prefix="Optional reference image"):
+    return {
+        f"image_{i}": ("IMAGE", {"tooltip": f"{tooltip_prefix} {i}."})
+        for i in range(1, max_images + 1)
+    }
+
+
+def _collect_visual_dynamic_images(image_count=1, image_weights_json="{}", max_images=5, **kwargs):
     images_with_weights = []
     try:
         count = int(image_count)
     except (TypeError, ValueError):
         count = 1
-    count = max(1, min(count, 5))
+    count = max(0, min(count, max_images))
 
     weights = {}
     try:
@@ -1110,6 +1117,541 @@ class PromptCrafter_LyricsInstruct:
         return (response_text,)
 
 
+# ---------------------------------------------------------------------------
+# MiniMax H3 prompt contract
+# Built around the exact alignment lines and field rules shared by MiniMax's
+# official base guide and the empirically-tested Video Prompt Pixaroma formulas.
+# ---------------------------------------------------------------------------
+
+_H3_ALIGN_I2VA = (
+    "For the target video, at 0.00 seconds into the target video, "
+    "<Picture 1> (from [Shot 1]) is fully referenced."
+)
+
+
+def _h3_format_seconds(value):
+    return f"{float(value):.2f}"
+
+
+def _h3_seconds_label(value):
+    f = float(value)
+    if f == int(f):
+        return str(int(f))
+    return f"{f:.2f}".rstrip("0").rstrip(".")
+
+
+def _h3_align_fl2va(duration_seconds):
+    return (
+        "How the reference pictures align with the target video — "
+        "Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; "
+        f"Picture 2 (from Shot 1) aligns with the {_h3_format_seconds(duration_seconds)}-second mark of the target video."
+    )
+
+
+def _h3_align_l2va(duration_seconds):
+    return (
+        "How the reference pictures align with the target video — "
+        f"<Picture 1> (from [Shot 1]) aligns with the {_h3_format_seconds(duration_seconds)}-second mark of the target video."
+    )
+
+
+_H3_LENGTH_ANCHORS = (
+    (4, 60, 5),
+    (5, 75, 5),
+    (8, 120, 10),
+    (10, 160, 13),
+    (15, 210, 16),
+)
+
+_H3_LENGTH_TIERS = (
+    {
+        "max": 5,
+        "sentences": 5,
+        "order": (
+            "the style and the overall light",
+            "the subject and exactly what it is wearing",
+            "the colours and materials of the nearest object",
+            "the first thing the subject does",
+            "what the camera does",
+        ),
+    },
+    {
+        "max": 8,
+        "sentences": 10,
+        "order": (
+            "the style and the overall light",
+            "the subject and exactly what it is wearing",
+            "the ground or floor underneath it",
+            "what is directly behind it",
+            "the colours and materials of the nearest object",
+            "the texture of the subject's surface, its fur or skin or fabric or metal",
+            "the first thing the subject does",
+            "how the light falls on the subject while it moves",
+            "the second thing the subject does",
+            "what the camera does",
+        ),
+    },
+    {
+        "max": 10,
+        "sentences": 13,
+        "order": (
+            "the style and the overall light",
+            "the subject and exactly what it is wearing",
+            "the ground or floor underneath it",
+            "what is directly behind it",
+            "the colours and materials of the nearest object",
+            "what is off to one side",
+            "something small drifting or moving in the air",
+            "the first thing the subject does",
+            "how the light falls on the subject while it moves",
+            "the second thing the subject does",
+            "a small detail of the subject's face or hands",
+            "the third thing the subject does",
+            "what the camera does",
+        ),
+    },
+    {
+        "max": 15,
+        "sentences": 16,
+        "order": (
+            "the style and the overall light",
+            "the subject and exactly what it is wearing",
+            "the ground or floor underneath it",
+            "what is directly behind it",
+            "what is off to one side",
+            "the colours and materials of the nearest object",
+            "the texture of the subject's surface, its fur or skin or fabric or metal",
+            "something small drifting or moving in the air",
+            "the quality of the air itself, hazy or dusty or misty or clear",
+            "the first thing the subject does",
+            "how the light falls on the subject while it moves",
+            "the second thing the subject does",
+            "a small detail of the subject's face or hands",
+            "the third thing the subject does",
+            "what changes behind the subject as it moves",
+            "what the camera does",
+        ),
+    },
+)
+
+
+def _h3_length_block(duration_seconds):
+    """The LENGTH instruction appended after the IDEA (Video Prompt Pixaroma shape)."""
+    d = float(duration_seconds)
+    words = _H3_LENGTH_ANCHORS[0][1]
+    sentences = _H3_LENGTH_ANCHORS[0][2]
+    for i, (sec, w, s) in enumerate(_H3_LENGTH_ANCHORS):
+        if d <= sec:
+            if i == 0:
+                words, sentences = w, s
+            else:
+                p_sec, p_w, p_s = _H3_LENGTH_ANCHORS[i - 1]
+                t = (d - p_sec) / float(sec - p_sec)
+                words = int(round(p_w + (w - p_w) * t))
+                sentences = int(round(p_s + (s - p_s) * t))
+            break
+    else:
+        p_sec, p_w, p_s = _H3_LENGTH_ANCHORS[-2]
+        l_sec, l_w, l_s = _H3_LENGTH_ANCHORS[-1]
+        words = int(round(l_w + (l_w - p_w) / float(l_sec - p_sec) * (d - l_sec)))
+        sentences = int(round(l_s + (l_s - p_s) / float(l_sec - p_sec) * (d - l_sec)))
+        words = min(words, 1000)
+        sentences = min(sentences, 40)
+    order_items = None
+    for tier in _H3_LENGTH_TIERS:
+        if d <= tier["max"]:
+            order_items = tier["order"][:max(1, sentences)]
+            break
+    if order_items is None:
+        order_items = _H3_LENGTH_TIERS[-1]["order"]
+    order_text = "; ".join(order_items)
+    return (
+        f"LENGTH: The video is {_h3_seconds_label(d)} seconds long, so the description runs to about {words} words. "
+        f"Write at least {sentences} sentences. Each one is a full sentence that ends with a full stop. "
+        f"Give each of these its own sentence, in this order: {order_text}. "
+        f"Keep going until every one of them has its own sentence, and do not stop early. "
+        f"If the IDEA gave you words to say, the spoken line goes in as well, in the shape rule 4 asked for."
+    )
+
+
+_H3_SHARED_RULES = """
+STEP 1. WORK OUT WHAT THE VIEWER ACTUALLY SEES.
+Some words in the IDEA describe THE CAMERA, not things in the video: drone, drone shot, aerial, bird's eye, crane, helicopter shot, close-up, wide shot, tracking shot, POV. The viewer never sees those. Throw them away and keep only what is really in front of the camera. Never open by repeating the IDEA sentence.
+
+Then decide WHETHER ANYONE SPEAKS. Someone speaks only if the IDEA actually hands you words to say. If the IDEA says no talking, no words or silent, or simply gives you no line, then nobody speaks: write no <d> block at all and ignore rules 3 and 4 completely.
+
+STEP 2. WRITE THE THREE FIELDS, FOLLOWING THESE RULES.
+
+1. Open with a style sentence that fits the idea: live-action cinematic, 3D render, anime, documentary, film noir, stop motion. Then the subject, then what happens.
+
+2. The LENGTH line at the end of this message gives you TWO separate budgets: how many things HAPPEN, and how many WORDS you write. They are not the same budget. More words never means more things happening. Spend the extra words on what the viewer sees: the light, the colours, the materials, the clothing, the surfaces, the weather, what is behind the subject, how close the camera is. Spend them on the same actions described more fully, never on new actions. Count your words before you answer. While you are under the smaller number, keep describing what is already in the shot until you are inside the range. Every sentence ENDS WITH A FULL STOP. Never chain them together with commas. Only what the viewer can SEE or HEAR. Never a smell, a taste or a feeling.
+
+3. DIALOGUE APPEARS ONCE. If someone speaks, the words appear one time only, inside <d>[English] the words</d>. Nothing anywhere else may repeat, hint at or summarise what is said.
+
+4. EVERY spoken line uses this exact shape, with no shortcut and nothing left out:
+HIS OR HER jaw and lips move clearly through every word, and the WHO with a WHAT KIND OF voice (S1) says: <d>[English] the words</d> He closes his lips (or She closes her lips) and ONE ACTION.
+Replace only the capital words with your own. Number the speakers (S1), then (S2) for a second one. EVERY <d> BLOCK STARTS WITH THE TAG [English] AND A SPACE. Copy those square brackets exactly. The spoken words begin with a capital letter and end with a full stop, a question mark or an exclamation mark. After the spoken line there is room for ONE more action, not two.
+
+5. Camera moves are lowercase inside the sentence. Use at most TWO of them, and each one ends with one of these four phrases, spelled exactly: with small amplitude, with large amplitude, at slow speed, at fast speed. A calm scene takes small amplitude and slow speed. Only a genuinely energetic scene takes large amplitude or fast speed. These words are banned: slightly, subtly, gently, a little, gradually.
+
+6. non_diegetic_music names instruments, tempo and volume that suit YOUR scene. Choose the instruments yourself.
+
+7. NOBODY TALKS IN overall_soundscape. List three to five sounds that really exist in the place in the IDEA, and nothing else. These words are BANNED from that field: voice, voices, talking, talk, chatter, murmur, mutter, conversation, speech, speaking, whisper, shouting, singing, lyrics, crowd noise. A cafe, a restaurant, a bar, a shop, a station or any other crowded place is still SILENT of people here. Name the OBJECTS instead of the people: cups, plates, chairs, machines, doors, footsteps, traffic. Wind, fabric, machines, engines and moving air never whisper or murmur here; they hiss, rush, hum, moan, rustle or sigh instead. Never ask for silence or clean audio. There is always some room tone.
+
+8. This is ONE continuous shot. There is only [Shot 1] in the whole answer, and [Shot 1] carries no timestamp. If only the distance or a slight angle needs to change, move the camera; never cut. Do not write [Shot 2].
+
+LAST CHECK, never printed:
+- My first line is the exact alignment line (for image-guided modes) or the three fields directly (for T2VA), with one blank line after the alignment line.
+- No camera word from the IDEA became a thing in the scene, and no drone, cameraman or lens appears.
+- NO word for talking or voices anywhere in overall_soundscape.
+- If the IDEA gave me no words to say, there is no <d> block at all. Every <d> block starts with the tag [English]. Every spoken line has the jaw and lips moving before it, an (S1) tag on the speaker, and He closes his lips or She closes her lips straight after </d>.
+- Every camera move ends with one of the four exact phrases, and there are at most two.
+- The description is inside the word range the LENGTH line asked for, and never under it.
+- There is only [Shot 1] in the whole answer.
+""".strip()
+
+
+_H3_EXAMPLE_I2VA = """For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+
+integrated_multimodal_description: [Shot 1] Live-action, cinematic, warm tungsten light and shallow depth of field. An elderly watchmaker sits at a cluttered wooden workbench in a narrow shop, brass gears and fine screwdrivers scattered across a green felt mat, the painted wall behind him cracked and peeling. He lowers a pair of fine tweezers into the open back of a pocket watch and settles a hairspring into its seat, the tiny balance wheel beginning to swing. His jaw and lips move clearly through every word, and the elderly watchmaker with a dry, quiet voice (S1) says: <d>[English] Forty years and it still surprises me.</d> He closes his lips and rests one hand flat on the bench as the camera pushes in with small amplitude at slow speed toward the turning wheel.
+
+overall_soundscape: Faint metallic tick of the escapement, soft scrape of tweezers on felt, low electrical hum from the desk lamp, occasional creak of an old wooden chair.
+
+non_diegetic_music: Sparse solo piano, slow tempo, soft sustained notes."""
+
+
+_H3_EXAMPLE_FL2VA = """How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 5.00-second mark of the target video.
+
+integrated_multimodal_description: [Shot 1] Live-action, cinematic, cold blue dawn light. A weathered fisherman in a yellow oilskin coat stands on a wooden jetty, coiled rope and a dented steel bucket at his feet. The planks beneath him are dark and wet, streaked with dried salt, and behind him the harbour water lies flat and grey, the masts of moored boats standing still against a pale sky. He lifts his chin and looks out past the moored boats, the dawn light climbing his face as he turns. His jaw and lips move clearly through every word, and the weathered fisherman with a hoarse, patient voice (S1) says: <d>[English] The tide is turning.</d> He closes his lips and lets one hand fall to the rope as the camera pulls back with small amplitude at slow speed until the whole harbour stands behind him.
+
+overall_soundscape: Slap of water against wooden piles, creak of straining mooring lines, hiss of wind across open water, distant clank of a halyard on a mast.
+
+non_diegetic_music: Low sustained strings, slow tempo, sparse piano notes."""
+
+
+_H3_EXAMPLE_L2VA = """How the reference pictures align with the target video — <Picture 1> (from [Shot 1]) aligns with the 6.00-second mark of the target video.
+
+integrated_multimodal_description: [Shot 1] Live-action, cinematic, close shot with dark warm room light. A hand approaches a full drinking glass near the edge of a dark wooden table, the fingertips striking the rim. The glass tips, falls, and hits the floor with a sharp impact, cracks spreading through it as fragments slide outward. Toward the end the moving pieces lose momentum and settle into the exact broken arrangement, hand position, camera angle, lighting and final composition of the picture. The camera pushes in with small amplitude at slow speed throughout.
+
+overall_soundscape: Fingertips tap the glass before it scrapes across the tabletop, falls, and breaks with a sharp crash, fragments scattering and gradually stopping on the floor.
+
+non_diegetic_music: A low electronic pulse at a slow tempo, ending immediately after the glass breaks."""
+
+
+def _h3_base_prompt(mode, instruction, duration_seconds, aspect_ratio, reference_context, roles):
+    """Build the writer formula for the four base modes (T2VA/I2VA/FL2VA/L2VA)."""
+    length_block = _h3_length_block(duration_seconds)
+
+    if aspect_ratio and aspect_ratio != "adaptive":
+        ratio_note = f"Use the requested {aspect_ratio} framing as a composition constraint."
+    else:
+        ratio_note = "Preserve the source framing of the reference pictures (adaptive)."
+
+    scope = "the three fields below"
+    whole = "the three fields"
+    preamble = "Build the complete audiovisual timeline from text. There are no reference pictures."
+    picture_rules = ""
+    alignment = ""
+    example = ""
+    example_note = ""
+    tail = ""
+
+    if mode == "I2VA":
+        scope = "the alignment line and the three fields below"
+        whole = "the alignment line and the three fields"
+        preamble = "You can SEE the picture, and that picture is the FIRST FRAME of the video. The IDEA says what HAPPENS after that first frame."
+        picture_rules = """
+The video BEGINS in the picture, so your description is the SAME person or thing, the SAME clothes and hair, the SAME place and the SAME light. Describe what is really there before anything moves, then what happens next. Never invent a different scene and never change what somebody is wearing. The STYLE comes FROM THE PICTURE, not from the IDEA: a photograph is live-action cinematic, a drawing is anime or illustration, a render is 3D. Say which one it is in the style sentence. The viewer is watching a video, so the words picture, image, photo, photograph and frame never appear in any field.
+"""
+        alignment = f"""
+YOUR VERY FIRST LINE IS ALWAYS THIS ONE, TYPED OUT IN FULL:
+{_H3_ALIGN_I2VA}
+
+That line never changes, whatever the picture and whatever the idea. Copy it character for character, keep <Picture 1> and [Shot 1] exactly as they are, then leave one blank line and carry on with the three fields.
+"""
+        example = _H3_EXAMPLE_I2VA
+    elif mode == "FL2VA":
+        scope = "the alignment line and the three fields below"
+        whole = "the alignment line and the three fields"
+        preamble = "You can SEE two pictures. The FIRST is the FIRST FRAME of the video and the SECOND is the LAST FRAME. They are the start and the end of ONE continuous shot, never two separate scenes. The IDEA says what HAPPENS between those two frames."
+        picture_rules = """
+The video BEGINS as the first picture looks and ENDS as the second picture looks. Describe the person or thing ONCE, as the first picture shows it, then describe the change that carries it into the second picture as one continuous movement. Keep the SAME PERSON throughout: the same face, the same build. Their clothes, their pose and the light are as the first picture shows them at the start and as the second picture shows them at the end. Never invent a scene that is in neither picture. EVERY DIFFERENCE BETWEEN THE TWO PICTURES IS AN ACTION OR A CAMERA MOVE. If the second picture is framed wider, the camera moved back. If it looks along a different direction, the camera turned. If somebody is no longer there, they walked out of the shot. If the place itself is different, the camera travelled to it in one continuous move. If the CLOTHING or the BODY is different, that is a TRANSFORMATION: describe the one turning into the other as it happens, never as two separate outfits and never as a cut. The STYLE comes FROM THE PICTURES, not from the IDEA. NEVER TELL THE VIEWER THERE ARE TWO PICTURES: the words picture, image, photo, photograph, frame, left, right, side by side, split screen and collage never appear in any field.
+"""
+        alignment = """
+YOUR VERY FIRST LINE IS THE ALIGNMENT LINE AT THE VERY END OF THIS MESSAGE. Copy it character for character, keeping the long dash and BOTH numbers exactly as they are written there, then leave one blank line and carry on with the three fields. Never invent your own numbers.
+"""
+        tail = f"\n\nALIGNMENT LINE. Your first line is exactly this:\n{_h3_align_fl2va(duration_seconds)}"
+        example = _H3_EXAMPLE_FL2VA
+    elif mode == "L2VA":
+        scope = "the alignment line and the three fields below"
+        whole = "the alignment line and the three fields"
+        preamble = "You can SEE the picture, and that picture is the FINAL FRAME of the video. The IDEA says what HAPPENS before it."
+        picture_rules = """
+The picture is the FINAL frame of the video, not the first. The STYLE comes FROM THE PICTURE: a photograph is live-action cinematic, a drawing is anime or illustration, a render is 3D. Infer a plausible earlier state from the IDEA and the picture, then describe the actions, camera movement and scene changes that progressively converge on the exact final arrangement in the picture. The final shot lands exactly on what the picture shows: the same composition, subject state, lighting and camera angle. The viewer is watching a video, so the words picture, image, photo, photograph and frame never appear in any field.
+"""
+        alignment = """
+YOUR VERY FIRST LINE IS THE ALIGNMENT LINE AT THE VERY END OF THIS MESSAGE. Copy it character for character, keeping the long dash and the number exactly as written there, then leave one blank line and carry on with the three fields. Never invent your own number.
+"""
+        tail = f"\n\nALIGNMENT LINE. Your first line is exactly this:\n{_h3_align_l2va(duration_seconds)}"
+        example = _H3_EXAMPLE_L2VA
+
+    if example:
+        example_note = (
+            "EXAMPLE OF THE SHAPE ONLY - copy the shape, never the words, the workshop or the sounds. "
+            "Its length is not a target; the LENGTH line at the end of this message decides how long yours must be."
+        )
+
+    background = ""
+    if reference_context:
+        background += "REFERENCE CONTEXT (background only - never output these internal labels):\n" + reference_context + "\n"
+    if roles:
+        background += "REFERENCE ROLES (background only):\n" + roles + "\n"
+
+    return textwrap.dedent(f"""
+        You write MiniMax H3 video prompts. {preamble} The user's IDEA and then the LENGTH line are at the end of this message.
+
+        Turn that IDEA into ONE H3 prompt. The LENGTH line at the very end of this message says how long the video is and how much to write. Output ONLY {scope}. No greeting, no explanation, no notes, no headings, no code block. English only, never any Chinese characters.
+        {alignment}
+        integrated_multimodal_description: [Shot 1] Style sentence. Then the subject, then what happens, written as SEVERAL FULL SENTENCES that run on in one unbroken paragraph with no line break.
+
+        overall_soundscape: The real sounds of that place.
+
+        non_diegetic_music: Background music for the audience.
+
+        One blank line between the fields. NEVER a line break inside a field.
+        Your whole answer is {whole} and NOTHING else. It ENDS at the end of the non_diegetic_music line. Never repeat these instructions back.
+        {_H3_SHARED_RULES}
+        {picture_rules}
+        {example_note}
+        {example}
+
+        OUTPUT CONTRACT: Return the alignment line first (for image-guided modes) and then exactly the three labeled fields in this order, one blank line between them, no line break inside any field, and nothing after non_diegetic_music. {ratio_note}
+
+        IDEA:
+        {instruction}
+        {background}
+        {length_block}{tail}
+    """).strip()
+
+
+class PromptCrafter_H3ImageToVideoPrompt:
+    """Focused image-and-instruction prompt writer for MiniMax H3 video modes."""
+
+    MAX_IMAGES = 9
+    RETURN_TYPES = ("STRING",) + ("IMAGE",) * MAX_IMAGES
+    RETURN_NAMES = ("h3_prompt",) + tuple(f"reference_image_{i}" for i in range(1, MAX_IMAGES + 1))
+    FUNCTION = "execute"
+    CATEGORY = "☠️PGFX /Creator"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "instruction": ("STRING", {"multiline": True, "default": "Describe the cinematic video clip to create."}),
+                "model": (api_clients.get_vision_models() or api_clients.get_all_models(), {"tooltip": "Vision-capable LLM used to analyze the references and write the H3 prompt."}),
+                "input_mode": (["T2VA", "I2VA", "FL2VA", "L2VA", "Ref2VA"], {"default": "I2VA"}),
+                "duration_seconds": ("INT", {"default": 5, "min": 4, "max": 15, "step": 1, "tooltip": "MiniMax H3 video duration. The API accepts integer durations from 4 to 15 seconds."}),
+                "frame_rate": ("INT", {"default": 24, "min": 1, "max": 120, "step": 1}),
+                "aspect_ratio": (["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"], {"default": "16:9", "tooltip": "Requested output framing. Frame-guided modes should normally use adaptive."}),
+            },
+            "optional": {
+                "image_count": ("INT", {"default": 1, "min": 0, "max": cls.MAX_IMAGES, "step": 1}),
+                "reference_roles": ("STRING", {"multiline": True, "default": "", "tooltip": "Optional roles such as image_1=first frame, image_2=style reference."}),
+                "image_weights_json": ("STRING", {"multiline": True, "default": "{}"}),
+                "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "seed": ("INT", {"default": 0, "min": -1, "max": 0xffffffffffffffff, "step": 1}),
+                "timeout": ("INT", {"default": 180, "min": 30, "max": 900, "step": 10}),
+                "debug_mode": ("BOOLEAN", {"default": False}),
+                "strict_guide_validation": ("BOOLEAN", {"default": True, "tooltip": "Reject output that does not follow the MiniMax H3 prompt contract."}),
+                **_llm_runtime_optional_inputs(),
+                **_visual_image_optional_inputs(cls.MAX_IMAGES, "Optional H3 reference image"),
+            },
+        }
+
+    def execute(self, instruction, model, input_mode="I2VA", duration_seconds=5, frame_rate=24, aspect_ratio="16:9",
+                image_count=1, reference_roles="", image_weights_json="{}", temperature=0.2,
+                seed=0, timeout=180, debug_mode=False, llm_device=config.DEFAULT_LLM_DEVICE,
+                reset_context=config.DEFAULT_LLM_STATELESS, strict_guide_validation=True, **kwargs):
+        images_with_weights = _collect_visual_dynamic_images(
+            image_count=image_count, image_weights_json=image_weights_json, max_images=self.MAX_IMAGES, **kwargs
+        )
+        passthrough_images = _visual_reference_outputs(images_with_weights, self.MAX_IMAGES)
+        if not str(instruction or "").strip():
+            return ("[ERROR] H3 instruction is empty.",) + passthrough_images
+
+        try:
+            duration_seconds = float(duration_seconds)
+        except (TypeError, ValueError):
+            return (
+                f"[ERROR] duration_seconds must be a number (seconds), got {duration_seconds!r}. "
+                "MiniMax H3 accepts 4-15 seconds; set a positive number so the prompt can be written.",
+            ) + passthrough_images
+        if duration_seconds <= 0:
+            return (
+                f"[ERROR] duration_seconds must be greater than zero, got {duration_seconds!r}. "
+                "MiniMax H3 accepts 4-15 seconds; set a positive number so the prompt can be written.",
+            ) + passthrough_images
+
+        try:
+            frame_rate = int(frame_rate)
+        except (TypeError, ValueError):
+            return (f"[ERROR] frame_rate must be an integer (frames per second), got {frame_rate!r}.",) + passthrough_images
+        if frame_rate < 1:
+            return (f"[ERROR] frame_rate must be at least 1, got {frame_rate!r}.",) + passthrough_images
+
+        mode = str(input_mode or "I2VA").upper()
+        image_count_actual = len(images_with_weights)
+        if mode == "T2VA" and image_count_actual:
+            return ("[ERROR] T2VA is text-only in this node. Use I2VA, FL2VA, L2VA, or Ref2VA for image inputs.",) + passthrough_images
+        if mode == "I2VA" and image_count_actual > 1:
+            return ("[ERROR] I2VA accepts only image_1 as the first frame.",) + passthrough_images
+        if mode == "L2VA" and image_count_actual > 1:
+            return ("[ERROR] L2VA accepts only image_1 as the last frame.",) + passthrough_images
+        if mode == "FL2VA" and image_count_actual != 2:
+            return ("[ERROR] FL2VA requires exactly two images: image_1 as the first frame and image_2 as the last frame.",) + passthrough_images
+        if mode == "Ref2VA" and not image_count_actual:
+            return ("[ERROR] Ref2VA requires at least one connected reference image.",) + passthrough_images
+
+        connected_labels = [
+            f"image_{index}: connected reference, weight={weight:.2f}"
+            for index, (_, weight) in enumerate(images_with_weights, start=1)
+        ]
+        reference_context = "\n".join(connected_labels) if connected_labels else "No reference images are connected."
+
+        if mode == "Ref2VA":
+            prompt = self._build_ref2va_prompt(instruction, duration_seconds, frame_rate, aspect_ratio,
+                                               reference_roles, reference_context)
+        else:
+            prompt = _h3_base_prompt(mode, instruction, duration_seconds, aspect_ratio,
+                                     reference_context, str(reference_roles or "").strip())
+
+        ok, response = api_clients.query_model_auto(
+            model,
+            prompt=prompt,
+            images=[img for img, _ in images_with_weights],
+            prefer_chat=True,
+            temperature=temperature,
+            seed=seed,
+            timeout=timeout,
+            debug_mode=debug_mode,
+            debug_title="MiniMax H3 Image-to-Video Prompt",
+            llm_device=llm_device,
+            reset_context=reset_context,
+        )
+        if not ok:
+            return (f"[ERROR] H3 model call failed: {response}",) + passthrough_images
+
+        response_text = "" if response is None else str(response).strip()
+        if not response_text:
+            return ("[ERROR] H3 model returned empty output.",) + passthrough_images
+        if strict_guide_validation:
+            validation_error = self._validate_h3_output(mode, response_text, duration_seconds)
+            if validation_error:
+                return (f"[ERROR] H3 guide validation failed: {validation_error}",) + passthrough_images
+        return (response_text,) + passthrough_images
+
+    def _build_ref2va_prompt(self, instruction, duration_seconds, frame_rate, aspect_ratio,
+                             reference_roles, reference_context):
+        """Build the full-reference (Ref2VA) rewrite formula for the six-section contract."""
+        roles = str(reference_roles or "").strip() or (
+            "No explicit reference roles supplied; classify image slots using the label policy below. "
+            "Never output internal image_N labels."
+        )
+        return textwrap.dedent(f"""
+            You are a senior film director, cinematographer, production designer, editor, and sound designer writing a production-ready MiniMax H3 full-reference (Ref2VA) video prompt.
+
+            REQUESTED DURATION: {_h3_seconds_label(duration_seconds)} seconds
+            FRAME RATE: {frame_rate} fps
+            REQUESTED ASPECT RATIO: {aspect_ratio}
+
+            USER INSTRUCTION:
+            {instruction}
+
+            CONNECTED REFERENCES:
+            {reference_context}
+
+            REFERENCE ROLES:
+            {roles}
+
+            FULL-REFERENCE RULES:
+            - Return exactly these six labeled sections in this order: subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music.
+            - Use <Subject N> for reusable visible content, <Picture N> for concrete frame anchors, <Video N> for whole-video structure, and <Audio N> only for active audio copy/reference. Define every label before use and keep its meaning stable. Do not treat every uploaded image as a Subject or Picture automatically.
+            - subject_definitions gives each label its own line and states what it denotes, its reference role, and the main features to follow.
+            - summary begins with a square-bracketed task-type prefix such as [reference generation] and uses only labels defined above.
+            - retention_analysis uses one line per label with relationship markers: fully_preserved, partially_preserved, attribute_transfer, weak_reference, fully_copy, partially_copy, or reference.
+            - detailed_description establishes the overall visual style in one or two sentences before [Shot 1], then writes the shot-by-shot production plan with labels inserted where active. Use concrete camera actions such as push in, pull out, truck left/right, pedestal, pan, tilt, arc, tracking, POV, roll, or static shot.
+            - Start [Shot 1] without a timestamp. Every later cut begins with [Shot N] At MM:SS.mmm using three decimal places, strictly increasing, inside the requested duration, and introducing genuinely new subject, space, state, viewpoint, or time information.
+            - Assign stable speaker IDs as (S1), (S2) in vocal-event order. Put speaker identity and delivery outside dialogue; inside <d>, keep only the language tag and exact spoken words. Preserve visible text in English double quotation marks without translating it.
+            - Keep dialogue and synchronized effects in the timeline; overall_soundscape contains continuing ambience and physical sounds without repeating dialogue or music; non_diegetic_music contains only audience-only score instrumentation, tempo, rhythm, and dynamics, or N/A.
+            - Write the rewrite sections in English but preserve dialogue, lyrics, and visible scene text in their original language.
+            - Keep the complete output under 7000 characters so it can be submitted to MiniMax H3 without truncation.
+            - Do not write a plot summary. Do not invent unresolved reference labels. Do not add timing that exceeds the request. Keep every reference label stable and define it before using it.
+
+            Return only the six requested labeled sections. Do not add markdown fences, commentary, or extra fields.
+        """).strip()
+
+    @staticmethod
+    def _validate_h3_output(mode, response_text, duration_seconds=5):
+        """Keep malformed LLM text from being sent to the H3 video endpoint."""
+        if len(response_text) > 7000:
+            return "prompt exceeds the MiniMax H3 7000-character limit"
+        if "```" in response_text:
+            return "markdown fences are not allowed"
+        if re.search(r"\bimage_\d+\b", response_text, flags=re.IGNORECASE):
+            return "internal image_N labels must not appear in H3 output"
+
+        if mode == "Ref2VA":
+            sections = (
+                "subject_definitions:", "summary:", "retention_analysis:",
+                "detailed_description:", "overall_soundscape:", "non_diegetic_music:",
+            )
+            positions = [response_text.find(section) for section in sections]
+            if any(position < 0 for position in positions):
+                missing = [section[:-1] for section, position in zip(sections, positions) if position < 0]
+                return f"missing required section(s): {', '.join(missing)}"
+            if positions != sorted(positions):
+                return "required sections are out of order"
+            return None
+
+        sections = (
+            "integrated_multimodal_description:",
+            "overall_soundscape:",
+            "non_diegetic_music:",
+        )
+        positions = [response_text.find(section) for section in sections]
+        if any(position < 0 for position in positions):
+            missing = [section[:-1] for section, position in zip(sections, positions) if position < 0]
+            return f"missing required section(s): {', '.join(missing)}"
+        if positions != sorted(positions):
+            return "required sections are out of order"
+
+        if re.search(r"\[Shot [2-9]\]", response_text):
+            return "base modes must use a single [Shot 1]; use camera motion instead of a cut"
+
+        try:
+            duration_value = float(duration_seconds or 5)
+        except (TypeError, ValueError):
+            duration_value = 5.0
+
+        if mode == "T2VA":
+            if response_text.startswith("For the target video,") or response_text.startswith("How the reference pictures align"):
+                return "T2VA must not contain an image alignment line"
+        elif mode == "I2VA":
+            if not response_text.startswith(_H3_ALIGN_I2VA):
+                return "I2VA must start with the exact first-frame alignment line"
+        elif mode == "FL2VA":
+            if not response_text.startswith(_h3_align_fl2va(duration_value)):
+                return "FL2VA must start with the exact first/last-frame alignment line"
+        elif mode == "L2VA":
+            if not response_text.startswith(_h3_align_l2va(duration_value)):
+                return "L2VA must start with the exact final-frame alignment line"
+
+        if re.search(r"<d>(?!\[)", response_text):
+            return "every <d> block must start with a language tag such as <d>[English]"
+
+        return None
+
+
 class PromptCrafter_VisualThink:
     DESCRIPTION = "THINK node for visual concept generation. Outputs labeled plain text."
     MAX_IMAGES = 5
@@ -1126,6 +1668,7 @@ class PromptCrafter_VisualThink:
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
                 "image_weights_json": ("STRING", {"multiline": True, "default": "{}"}),
+                **_visual_image_optional_inputs(cls.MAX_IMAGES),
             },
         }
 
@@ -1206,6 +1749,7 @@ class PromptCrafter_VisualInstruct:
                 "timeout": ("INT", {"default": 120, "min": 30, "max": 900, "step": 10, "tooltip": "Timeout in seconds for each API call. Increase if you get timeout errors with slow models."}),
                 **_llm_runtime_optional_inputs(),
                 "image_weights_json": ("STRING", {"multiline": True, "default": "{}"}),
+                **_visual_image_optional_inputs(cls.MAX_IMAGES),
             },
         }
 
@@ -1983,11 +2527,14 @@ class PromptCrafter_AudioSplitter(creator_nodes.PromptCrafter_BaseCreator):
             return tuple(segments)
 
         except Exception as e:
-            # On failure, return 16 Nones
+            # Keep AUDIO outputs valid so downstream nodes do not fail on a None payload.
             print(f"\033[91m[PromptCrafter_AudioSplitter] Error: {e}\033[0m")
             import traceback
             traceback.print_exc()
-            return (None,) * 16
+            fallback_sample_rate = 44100
+            fallback_waveform = torch.zeros((1, 1, fallback_sample_rate), dtype=torch.float32)
+            fallback_audio = {"waveform": fallback_waveform, "sample_rate": fallback_sample_rate}
+            return tuple(fallback_audio.copy() for _ in range(16))
 
 # ------------------------------------------------------------------------------------
 # PromptCrafter_Formatter Node (Enhanced)
@@ -3583,6 +4130,7 @@ class PGFX_UniversalSwitchBox:
             },
             "optional": {
                 "current_index": ("INT", {"default": 0, "min": 0, "max": 1000, "step": 1, "tooltip": "The 0-based index of the input to select (used in Chronological mode)."}),
+                **{f"input_{i}": ("*", {"tooltip": f"Optional wildcard input {i}."}) for i in range(1, 17)},
             },
             "hidden": {
                 "ui_preview": ("STRING", {"default": ""}),
@@ -4321,6 +4869,7 @@ class PGFX_MultiImagePreview:
             },
             "optional": {
                 "image_weights_json": ("STRING", {"multiline": True, "default": "{}"}),
+                **_visual_image_optional_inputs(16, "Optional preview image"),
             }
         }
 
@@ -4689,6 +5238,7 @@ NODE_CLASS_MAPPINGS = {
     "PromptCrafter_QnA_Simple": PromptCrafter_QnA_Simple,
     "PromptCrafter_LyricsThink": PromptCrafter_LyricsThink,
     "PromptCrafter_LyricsInstruct": PromptCrafter_LyricsInstruct,
+    "PromptCrafter_H3ImageToVideoPrompt": PromptCrafter_H3ImageToVideoPrompt,
     "PromptCrafter_VisualThink": PromptCrafter_VisualThink,
     "PromptCrafter_VisualInstruct": PromptCrafter_VisualInstruct,
     "PromptCrafter_QnAThink": PromptCrafter_QnAThink,
@@ -4723,6 +5273,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptCrafter_QnA_Simple": "💬 Simple Q&A",
     "PromptCrafter_LyricsThink": "⚰️ Legacy 🧠 Lyrics Corrector (Think)",
     "PromptCrafter_LyricsInstruct": "⚰️ Legacy ✍️ Lyrics → JSON (Instruct)",
+    "PromptCrafter_H3ImageToVideoPrompt": "🎬 MiniMax H3 Image → Video Prompt",
     "PromptCrafter_VisualThink": "⚰️ Legacy 🧠 Visual Concept (Think)",
     "PromptCrafter_VisualInstruct": "⚰️ Legacy ✍️ Concept → JSON (Instruct)",
     "PromptCrafter_QnAThink": "⚰️ Legacy 🧠 Q&A Reasoning (Think)",

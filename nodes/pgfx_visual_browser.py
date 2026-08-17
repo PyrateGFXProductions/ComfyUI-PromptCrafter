@@ -37,6 +37,14 @@ _preview_cache = {}
 from ..core import pgfx_api_clients as api_clients
 from ..utils import pgfx_utils as utils
 
+
+def _route(method, path):
+    """Register UI routes only when ComfyUI's server is available during import."""
+    instance = getattr(PromptServer, "instance", None)
+    if instance is None:
+        return lambda func: func
+    return getattr(instance.routes, method)(path)
+
 def get_node_description(node_name):
     try:
         help_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "HELP.md")
@@ -403,7 +411,7 @@ def _read_caption_any(target_dir, filename):
 # ---------------------------------------------------------------------------
 # API: serve image bytes from arbitrary path
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.get("/pgfx/browser/serve")
+@_route("get", "/pgfx/browser/serve")
 async def serve_image(request):
     try:
         path = request.query.get("path", "")
@@ -453,7 +461,7 @@ async def serve_image(request):
 # ---------------------------------------------------------------------------
 # API: list subfolders
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.get("/pgfx/browser/subfolders")
+@_route("get", "/pgfx/browser/subfolders")
 async def get_subfolders(request):
     try:
         folder = request.query.get("folder", ".")
@@ -484,7 +492,7 @@ async def get_subfolders(request):
 # ---------------------------------------------------------------------------
 # API: list images with pagination + search
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.get("/pgfx/browser/images")
+@_route("get", "/pgfx/browser/images")
 async def get_images(request):
     try:
         folder = request.query.get("folder", ".")
@@ -537,7 +545,7 @@ async def get_images(request):
 # ---------------------------------------------------------------------------
 # API: image details
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.get("/pgfx/browser/details")
+@_route("get", "/pgfx/browser/details")
 async def get_image_details(request):
     try:
         folder = request.query.get("folder", ".")
@@ -579,7 +587,7 @@ async def get_image_details(request):
 # ---------------------------------------------------------------------------
 # API: read caption sidecar file
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.get("/pgfx/browser/caption")
+@_route("get", "/pgfx/browser/caption")
 async def get_caption(request):
     try:
         folder = request.query.get("folder", ".")
@@ -595,7 +603,7 @@ async def get_caption(request):
 # ---------------------------------------------------------------------------
 # API: save caption sidecar file
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.post("/pgfx/browser/save-caption")
+@_route("post", "/pgfx/browser/save-caption")
 async def save_caption(request):
     try:
         body = await request.json()
@@ -616,7 +624,7 @@ async def save_caption(request):
 # ---------------------------------------------------------------------------
 # API: generate caption using vision model
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.post("/pgfx/browser/generate-caption")
+@_route("post", "/pgfx/browser/generate-caption")
 async def generate_caption(request):
     try:
         body = await request.json()
@@ -673,7 +681,7 @@ async def generate_caption(request):
 # ---------------------------------------------------------------------------
 # API: batch caption all uncaptioned images
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.post("/pgfx/browser/caption-batch")
+@_route("post", "/pgfx/browser/caption-batch")
 async def caption_batch(request):
     try:
         body = await request.json()
@@ -811,7 +819,7 @@ def _list_images(target_dir):
 # ---------------------------------------------------------------------------
 # API: scan for duplicate images
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.post("/pgfx/browser/scan-duplicates")
+@_route("post", "/pgfx/browser/scan-duplicates")
 async def scan_duplicates(request):
     try:
         body = await request.json()
@@ -931,7 +939,7 @@ def _format_size(size_bytes):
 # ---------------------------------------------------------------------------
 # API: delete files
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.post("/pgfx/browser/delete-files")
+@_route("post", "/pgfx/browser/delete-files")
 async def delete_files(request):
     try:
         body = await request.json()
@@ -1003,4 +1011,3 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 
 if V3_AVAILABLE:
     NODE_CLASS_MAPPINGS["PGFX_VisualFolderLoaderV3"] = PGFX_VisualFolderLoaderV3
-

@@ -1015,19 +1015,13 @@ class ThoughtProcess:
     @staticmethod
     def _is_ltx2_target(run_config):
         fmt = getattr(run_config, "target_model_format", "Generic (SD1.5, SD2.1)")
-        return fmt.startswith("LTX-2") or fmt == "Generic Video (Wan, etc.)"
+        return config.is_ltx23_target(fmt)
 
     @staticmethod
     def _model_specific_guidelines(mode, run_config):
-        guidelines = ""
-        if ThoughtProcess._is_ltx2_target(run_config):
-            guidelines = f"""
-MODEL-SPECIFIC PROMPTING GUIDELINES (LTX-2 / LTX-2.3 Video Generation):
-{config.LTX2_PROMPT_GUIDELINES}
-
-{config.LTX2_VIDEO_PROMPT_CATEGORIES}
-"""
-        return guidelines
+        return config.get_model_prompt_guidelines(
+            getattr(run_config, "target_model_format", ""), mode
+        )
 
     def _build_initial_merge_prompt(self, mode, user_text, user_negative_prompt, image_context, mandatory_tokens, images, run_config, all_primary_subjects):
         """
@@ -1176,7 +1170,10 @@ MODEL-SPECIFIC PROMPTING GUIDELINES (LTX-2 / LTX-2.3 Video Generation):
             generation_kwargs["debug_title"] = f"Initial {self.mode} Prompt"
             ok, scene_prompt = self._query_model(self.run_config.model, merge_prompt, **generation_kwargs)
 
-        return (utils.TextCleaner.single_paragraph(scene_prompt), None) if ok else (None, f"Ollama error: {scene_prompt}")
+        if ok:
+            prompt = scene_prompt if config.is_h3_target(self.run_config.target_model_format) else utils.TextCleaner.single_paragraph(scene_prompt)
+            return prompt, None
+        return None, f"Ollama error: {scene_prompt}"
 
     def _visual_agent_apply_style(self, style_rules):
         """Agent 3: Applies cinematic style, composition, and art direction."""
@@ -1185,6 +1182,11 @@ MODEL-SPECIFIC PROMPTING GUIDELINES (LTX-2 / LTX-2.3 Video Generation):
         
         model_guidelines = self._model_specific_guidelines(self.mode, self.run_config)
         guidelines_section = f"\n**MODEL-SPECIFIC GUIDELINES:**\n{model_guidelines}\n" if model_guidelines else ""
+        output_format_instruction = (
+            "Preserve the H3 field names and required section order. Return the appropriate structured H3 rewrite for the detected input mode."
+            if config.is_h3_target(self.run_config.target_model_format)
+            else "The final output must be a single, coherent paragraph."
+        )
         
         # Inlined from _refine_image_video_prompt
         refinement_prompt = f"""
@@ -1204,7 +1206,7 @@ You are an expert cinematic prompt engineer. Your task is to refine a DRAFT prom
 1.  **Integrate Rules:** Rewrite the DRAFT to seamlessly and naturally incorporate the STYLE & COMPOSITION RULES.
 2.  **Enhance, Don't Replace:** Build upon the core ideas of the DRAFT. Do not discard its main subjects or intent.
 3.  **Cinematic Language:** Use vivid, descriptive, and cinematic language suitable for a top-tier text-to-image model.
-4.  **Single Paragraph:** The final output must be a single, coherent paragraph.
+4.  **Output Format:** {output_format_instruction}
 
 Return ONLY the final, refined prompt.
 """
@@ -1213,16 +1215,21 @@ Return ONLY the final, refined prompt.
             temperature=self.run_config.temperature, seed=self.run_config.seed, 
             timeout=self.run_config.timeout, debug_mode=self.run_config.debug_mode, debug_title="Refine Visual Prompt"
         )
-        return utils.TextCleaner.single_paragraph(refined_prompt) if ok else self.state["draft_prompt"]
+        if not ok:
+            return self.state["draft_prompt"]
+        return refined_prompt if config.is_h3_target(self.run_config.target_model_format) else utils.TextCleaner.single_paragraph(refined_prompt)
 
     def _visual_agent_finalize_and_clean(self):
         """Agent 4: Cleans prompt for diffusion and generates negatives."""
         print("\033[94m[Studio-Agent 4] Finalizing prompt and generating negatives...\033[0m")
-        new_positive, counter_negatives = utils._simplify_for_diffusion(self.state["final_prompt"], self.state["user_text"], self.run_config)
+        if config.is_h3_target(self.run_config.target_model_format):
+            new_positive, counter_negatives = self.state["final_prompt"], ""
+        else:
+            new_positive, counter_negatives = utils._simplify_for_diffusion(self.state["final_prompt"], self.state["user_text"], self.run_config)
         
         combined_negative_input = f"{self.negative_prompt}, {counter_negatives}".strip().strip(',')
         
-        final_negative = utils._generate_negative_prompt(new_positive, self.run_config, user_negative_prompt=combined_negative_input)
+        final_negative = "" if config.is_h3_target(self.run_config.target_model_format) else utils._generate_negative_prompt(new_positive, self.run_config, user_negative_prompt=combined_negative_input)
         return new_positive, final_negative
 
     def _qna_agent_triage_request(self):

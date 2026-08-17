@@ -920,6 +920,9 @@ class LogoStudioUI {
             const prevFov = this.camera3d.fov;
             
             if (this.transformControls3d) this.transformControls3d.visible = false;
+            if (this.gridHelper) this.gridHelper.visible = false;
+            if (this.axesHelper) this.axesHelper.visible = false;
+            if (this.canvasPlane3d) this.canvasPlane3d.visible = false;
             this.isExporting = true;
 
             const targetW = this.targetWidth || 1024;
@@ -948,6 +951,9 @@ class LogoStudioUI {
             this.camera3d.updateProjectionMatrix();
             
             this.isExporting = false;
+            if (this.canvasPlane3d) this.canvasPlane3d.visible = true;
+            if (this.axesHelper) this.axesHelper.visible = true;
+            if (this.gridHelper) this.gridHelper.visible = document.getElementById('pgfx-3d-show-grid')?.checked ?? true;
             if (this.transformControls3d) this.transformControls3d.visible = true;
 
             const advSettings = {};
@@ -3525,6 +3531,7 @@ class LogoStudioUI {
 
         // Figma/Illustrator-style Page Background dynamic sheet draw (Bug 4)
         this.canvas.on('before:render', () => {
+            if (this.isExporting) return;
             const ctx = this.canvas.getContext();
             const vpt = this.canvas.viewportTransform;
             ctx.save();
@@ -4017,14 +4024,22 @@ class LogoStudioUI {
             lightRotInput.oninput = (e) => {
                 const rotVal = parseFloat(e.target.value);
                 document.getElementById('pgfx-3d-light-rot-val').textContent = rotVal + '°';
-                if (this.dirLight) {
+                if (this.dirLight && this.fillLight) {
                     const rad = THREE.MathUtils.degToRad(rotVal);
-                    // Orbit the light around the scene center
                     const dist = 800;
+                    const height = 500;
+                    // Orbit key light around the scene
                     this.dirLight.position.set(
                         Math.cos(rad) * dist,
                         Math.sin(rad) * dist,
-                        600
+                        height
+                    );
+                    // Fill light orbits opposite side, lower intensity zone
+                    const fillRad = rad + Math.PI * 0.65;
+                    this.fillLight.position.set(
+                        Math.cos(fillRad) * dist * 0.7,
+                        Math.sin(fillRad) * dist * 0.7,
+                        height * 0.5
                     );
                 }
             };
@@ -4205,13 +4220,26 @@ class LogoStudioUI {
             }
         });
 
-        // Lights
-        this.scene3d.add(new THREE.AmbientLight(0xffffff, 0.5));
-        this.dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-        this.dirLight.position.set(500, 500, 1000);
+        // Lights — 3-point setup for consistent, professional illumination
+        // Ambient base
+        this.scene3d.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+        // Key light (main directional, primary illumination)
+        this.dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        this.dirLight.position.set(600, 400, 800);
         this.dirLight.castShadow = true;
         this.dirLight.shadow.mapSize.set(2048, 2048);
         this.scene3d.add(this.dirLight);
+
+        // Fill light (opposite side, fills shadows)
+        this.fillLight = new THREE.DirectionalLight(0xccddff, 0.6);
+        this.fillLight.position.set(-400, 200, 600);
+        this.scene3d.add(this.fillLight);
+
+        // Rim / back light (edges and separation)
+        this.rimLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        this.rimLight.position.set(0, -500, -800);
+        this.scene3d.add(this.rimLight);
 
         // Environment Helpers
         this.gridHelper = new THREE.GridHelper(5000, 50, 0x444444, 0x333333);
@@ -4852,41 +4880,21 @@ class LogoStudioUI {
     }
 
     _getObj3DSettings(obj) {
-        if (!obj) return { depth: 20, bevelEnabled: true, bevelSize: 1.5, bevelSegments: 3 };
-        if (!obj.userData) obj.userData = {};
-        if (!obj.userData.pgfx_3d) {
-            obj.userData.pgfx_3d = {
-                depth: parseFloat(document.getElementById('pgfx-3d-depth')?.value) || 20,
-                bevelEnabled: document.getElementById('pgfx-3d-bevel-enabled')?.checked ?? true,
-                bevelSize: parseFloat(document.getElementById('pgfx-3d-bevel-size')?.value) || 1.5,
-                bevelSegments: parseInt(document.getElementById('pgfx-3d-bevel-segments')?.value) || 3,
-            };
-        }
-        return obj.userData.pgfx_3d;
-    }
-
-    _applyObj3DSettings() {
-        let target = null;
-        // When a 3D mesh/group is selected, resolve its corresponding Fabric object
-        // so the depth/bevel sliders work even when no 2D object is active.
-        if (this.mode3D && this.selectedMesh3d) {
-            const key = this.selectedMesh3d.userData._key;
-            if (key) {
-                const objs = this.canvas.getObjects();
-                target = objs.find((o, i) => this._keyForObj(o, i) === key) || null;
-            }
-        }
-        if (!target && this.canvas) target = this.canvas.getActiveObject();
-        if (!target) return;
-
-        if (!target.userData) target.userData = {};
-        target.userData.pgfx_3d = {
+        // Always read fresh from the DOM sliders — never cache,
+        // so depth/bevel changes instantly affect all objects on next sync.
+        const settings = {
             depth: parseFloat(document.getElementById('pgfx-3d-depth')?.value) || 20,
             bevelEnabled: document.getElementById('pgfx-3d-bevel-enabled')?.checked ?? true,
             bevelSize: parseFloat(document.getElementById('pgfx-3d-bevel-size')?.value) || 1.5,
             bevelSegments: parseInt(document.getElementById('pgfx-3d-bevel-segments')?.value) || 3,
         };
+        return settings;
+    }
 
+    _applyObj3DSettings() {
+        // _getObj3DSettings now reads directly from DOM sliders every time,
+        // so there's no need to write per-object cached settings.
+        // Simply schedule a 3D rebuild.
         if (this._syncTimeout) clearTimeout(this._syncTimeout);
         this._syncTimeout = setTimeout(() => { this.sync2DTo3D(); }, 16);
     }

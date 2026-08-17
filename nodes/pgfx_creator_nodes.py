@@ -167,7 +167,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 "reset_context": ("BOOLEAN", {"default": config.DEFAULT_LLM_STATELESS}),
                 "local_only_models": ("BOOLEAN", {"default": True}),
                 "style_tags": ("STRING", {"multiline": False, "default": ""}),
-                "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "LTX-2 (Audio/Lip Sync/Retake)"], {"default": "Generic (SD1.5, SD2.1)"}),
+                "target_model_format": (config.MODEL_FORMAT_OPTIONS, {"default": "Generic (SD1.5, SD2.1)"}),
                 "generate_schedule": ("BOOLEAN", {"default": False}),
                 "max_frames": ("INT", {"default": 240, "min": 1, "max": 99999}),
                 "interpolate_keyframes": ("BOOLEAN", {"default": False}),
@@ -254,9 +254,8 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                 image_context = describe_result[0] if describe_result else "No reference images provided."
                 
                 target_fmt = initial_run_config.target_model_format
-                ltx2_guidelines = ""
-                if target_fmt.startswith("LTX-2") or target_fmt == "Generic Video (Wan, etc.)":
-                    ltx2_guidelines = f"\n\n**MODEL-SPECIFIC PROMPTING GUIDELINES (LTX-2 / LTX-2.3):**\n{config.LTX2_PROMPT_GUIDELINES}\n\n{config.LTX2_VIDEO_PROMPT_CATEGORIES}\n"
+                model_guidelines = config.get_model_prompt_guidelines(target_fmt, "Video")
+                model_guidelines = f"\n\n{model_guidelines}" if model_guidelines else ""
 
                 thinking_prompt = textwrap.dedent(f"""
                     You are an expert prompt engineer and art director. Your task is to brainstorm a creative and detailed prompt for an AI image generator based on the user's request and any reference images.
@@ -265,7 +264,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     {user_text}
 
                     **REFERENCE IMAGE CONTEXT:**
-                    {image_context}{ltx2_guidelines}
+                    {image_context}{model_guidelines}
                     
                     **YOUR TASK:**
                     Think step-by-step. What is the core subject? What is the mood? What composition would be best? What artistic style is requested? What are the key lighting and environmental details?
@@ -350,7 +349,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                     return self._handle_creator_exception(Exception("Dual-Model Stage 2 (Instruct) failed to return a JSON object."))
 
                 final_prompt = result_data.get("positive_prompt", "")
-                final_negative_prompt = result_data.get("negative_prompt", "")
+                final_negative_prompt = "" if config.is_flux2_target(target_model_format) else result_data.get("negative_prompt", "")
                 final_prompt = self._format_prompt_for_target(final_prompt, target_model_format)
 
                 passthrough_images = [img for img, _ in images_with_weights]
@@ -474,7 +473,7 @@ class PromptCrafter_VisualCreator(PromptCrafter_BaseCreator):
                         **kwargs,
                     )
                     
-                    ai_negative_prompt = utils._generate_negative_prompt(final_prompt, run_config, user_negative_prompt=negative_prompt)
+                    ai_negative_prompt = "" if config.is_flux2_target(target_model_format) else utils._generate_negative_prompt(final_prompt, run_config, user_negative_prompt=negative_prompt)
                     
                     final_prompt_formatted = self._format_prompt_for_target(final_prompt, target_model_format)
 
@@ -578,7 +577,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
             "whisper_model": (cls.get_whisper_models(), {"default": "large-v3"}),
             "whisper_language": (["auto-detect", "en", "es", "fr", "de", "it", "pt", "is", "ru", "ja", "ko", "zh"], {"default": "auto-detect"}),
             "whisper_engine": (["faster-whisper", "insanely-fast-whisper"], {"default": "faster-whisper"}),
-            "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "LTX-2 (Audio/Lip Sync/Retake)"], {"default": "LTX-2 (Audio/Lip Sync/Retake)"}),
+            "target_model_format": (config.MODEL_FORMAT_OPTIONS, {"default": "LTX-2 (Audio/Lip Sync/Retake)"}),
             "automate_vrg_variables": ("BOOLEAN", {"default": False}),
             "character_description": ("STRING", {"multiline": True, "default": "The Women."} ),
             "song_theme_style": ("STRING", {"multiline": True, "default": "cinematic realism, emotional storytelling, soft surrealism, naturalistic tone, dreamlike nostalgia, modern drama, poetic symbolism, intimate atmosphere"}),
@@ -804,9 +803,8 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                             print(f"\033[91m[PromptCrafter] Audio processing failed: {e}\033[0m")
 
                 target_fmt = run_config.target_model_format
-                ltx2_guidelines = ""
-                if target_fmt.startswith("LTX-2") or target_fmt == "Generic Video (Wan, etc.)":
-                    ltx2_guidelines = f"\n\n**LTX-2 / LTX-2.3 PROMPTING GUIDELINES:**\n{config.LTX2_PROMPT_GUIDELINES}\n\n{config.LTX2_VIDEO_PROMPT_CATEGORIES}\n"
+                model_guidelines = config.get_model_prompt_guidelines(target_fmt, "Video")
+                model_guidelines = f"\n\n{model_guidelines}" if model_guidelines else ""
 
                 thinking_prompt = textwrap.dedent(f"""
                     You are a music video director. Your task is to brainstorm a sequence of cinematic scenes for the provided lyrics.
@@ -816,7 +814,7 @@ class PromptCrafter_LyricsCreator(PromptCrafter_BaseCreator):
                     **SONG THEME / STYLE:**
                     {kwargs.get('song_theme_style', 'cinematic')}
                     **CHARACTER:**
-                    {kwargs.get('character_description', 'main singer')}{ltx2_guidelines}
+                    {kwargs.get('character_description', 'main singer')}{model_guidelines}
                     
                     **TASK:**
                     Think step-by-step. Break the song into logical scenes. For each scene, describe the visual action, the camera shot, and the mood.
@@ -986,7 +984,7 @@ class PromptCrafter_VisualCreatorEasy(PromptCrafter_VisualCreator):
                 "subject": ("STRING", {"multiline": True, "default": ""}), 
                 "model": (combined_models, {}), 
                 "pipeline_mode": (["Image", "Video"], {"default": "Image"}), 
-                "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "LTX-2 (Audio/Lip Sync/Retake)"], {"default": "Generic (SD1.5, SD2.1)"}), 
+                "target_model_format": (config.MODEL_FORMAT_OPTIONS, {"default": "Generic (SD1.5, SD2.1)"}), 
                 "style_override": (style_profiles.get_style_override_options("Image"), {"default": "None"}), 
                 "image_count": ("INT", {"default": 1}), 
                 "seed": ("INT", {"default": -1})
@@ -1007,7 +1005,7 @@ class PromptCrafter_LyricsCreatorEasy(PromptCrafter_LyricsCreator):
                 "instruction": ("STRING", {"multiline": True, "default": config.DEFAULT_PROMPT_TEXT}), 
                 "subject": ("STRING", {"multiline": True, "default": ""}), 
                 "model": (combined_models, {}), 
-                "target_model_format": (["Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3", "Stable Cascade", "FLUX / Qwen / Hunyuan", "LTX-2 (Audio/Lip Sync/Retake)"], {"default": "LTX-2 (Audio/Lip Sync/Retake)"}), 
+                "target_model_format": (config.MODEL_FORMAT_OPTIONS, {"default": "LTX-2 (Audio/Lip Sync/Retake)"}), 
                 "style_override": (style_profiles.get_style_override_options("Lyrics"), {"default": "None"}), 
                 "image_count": ("INT", {"default": 1}), 
                 "audio_file": ("STRING", {"default": "<none>"}), 
@@ -1101,11 +1099,7 @@ if V3_IO_AVAILABLE:
                     v3_io.String.Input("style_tags", default=""),
 
                     # --- Target Format & Scheduling ---
-                    v3_io.Combo.Input("target_model_format", options=[
-                        "Generic (SD1.5, SD2.1)", "Fooocus", "Stable Diffusion 3",
-                        "Stable Cascade", "FLUX / Qwen / Hunyuan",
-                        "LTX-2 (Audio/Lip Sync/Retake)",
-                    ], default="Generic (SD1.5, SD2.1)"),
+                    v3_io.Combo.Input("target_model_format", options=config.MODEL_FORMAT_OPTIONS, default="Generic (SD1.5, SD2.1)"),
                     v3_io.Boolean.Input("generate_schedule", default=False),
                     v3_io.Int.Input("max_frames", default=240, min=1, max=99999, optional=True),
                     v3_io.Boolean.Input("interpolate_keyframes", default=False, optional=True),

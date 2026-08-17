@@ -1450,7 +1450,7 @@ class HuggingFaceClient:
         parts = model_id.split('-')
         quantization_str = parts[-1].lower() if len(parts) > 1 and (parts[-1].lower().startswith("fp") or "bit" in parts[-1].lower()) else "none"
         base_model_name = model_id.replace(f"-{parts[-1]}", "") if quantization_str != "none" else model_id
-        hf_device = str(kwargs.get("hf_device", "auto")).strip().lower()
+        hf_device = str(kwargs.pop("hf_device", "auto")).strip().lower()
         if hf_device not in {"auto", "cpu"}:
             hf_device = "auto"
         
@@ -2093,10 +2093,12 @@ def _get_provider_models(provider, provider_config, log_errors=True):
     status, models = 'other_error', []
     session = config.SHARED_SESSION or requests
     try:
+        # Use a short timeout of 2.0s for discovery/tags endpoint so we never block node execution
+        discovery_timeout = 2.0
         if provider == "ollama":
-            resp = session.get(f"{base_url}/api/tags", timeout=provider_config["timeout"])
+            resp = session.get(f"{base_url}/api/tags", timeout=discovery_timeout)
         elif provider in ["lmstudio", "text-generation-webui"]:
-            resp = session.get(f"{base_url}/v1/models", timeout=provider_config["timeout"])
+            resp = session.get(f"{base_url}/v1/models", timeout=discovery_timeout)
         else:
             return 'not_supported', []
 
@@ -2117,7 +2119,7 @@ def _get_provider_models(provider, provider_config, log_errors=True):
         status = 'connection_error'
         if log_errors: print(f"\033[93m[PromptCrafter] Info: {provider.capitalize()} is offline. If you use it, please ensure it's running at {base_url}.\033[0m")
     except requests.exceptions.RequestException as e:
-        if log_errors: print(f"\033[93m[PromptCrafter] Warning: Could not fetch {provider.capitalize()} models. Error: {e}\033[0m")
+        if log_errors: print(f"\033[93m[PromptCrafter] Warning: Could not fetch {provider.capitalize()} models (timeout or busy). Error: {e}\033[0m")
     return status, models
 
 def _get_all_model_data(log_errors=True):

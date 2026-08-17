@@ -9,6 +9,7 @@
 | If you... | You'll find... |
 |-----------|----------------|
 | Want LLM-powered prompt engineering | A QnA engine with dual-model chaining, forced JSON output, context summarization, and visual/lyrics creator nodes |
+| Generate music with MiniMax Music 3 | A multi-genre prompt creator with 237 genres, auto-gen subjects, instrumental mode, and direct API connector |
 | Design assets in-comsole | A persistent Fabric.js vector design studio with full toolbar, layer management, and keyboard shortcuts |
 | Browse, caption, and organize image datasets | An embedded visual folder browser with dataset captioning workspace and duplicate scanner |
 | Care about production safety | ComfyGuard — a runtime interceptor that protects your environment from broken pip installs and CUDA downgrades |
@@ -37,7 +38,7 @@ Nodes are organized into 12 categories in the ComfyUI menu under `☠️PGFX /`:
 
 | Category | Nodes | Status |
 |----------|-------|--------|
-| **/Creator** | Visual Creator, Lyrics Creator (full + easy variants) | ✅ Stable |
+| **/Creator** | Visual Creator, Lyrics Creator (full + easy variants), **MiniMax Music 3 Creator + API Connector** (V1 + V3) | ✅ Stable |
 | **/Design** | Logo Designer Studio, Logo Designer Agent, Image Vectorizer (SVG) | ✅ Stable |
 | **/Visual Browser** | Folder Image Loader (browse, caption, save, scan) | ✅ Active |
 | **/Utils** | QnA (Advanced, Simple), Universal Switch Box, Multi-Image Preview, Save Text File, File Organizer, Cache Utility, Formatter, Prompt Chunker, Captioner, Ollama Router | ✅ Stable |
@@ -106,6 +107,21 @@ Runtime protection that activates at startup:
 - Injects constraint shields and CUDA index URLs automatically
 - Emergency repair endpoint accessible via the ComfyUI server API
 
+### MiniMax Music 3 — Prompt Creator + API Connector
+
+End-to-end music generation pipeline for the MiniMax-Music3 model, adapted from HOT-Step-PGFX-Edition patterns:
+
+- **Multi-Genre Mixing** — Build an ordered genre blend list via dropdown picker or direct text input. First genre = PRIMARY (dictates song structure: verse count, section order). Each additional genre = seasoning (vocabulary/tone only, with 85%→35% sliding-scale weights). 237 genres across 17 categories including Patois variants.
+- **Auto-Gen Subject** — Generate random song subjects from 18 relational role templates with deque-based repeat avoidance.
+- **Instrumental Mode** — Toggle to omit the Vocal Details section entirely.
+- **🎲 Random Controls** — Genre (replaces primary, keeps seasonings), BPM (genre-appropriate ranges), Key, Scale.
+- **Slop Word Replacement** — Genre-aware replacement of generic AI words (ethereal, shimmer, cascade, neon).
+- **Content Safety** — Optional `safe_mode` filters inappropriate content from captions and lyrics.
+- **Official 3-Section Caption** — Global Metadata + Vocal Details + Arrangement (250–450 words).
+- **Full Lyric Support** — All 9 section tags: [Intro] [Verse] [Pre-Chorus] [Chorus] [Post-Chorus] [Bridge] [Instrumental] [Solo] [Outro].
+- **V1 + V3 API** — Both legacy V1 and modern V3 ComfyUI API nodes available.
+- **Direct API Connector** — Sends caption + lyrics to MiniMax Music 3 server (`/v1/audio/speech`), returns WAV with tiled decode support.
+
 ---
 
 ## Security & Privacy
@@ -131,7 +147,7 @@ Runtime protection that activates at startup:
 
 Legacy nodes remain registered in `NODE_CLASS_MAPPINGS` so **all existing workflows continue to work without changes**. They are marked in `NODE_DISPLAY_NAME_MAPPINGS` with a ⚰️ Legacy prefix in the Add Node menu. No new features, V3 migration, or bug fixes will be made to legacy nodes.
 
-**What stays:** Creator nodes, Logo Designer Studio, Visual Browser, QnA variants, core utilities, ComfyGuard, and Text nodes are actively maintained.
+**What stays:** Creator nodes (including MiniMax Music 3), Logo Designer Studio, Visual Browser, QnA variants, core utilities, ComfyGuard, and Text nodes are actively maintained.
 
 ---
 
