@@ -1,19 +1,34 @@
 # ☠️ PGFX PromptCrafter — ComfyUI Node Pack
 
-**Agentic creative tooling for ComfyUI.** A modular node pack that brings LLM-driven prompt engineering, creative asset tools, and a full vector design studio into your graph — optimized for local reasoning models (DeepSeek-R1, Llama 3.3, etc.) and modern ComfyUI Frontend V2.
+**Agentic creative tooling for ComfyUI.** A modular node pack that brings LLM-driven prompt engineering, a dual-mode image browser, a full vector+3D design studio, music generation pipelines, and production safety tools into your graph — optimized for local reasoning models (DeepSeek-R1, Llama 3.3, etc.) and modern ComfyUI Frontend V2.
 
 ---
 
-## Who is this for?
+## Screenshots
+
+<!-- Add your screenshots to the screenshots/ folder and update the paths below -->
+
+| Logo Designer Studio | Visual Folder Browser | MiniMax Music 3 Creator | QnA Dual-Model Chain |
+|:---:|:---:|:---:|:---:|
+| ![Logo Designer Studio](screenshots/logo_designer_studio.png) | ![Visual Folder Browser](screenshots/visual_folder_browser.png) | ![MiniMax Music 3 Creator](screenshots/minimax_music3_creator.png) | ![QnA Advanced](screenshots/qna_advanced.png) |
+
+| Studio Production Line | ComfyGuard Health Check | Multi-Genre Picker | Batch Prompt Processor |
+|:---:|:---:|:---:|:---:|
+| ![Studio Production Line](screenshots/studio_production_line.png) | ![ComfyGuard](screenshots/comfyguard.png) | ![Genre Picker](screenshots/genre_picker.png) | ![Batch Processor](screenshots/batch_processor.png) |
+
+---
+
+## Who Is This For?
 
 | If you... | You'll find... |
 |-----------|----------------|
-| Want LLM-powered prompt engineering | A QnA engine with dual-model chaining, forced JSON output, context summarization, and visual/lyrics creator nodes |
-| Generate music with MiniMax Music 3 | A multi-genre prompt creator with 237 genres, auto-gen subjects, instrumental mode, and direct API connector |
-| Design assets in-comsole | A persistent Fabric.js vector design studio with full toolbar, layer management, and keyboard shortcuts |
-| Browse, caption, and organize image datasets | An embedded visual folder browser with dataset captioning workspace and duplicate scanner |
-| Care about production safety | ComfyGuard — a runtime interceptor that protects your environment from broken pip installs and CUDA downgrades |
-| Have legacy workflows (Studio/Film/Viseme/LTX) | All previous nodes still load with a ⚰️ Legacy badge — they work but are no longer actively developed |
+| **Design logos in-node** | A full Fabric.js + Three.js design studio with 2D/3D viewports, layer management, shape primitives, text layers, SVG import/export, GLTF/OBJ/STL 3D model loading, and keyboard nudging — all embedded directly in your ComfyUI graph |
+| **Browse and caption image datasets** | A dual-mode Load/Save image node with an embedded visual browser, thumbnail grid, dataset captioning workspace (single + batch), sidecar .txt management, duplicate scanner, and clickable breadcrumb navigation |
+| **Generate music prompts with MiniMax Music 3** | A multi-genre prompt creator with 237 genres, genre blending (primary = structure, secondary = seasoning), auto-gen subjects, instrumental mode, content safety filtering, slop word replacement, and a direct API connector |
+| **Want LLM-powered prompt engineering** | A QnA engine with dual-model chaining (thinker + instructor), forced JSON output, context summarization, conversation history, web search, and vision model support |
+| **Build full music-video productions** | A complete Studio pipeline: Producer → Sound Engineer → Screenwriter → Creative Director → Director → Cinematographer → Editor → PostMaster, with scene routing, character tracking, and shot planning |
+| **Need production safety** | ComfyGuard — a runtime interceptor that protects your environment from broken pip installs and CUDA downgrades |
+| **Have legacy workflows (Film/Viseme/LTX)** | All previous nodes still load with a ⚰️ Legacy badge — they work but are no longer actively developed |
 
 ---
 
@@ -34,93 +49,329 @@ pip install --no-deps torchaudio faster-whisper whisperx speechbrain
 
 ## Node Inventory
 
-Nodes are organized into 12 categories in the ComfyUI menu under `☠️PGFX /`:
+All nodes appear under the `☠️PGFX /` menu in ComfyUI. The pack currently ships **60+ active nodes** plus **50+ legacy nodes** that maintain backward compatibility.
 
-| Category | Nodes | Status |
-|----------|-------|--------|
-| **/Creator** | Visual Creator, Lyrics Creator (full + easy variants), **MiniMax Music 3 Creator + API Connector** (V1 + V3) | ✅ Stable |
-| **/Design** | Logo Designer Studio, Logo Designer Agent, Image Vectorizer (SVG) | ✅ Stable |
-| **/Visual Browser** | Folder Image Loader (browse, caption, save, scan) | ✅ Active |
-| **/Utils** | QnA (Advanced, Simple), Universal Switch Box, Multi-Image Preview, Save Text File, File Organizer, Cache Utility, Formatter, Prompt Chunker, Captioner, Ollama Router | ✅ Stable |
-| **/Text** | Batch Prompt Processor, Keyframe Prompt Scheduler | ✅ Stable |
-| **/LLM** | LLM Output Saver | ✅ Stable |
-| **/Security** | ComfyGuard Health Check | ✅ Stable |
-| **/Studio** | Full Film Crew pipeline (Producer → PostMaster, all adapters) | ⚰️ Legacy |
-| **/Film** | Project Controller, Character Registry, Shot Architect, Assembler, etc. | ⚰️ Legacy |
-| **/Viseme** | Cinema Rig, Script-Guided, Universal Guide, Word Timing, Conditioning Bridge | ⚰️ Legacy |
-| **/LTX2 / LTXV** | Queue Manager, Stitcher, Latent Upsampler, Corrective Mask, In Context Sampler | ⚰️ Legacy |
-| **/Audio** | Audio Splitter (v1 + v2), ACE-Step 1.5 Advanced, SRT Creator, Subtitle Styler | ⚰️ Legacy |
-| **/VRGDG** | Semantic Bridge, StoryGroup Bridge, Schedule Prompt Map, Prompt Package Validator | ⚰️ Legacy |
-| **/Director** | Director Agent | ⚰️ Legacy |
+### ✅ Active — Production Nodes
+
+#### ☠️PGFX /Creator — AI Prompt Generation
+
+| Node | Description |
+|------|-------------|
+| **✨ Image → Prompt** (`PromptCrafter_VisualCreator`) | Full-featured LLM prompt generator for image/video. Dual-model chain (thinker + instructor), reference image analysis, style profiles, scheduled prompts, and auto-save. |
+| **🎤 Lyrics → Prompt** (`PromptCrafter_LyricsCreator`) | LLM-powered music video prompt generator. Creates timed prompt schedules from lyrics + audio, with WhisperX transcription, spectrogram preview, and VRGDG variable automation. |
+| **✨ Easy Image → Prompt** (`PromptCrafter_VisualCreatorEasy`) | Simplified VisualCreator — quick prompt generation without deep-think or scheduling. |
+| **🎤 Easy Lyrics → Prompt** (`PromptCrafter_LyricsCreatorEasy`) | Simplified LyricsCreator — generates prompt schedules from lyrics without the full configuration surface. |
+| **✨ Prompt Creator (V3)** (`PromptCrafter_V3Creator`) | ComfyUI V3 API wrapper of the creator node. |
+
+#### ☠️PGFX /Music — MiniMax Music 3
+
+| Node | Description |
+|------|-------------|
+| **🎵 MiniMax Music 3 Creator** (`PromptCrafter_MiniMaxMusic3Creator`) | Creates structured captions (Global Metadata + Vocal Details + Arrangement) and full lyrics for the MiniMax-Music3 model. Multi-genre blending, auto-gen subjects, instrumental mode, content safety, slop word replacement, 237 genres, 🎲 random controls. |
+| **🎵 MiniMax Music 3 API Connector** (`PromptCrafter_MiniMaxMusic3APIConnector`) | Sends structured caption + lyrics to a MiniMax Music 3 server (`/v1/audio/speech`) and returns generated WAV audio. Supports tiled decode, configurable max duration, and output path. |
+| **🎵 MiniMax Music 3 Creator (V3)** | V3 API variant of the Creator. |
+| **🎵 MiniMax Music 3 API Connector (V3)** | V3 API variant of the API Connector. |
+
+#### ☠️PGFX /Logo — Logo Designer
+
+| Node | Description |
+|------|-------------|
+| **PGFX Logo Designer Studio** (`PGFX_LogoDesignerStudio`) | Full embedded design studio (Fabric.js + Three.js). 2D vector canvas with shape primitives, text layers, pen tool, full drawing toolbar, layer panel with visibility/lock/rename, undo/redo history, and Figma/Illustrator-style arrow key + Shift nudging. **3D viewport** with Three.js orbit controls, GLTF/OBJ/STL model import, SVG extrusion, GLTF export, and 3D transform gizmos. Multiple environment slots, SVG export, server-side image persistence, and zero workflow file bloat. |
+| **PGFX Logo Designer Agent** (`PGFX_LogoDesignerAgent`) | LLM agent that analyzes brand requirements and generates detailed logo design briefs with color palettes, typography recommendations, and style direction. |
+| **📐 PGFX Image Vectorizer** (`PGFX_ImageVectorizer`) | Converts raster logo images to SVG vector format using edge detection and path tracing. |
+| **PromptCrafter ✨ Image Trace to SVG** (`CP_ImageToSVG`) | Traces raster images to SVG vector paths using potrace-based algorithms. |
+| **PromptCrafter 💾 Save SVG** (`CP_SaveSVG`) | Saves SVG output to disk with customizable path and filename. |
+| Plus V3 API variants of all the above. |
+
+#### ☠️PGFX /Visual Browser — Image Folder Browser
+
+| Node | Description |
+|------|-------------|
+| **📂 Visual Folder Loader** (`PGFX_VisualFolderLoader`) | Dual-mode Load/Save image node with an embedded visual browser. **Load Mode**: Browse folder thumbnails, select an image, output image + mask + caption. **Save Mode**: Connect images to save directly to the browsed folder with timestamped filenames — same folder you browse is the folder you save to. |
+
+**Visual Folder Loader Features:**
+
+| Feature | Description |
+|---------|-------------|
+| **Thumbnail Grid** | Visual grid of all images in the current folder with green TXT badges on images that have sidecar caption files |
+| **Clickable Breadcrumb Navigation** | Path bar with clickable segments to jump to any parent folder; folder dropdown lists all subfolders |
+| **Search & Pagination** | Real-time search (250ms debounce), paginated results with prev/next controls |
+| **Caption on Save** | Auto-caption every saved image with a vision model and write `.txt` sidecar — zero extra steps |
+| **Execution-Time Auto-Captioning** | During workflow queue execution, auto-caption images on-the-fly (`Disabled` / `Always (Overwrite)` / `If Missing`) |
+| **✨ Generate (Single)** | Generate a caption for the selected image using any vision model (Ollama, GGUF, HuggingFace — auto-listed) |
+| **📝 Caption All (Batch)** | Caption every image in the folder or only missing ones, with estimated time display, live progress counter, and a 🛑 Stop button |
+| **Ground Truth Prompting** | Enter text like "Super Hero" — it's injected as ground truth context: *"Describe this image in detail. Use the following as ground truth context: Super Hero"* |
+| **Caption Output Formats** | Sidecar .txt (default), Single JSON (`captions.json`), or Single TXT Append (`captions.txt`) |
+| **Duplicate Scanner 🔍** | Scans for exact (MD5) and near-duplicate (perceptual dhash) images with selectable duplicates and bulk deletion |
+| **Image Details Bar** | Shows resolution, file size, date, and format for the selected image |
+| **Keyboard Shortcuts** | Escape closes overlays, Delete/Backspace triggers bulk deletion in the scanner |
+
+#### ☠️PGFX /Text — LLM Q&A and Text Processing
+
+| Node | Description |
+|------|-------------|
+| **💬 Advanced Q&A** (`PromptCrafter_QnA`) | Full-featured LLM Q&A with dual-model chain (thinker + instructor), web search, image context, conversation history, chunked context summarization, auto-save, and JSON repair. |
+| **💬 Simple Q&A** (`PromptCrafter_QnA_Simple`) | Minimal LLM Q&A node — instruction-only, no formatting overhead, supports vision models and JSON mode. |
+| **🖼️ Image Captioner** (`PromptCrafter_Captioner`) | Generates text descriptions of images using any vision model, with configurable captioner profiles. |
+| **🎬 MiniMax H3 Image → Video Prompt** (`PromptCrafter_H3ImageToVideoPrompt`) | Generates video prompts from images specifically for MiniMax H3 video generation. |
+| **🧩 Prompt Splitter (Pipe)** (`PromptCrafter_PromptChunker`) | Splits large text prompts into chunks for batched LLM calls, preserving context overlap between chunks. |
+
+#### ☠️PGFX /Prompt — Batch Processing
+
+| Node | Description |
+|------|-------------|
+| **🧰 Batch Prompt Processor** (`BatchPromptProcessor`) | Processes a batch of prompts through a configurable pipeline for bulk prompt generation from templates. |
+| **⏱️ Keyframe Prompt Scheduler** (`KeyframePromptScheduler`) | Creates frame-based prompt schedules from keyframe definitions — assigns prompts to specific frame ranges for video generation. |
+| Plus V3 API variants of both. |
+
+#### ☠️PGFX /Utils — Utilities & Tools
+
+| Node | Description |
+|------|-------------|
+| **🔀 Universal Switch Box** (`PGFX_UniversalSwitchBox`) | Routes any data type through a selectable switch — like a multiplexer for ComfyUI connections. Wire once, switch outputs dynamically. |
+| **🖼️ Multi-Image Preview** (`PGFX_MultiImagePreview`) | Displays up to 6 images side-by-side in the ComfyUI viewport with labels and sizing control. |
+| **💾 Save Text File** (`PromptCrafter_SaveTextFile`) | Saves text output to a file with customizable path, filename template, and format. |
+| **📝 Text Formatter** (`PromptCrafter_Formatter`) | Formats text output with options for markdown, JSON, plain text, and custom templates. |
+| **🧹 Cache Utility** (`PromptCrafter_CacheUtility`) | Manages ComfyUI node execution caches — clear, inspect, or invalidate cached outputs. |
+| **🗂️ File Organizer** (`PromptCrafter_FileOrganizer`) | Organizes and renames output files with template-based naming conventions. |
+| **🦙 Ollama Router Node** (`PromptCrafter_OllamaRouterNode`) | Routes LLM requests to local Ollama instances — manages model selection, health checks, and failover. |
+| Plus V3 API variants of all above. |
+
+#### ☠️PGFX /LLM — LLM Output Management
+
+| Node | Description |
+|------|-------------|
+| **☠️ LLM Output Saver** (`PGFX_LLM_OutputSaver`) | Saves LLM output per batch to files, auto-combines into a single JSON on final batch with PGFX JSON repair utilities. Drop-in VRGDG replacement. |
+| Plus V3 API variant. |
+
+#### ☠️PGFX /Security — ComfyGuard
+
+| Node | Description |
+|------|-------------|
+| **🩺 ComfyGuard Health Check** (`PGFX_ComfyGuard_Shield`) | Displays hardware health and security status — CUDA status, VRAM, optimizer flags, constraint shield status. Output node that renders a full status dashboard in the viewport. |
+| Plus V3 API variant. |
 
 ---
 
-## Architecture Highlights
+### ⚰️ Legacy Nodes — Still Load, Still Work
 
-### LLM Backend
-- **Stateless Node v3** — all primary execution methods are refactored as stateless classmethods, ensuring stability across ComfyUI core updates
-- **Native reasoning support** — auto-detects DeepSeek-R1 and triggers Chain of Thought processing
-- **Parallel agent execution** — run multiple LLM agents simultaneously via `PGFX_MAX_LLM_THREADS`
-- **Forced JSON mode** — guarantees structured output even on small 3B-7B local models
-- **Automatic context summarization** — a proactive "Summary Lobe" condenses long QnA conversations to keep context windows performant
+Legacy nodes are marked with a ⚰️ prefix in the node menu. They remain fully registered in `NODE_CLASS_MAPPINGS` so **all existing workflows continue to work without changes**. No new features or V3 migration will be made to these nodes.
 
-### Logo Designer Studio
-A production-grade vector design environment (Fabric.js) embedded in your graph:
-- Full drawing toolbar, text layers, shape primitives
-- Three environment slots with per-slot intensity controls
-- Keyboard nudging (Figma/Illustrator-style arrow key + Shift)
-- SVG export, server-side image persistence, no workflow file bloat
+#### ⚰️PGFX /Studio — Full Film Crew Pipeline (18 nodes)
 
-### Visual Folder Browser — PGFX_VisualFolderLoader
+A complete music-video production pipeline that simulates a real film crew:
 
-A **dual-mode Load/Save** image node with an embedded visual browser, dataset captioning workspace, duplicate scanner, and path explorer — all inside your graph.
+| Node | Role |
+|------|------|
+| **🎬 Studio Config (Producer)** | Initializes project config — resolution, FPS, output path |
+| **🎙️ Studio Sound Engineer** | Analyzes audio with Silero VAD + SpeechBrain emotion recognition, segments into scenes |
+| **📝 Studio Screenwriter** | WhisperX transcription, word-to-scene alignment, screenplay generation with AI correction |
+| **🎨 Studio Creative Director** | Dual-model LLM chain generates visual briefs, character descriptions, per-scene shot plans |
+| **🎬 Studio Director** | Produces per-scene image prompts (positive + negative) from the visual brief |
+| **📷 Studio Scene Router (Cinematographer)** | Routes scene data to downstream rendering nodes |
+| **🎞️ Studio Scene Exporter (Editor)** | Exports rendered scenes for final assembly |
+| **🎬 Studio PostMaster** | Final compositing — assembles scenes into the final video with audio sync |
+| **📋 Studio Project Context** | Manages project-level context (tone, genre, character bible) for LLM calls |
+| **💾/📂 Studio Store/Load Text** | Store and retrieve arbitrary text between nodes |
+| **📐 Studio Shot Planner** | Constructs LLM prompts for shot planning |
+| **📋 Studio Shot Plan → Shot List** | Parses LLM shot plan output into structured shot lists |
+| **👗 Studio Stylist** | Generates consistent character outfit/appearance descriptions |
+| **💃 Studio Animator** | Drives lip-sync/viseme generation from screenplay text |
+| **🔍 Studio Script Supervisor** | Validates screenplay continuity across scenes |
+| **⚙️ Studio Sampler (Universal)** | Executes diffusion model inference for scene rendering |
+| **🔗 Studio ControlNet (Viseme Bridge)** | Bridges viseme guides to ControlNet conditioning |
+| **🔄 Studio Auto-Queue** | Auto-queues multiple render passes for large scene sets |
 
-#### Dual Load/Save Mode
-- **Load Mode** (default, no input connected): Browse a folder's images in the built-in grid, select one, and it outputs the image + mask + caption. Supports pagination, search, and subfolder navigation via clickable path breadcrumbs.
-- **Save Mode** (connect the `images` input): Any incoming image tensor is saved directly to the folder with timestamped filenames (`20260610_143022_000_0000.png`) and passed through as output. **No separate save node needed** — the same folder you browse is the folder you save to, keeping generation, upscale, and animation workflows in sync.
-- **Caption on Save** (save mode + `caption_on_save = Enabled`): Every image saved through the `images` input is automatically captioned by the vision model and a `.txt` sidecar is written alongside it — zero extra steps. The first image's caption is also exposed via the `caption` output pin.
-- The `folder` path supports absolute paths or paths relative to ComfyUI's output directory. Editable by double-clicking the path bar.
+Plus 8 adapter nodes (AUDIO, PROJECT_CONFIG, TIMING_MAP, SHOT_LIST, CHARACTER_TRACK format converters).
 
-#### Dataset Captioning Workspace
-- **Ground Truth Prompting:** When you enter text in `caption_prompt` (e.g. "Super Hero"), it's injected as **ground truth context** into a comprehensive caption instruction: *"Describe this image in detail. Use the following as ground truth context for what is depicted: Super Hero"* — no more generic "man in tights" descriptions.
-- **✨ Generate (Single Image):** Generates a caption using any vision model (Ollama, GGUF, HuggingFace — auto-listed in the `caption_model` dropdown). Auto-saves to a `.txt` sidecar file next to the image. Combined status shows `✨ Generated ✅ Saved` or `✨ Generated ⚠️ Auto-save failed`.
-- **📝 Caption All (Batch):** Captions every image in the folder (or only missing ones). Each caption is **automatically saved** as a `.txt` sidecar after generation (not just displayed). **Time warning** — shows estimated duration before starting (e.g. `~12 minutes` for 50 images) because captioning can take 5–30+ seconds per image. Live progress counter, per-image save status, and a **🛑 Stop Batch** button to cancel mid-way.
-- **💾 Save:** Manually edit any caption in the textarea and save it as a `.txt` sidecar.
-- **Caption Output Format** (`caption_output` widget): Choose between **Sidecar .txt** (one `.txt` file per image — default), **Single JSON** (all captions in a single `captions.json` file keyed by image name), or **Single TXT Append** (all captions appended to a single `captions.txt` file with `filename: caption` entries). This applies to Generate, Batch Caption, Caption on Save, and execution-time auto-captioning.
-- **Real-Time TXT Badges:** Images with existing sidecar `.txt` files display a green `TXT` badge in the grid corner.
-- **Execution-Time Auto-Captioning:** The node's `auto_captioning` input (`Disabled` / `Always (Overwrite)` / `If Missing`) runs the vision model during workflow queue execution, writing sidecar files automatically. The generated caption is also exposed via the third `caption` output pin.
-- **Duplicate Scanner 🔍:** Scans the current folder for exact (MD5) and near-duplicate (perceptual dhash) images. Results are displayed in an overlay with selectable duplicates, group-by-group previews, and bulk deletion.
+#### ⚰️PGFX /Film — Film Project Management (10 nodes)
 
-#### Path Bar & Navigation
-- Clickable breadcrumb segments let you jump directly to any parent folder.
-- Folder dropdown (📂 ▼) lists all subfolders with a parent "Up" option and shows the resolved absolute path.
-- Double-click the path bar to type a path manually.
-- Pagination (`◀ Prev` / `Next ▶`) with per-page info.
-- Search input filters filenames in real-time (250ms debounce).
-- Image details bar shows resolution, file size, date, and format for the selected image.
-- Keyboard support: Escape closes overlays, Delete/Backspace triggers bulk deletion in the duplicate scanner.
+| Node | Description |
+|------|-------------|
+| **Film Project Controller** | Top-level project manager — initializes structure, tracks scenes/shots |
+| **Film Character Registry** | Stores appearance, voice, and role data for multi-scene consistency |
+| **Film Shot Architect** | Designs camera angles, composition, and timing per shot |
+| **Film Assembler** | Assembles shots → scenes → full film with transitions |
+| **Film Render Project** | Renders entire project to disk with encoding and audio mixing |
+| Plus audio loaders, segmenters, config extractors, and auto-indexing nodes. |
 
-### ComfyGuard
-Runtime protection that activates at startup:
+#### ⚰️PGFX /Video — Viseme & Lip-Sync (5 nodes)
+
+| Node | Description |
+|------|-------------|
+| **💋 Cinema Viseme Rig** | Phoneme-based viseme animation frames (rig guides, canny guides, lip masks) using G2P mapping with Gaussian smoothing |
+| **🎭 Script-Guided Visemes** | Viseme animations aligned to scripted dialogue |
+| **🌐 Universal Viseme Guides** | Mouth-shape conditioning images from any text/timing input |
+| **⏱️ Word Timing JSON Builder** | Word-level timing JSON from audio metadata |
+| **🔗 Viseme Conditioning Bridge** | Prepares viseme guides as ControlNet/IP-Adapter conditioning |
+
+#### ⚰️PGFX /LTXV — LTX Video Pipeline (6 nodes)
+
+| Node | Description |
+|------|-------------|
+| **LTX-2 Queue Manager** | Batched video generation queues with auto-queue support |
+| **LTX-2 Video Stitcher** | Stitches rendered clips into continuous video with audio sync |
+| **LTXV Latent Upsampler** | Upsamples video latents for higher resolution generation |
+| **LTXV Corrective Mask** | Fixes artifacts at frame boundaries and stitching seams |
+| **LTXV In Context Sampler** | Reference-frame-based temporal consistency across video segments |
+| **Latent Probe** | Diagnostic node — inspects tensor shapes, statistics, device placement |
+
+#### ⚰️PGFX /Audio — Audio Processing (4 nodes)
+
+| Node | Description |
+|------|-------------|
+| **🎤 Audio Splitter v2** | Splits audio into 16-scene chunks with WhisperX transcription, AI correction, Silero VAD silence detection, and alignment caching |
+| **🎤 Audio Splitter** | Earlier version with similar capabilities |
+| **🎵 ACE-Step 1.5 Advanced** | Text-to-audio latent conditioning for ACE-Step 1.5 |
+| **🎵 ACE-Step Latent Timeline Offset** | Timeline offset/shift for precise audio-video synchronization |
+
+#### ⚰️PGFX /VRGDG — VRGDG Interop (4 nodes)
+
+Semantic Bridge, StoryGroup Bridge, Schedule Prompt Map, and Prompt Package Validator for compatibility with VRGDG (Video Recipe) workflows.
+
+#### ⚰️Other Legacy
+
+- **📝 SRT Creator** — WhisperX subtitles with word-level alignment and AI correction
+- **🎨 Subtitle Styler** — Burns SRT subtitles onto video frames with customizable font/color/position
+- **🎞️ Frame Selector** — Extracts specific frames from video batches
+- **🎬 LTX-2 Manifest Builder** — Builds LTX-2 pipeline manifests from project config
+- **🎬 Director Agent** — Legacy LLM director for prompt generation
+
+---
+
+## Key Features Deep Dive
+
+### Logo Designer Studio — Full Design Environment
+
+A production-grade vector design studio embedded directly in your ComfyUI graph:
+
+**2D Canvas (Fabric.js):**
+- Drawing toolbar with shape primitives (rectangle, circle, triangle, polygon, star, line)
+- Text layers with full formatting (font, size, color, alignment, bold/italic/underline)
+- Pen tool for custom paths
+- Color picker with fill and stroke controls
+- Transparency/opacity per object
+- Layer panel — rename, reorder, toggle visibility, lock layers
+- Undo/Redo history (full canvas state snapshots)
+- Figma/Illustrator-style arrow key nudging (+ Shift for 10x)
+- Grid and snap-to-grid
+- Zoom and pan
+
+**3D Viewport (Three.js):**
+- Orbit controls for free camera rotation
+- GLTF/OBJ/STL 3D model import
+- SVG-to-3D extrusion
+- Transform gizmos (move, rotate, scale)
+- GLTF export
+- 2D ↔ 3D sync — changes in either viewport reflect in the other
+
+**Persistence:**
+- Canvas state saved/loaded with ComfyUI workflows (no file bloat)
+- Server-side image persistence
+- SVG export for production use
+- Multiple environment slots with per-slot intensity controls
+
+### Visual Folder Browser — Dual-Mode Image Node
+
+A single node that replaces separate Load + Save + Caption nodes:
+
+**Load Mode** (no input connected):
+- Browse folder thumbnails in an embedded grid
+- Click an image to output it as an image tensor + mask + caption
+- Navigate via clickable breadcrumb path segments
+- Search filenames in real-time
+- Paginate through large folders
+
+**Save Mode** (connect `images` input):
+- Saves incoming images directly to the browsed folder
+- Timestamped filenames (`20260610_143022_000_0000.png`)
+- **Caption on Save**: Auto-caption + `.txt` sidecar written alongside — zero extra steps
+- Same folder you browse = folder you save to (keeps workflows in sync)
+
+**Dataset Captioning Workspace:**
+- **Ground Truth Prompting**: Enter "Super Hero" → caption instruction becomes *"Describe this image in detail. Ground truth: Super Hero"*
+- **✨ Generate**: Single-image captioning with any vision model (Ollama, GGUF, HuggingFace)
+- **📝 Caption All**: Batch caption all images with estimated time, live progress, and 🛑 Stop button
+- **Caption Output Formats**: Sidecar .txt, Single JSON, or Single TXT Append
+- **Execution-Time Auto-Captioning**: `Disabled` / `Always (Overwrite)` / `If Missing` — runs during workflow queue
+
+**Duplicate Scanner 🔍:**
+- Exact duplicate detection (MD5 hash)
+- Near-duplicate detection (perceptual dhash)
+- Group-by-group preview with selectable duplicates
+- Bulk deletion
+
+### MiniMax Music 3 — End-to-End Music Generation
+
+A complete prompt engineering pipeline for the MiniMax-Music3 model:
+
+**Multi-Genre Mixing (HOT-Step-PGFX-Edition pattern):**
+- 237 genres across 17 categories (Pop, Rock, Electronic, Hip-Hop, R&B, Jazz, Classical, Country, Folk, Metal, Latin, Asian, African, Patois, Reggae, Blues, Soul)
+- First genre = **PRIMARY** (dictates song structure: verse count, section order, BPM range)
+- Additional genres = **seasonings** (vocabulary/tone only, 85%→35% sliding-scale weights)
+- Genre picker dropdown + direct text input field
+- Clear all / randomize buttons
+
+**Lyric Generation:**
+- Auto-Gen Subject from 18 relational role templates with repeat avoidance
+- Full section support: [Intro] [Verse] [Pre-Chorus] [Chorus] [Post-Chorus] [Bridge] [Instrumental] [Solo] [Outro]
+- Instrumental mode toggle (omits Vocal Details section)
+- Official 3-section caption: Global Metadata → Vocal Details → Arrangement (250–450 words)
+
+**Smart Controls:**
+- 🎲 Random genre (replaces primary, keeps seasonings)
+- 🎲 Random BPM (genre-appropriate ranges)
+- 🎲 Random Key / Scale
+- Slop word replacement — genre-aware substitution of generic AI words (ethereal → genre-specific alternatives)
+- Content safety mode — filters inappropriate content
+
+**API Connector:**
+- Sends caption + lyrics to MiniMax Music 3 server
+- Tiled decode support for large outputs
+- Configurable max duration (up to 300 seconds)
+- Returns WAV audio directly
+
+### LLM Backend — Intelligent Prompt Generation
+
+- **Stateless Node V3** — all primary execution methods are stateless classmethods for stability across ComfyUI core updates
+- **Dual-Model Chain** — thinker model reasons, then instructor model formats into structured output
+- **Native Reasoning Support** — auto-detects DeepSeek-R1 and triggers Chain of Thought processing
+- **Parallel Agent Execution** — run multiple LLM agents simultaneously via `PGFX_MAX_LLM_THREADS`
+- **Forced JSON Mode** — guarantees structured output even on small 3B-7B local models
+- **Automatic Context Summarization** — proactive "Summary Lobe" condenses long conversations to keep context windows performant
+- **JSON Repair** — robust extraction, parsing, and repair of malformed LLM JSON output
+- **Multi-Backend Support** — Ollama, llama.cpp, HuggingFace, LMStudio, OpenAI-compatible APIs, GGUF
+
+### ComfyGuard — Runtime Protection
+
+A security layer that activates at startup:
 - Intercepts `pip install` calls to prevent CUDA-downgrading package installs
 - Creates NumPy rescue snapshots for recovery
 - Injects constraint shields and CUDA index URLs automatically
+- Detects conflicting node packs and dependency issues
+- Hardware health dashboard (CUDA status, VRAM, optimizer flags)
 - Emergency repair endpoint accessible via the ComfyUI server API
 
-### MiniMax Music 3 — Prompt Creator + API Connector
+---
 
-End-to-end music generation pipeline for the MiniMax-Music3 model, adapted from HOT-Step-PGFX-Edition patterns:
+## Example Workflows
 
-- **Multi-Genre Mixing** — Build an ordered genre blend list via dropdown picker or direct text input. First genre = PRIMARY (dictates song structure: verse count, section order). Each additional genre = seasoning (vocabulary/tone only, with 85%→35% sliding-scale weights). 237 genres across 17 categories including Patois variants.
-- **Auto-Gen Subject** — Generate random song subjects from 18 relational role templates with deque-based repeat avoidance.
-- **Instrumental Mode** — Toggle to omit the Vocal Details section entirely.
-- **🎲 Random Controls** — Genre (replaces primary, keeps seasonings), BPM (genre-appropriate ranges), Key, Scale.
-- **Slop Word Replacement** — Genre-aware replacement of generic AI words (ethereal, shimmer, cascade, neon).
-- **Content Safety** — Optional `safe_mode` filters inappropriate content from captions and lyrics.
-- **Official 3-Section Caption** — Global Metadata + Vocal Details + Arrangement (250–450 words).
-- **Full Lyric Support** — All 9 section tags: [Intro] [Verse] [Pre-Chorus] [Chorus] [Post-Chorus] [Bridge] [Instrumental] [Solo] [Outro].
-- **V1 + V3 API** — Both legacy V1 and modern V3 ComfyUI API nodes available.
-- **Direct API Connector** — Sends caption + lyrics to MiniMax Music 3 server (`/v1/audio/speech`), returns WAV with tiled decode support.
+The `workflows/` directory includes 12 ready-to-use example workflows:
+
+| Workflow | Description |
+|----------|-------------|
+| **Studio Elite Production Line** | Full Producer → PostMaster pipeline |
+| **Studio MusicVideo Master** | Complete music video production |
+| **Studio LTX MusicVideo** | LTX Video-based music video |
+| **Logo Designer Elite** | Logo design with LLM agent + vectorizer |
+| **Lyrics To Viseme Lipsync** | Lyrics → transcription → viseme → lip-sync |
+| **Cinema Viseme Rig** | Phoneme-based viseme animation |
+| **LTX InContext Pipeline** | Temporal consistency with reference frames |
+| **VisualThink To Video** | Image → LLM concept → video generation |
+| **Dream Journal Visualizer** | Text → image visualization pipeline |
+| **Synesthesia Machine** | Cross-modal audio-visual generation |
+| **Stock Enhancement** | Image enhancement and upscaling pipeline |
+| **Universal Switch Box Demo** | Dynamic routing with the switch box |
 
 ---
 
@@ -141,13 +392,11 @@ End-to-end music generation pipeline for the MiniMax-Music3 model, adapted from 
 | ✅ **Stable** | Production-ready, regularly used in primary workflows |
 | 🔧 **Beta** | Feature-complete; minor edge cases possible |
 | ⚠️ **Experimental** | Active development; architecture complete but not fully field-tested |
-| ⚰️ **Legacy** | Still loads and works in existing workflows, but **no longer actively developed**. Displayed with a ⚰️ Legacy badge in the node menu. Will not be migrated to ComfyUI V3 API. Consider replacing with alternatives where possible. |
+| ⚰️ **Legacy** | Still loads and works in existing workflows, but **no longer actively developed**. Displayed with a ⚰️ Legacy badge in the Add Node menu. Will not be migrated to V3 API. |
 
-### Legacy Node Policy
+### What's Actively Maintained
 
-Legacy nodes remain registered in `NODE_CLASS_MAPPINGS` so **all existing workflows continue to work without changes**. They are marked in `NODE_DISPLAY_NAME_MAPPINGS` with a ⚰️ Legacy prefix in the Add Node menu. No new features, V3 migration, or bug fixes will be made to legacy nodes.
-
-**What stays:** Creator nodes (including MiniMax Music 3), Logo Designer Studio, Visual Browser, QnA variants, core utilities, ComfyGuard, and Text nodes are actively maintained.
+Creator nodes (Visual, Lyrics, MiniMax Music 3), Logo Designer Studio, Visual Folder Browser, QnA variants, Batch Processor, Keyframe Scheduler, all utility nodes, and ComfyGuard.
 
 ---
 
@@ -164,7 +413,8 @@ Legacy nodes remain registered in `NODE_CLASS_MAPPINGS` so **all existing workfl
 ## Further Reading
 
 - **[HELP.md](HELP.md)** — detailed per-node documentation with input/output specs
-- **`workflows/`** — example workflow JSON files demonstrating pipeline patterns
+- **`workflows/`** — 12 example workflow JSON files demonstrating pipeline patterns
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — internal architecture and design intent
 - GitHub Issues — for bug reports and feature requests
 
 ---
