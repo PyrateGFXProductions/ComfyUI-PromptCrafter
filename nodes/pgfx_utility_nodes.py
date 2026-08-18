@@ -1289,23 +1289,26 @@ STEP 2. WRITE THE THREE FIELDS, FOLLOWING THESE RULES.
 3. DIALOGUE APPEARS ONCE. If someone speaks, the words appear one time only, inside <d>[English] the words</d>. Nothing anywhere else may repeat, hint at or summarise what is said.
 
 4. EVERY spoken line uses this exact shape, with no shortcut and nothing left out:
-HIS OR HER jaw and lips move clearly through every word, and the WHO with a WHAT KIND OF voice (S1) says: <d>[English] the words</d> He closes his lips (or She closes her lips) and ONE ACTION.
-Replace only the capital words with your own. Number the speakers (S1), then (S2) for a second one. EVERY <d> BLOCK STARTS WITH THE TAG [English] AND A SPACE. Copy those square brackets exactly. The spoken words begin with a capital letter and end with a full stop, a question mark or an exclamation mark. After the spoken line there is room for ONE more action, not two.
+HIS OR HER jaw and lips move clearly through every word, and the WHO with a WHAT KIND OF voice (S1) says: <d>[English] the words</d> He closes his lips (or She closes his lips) and ONE ACTION.
+Replace only the capital words with your own. Number the speakers (S1), then (S2) for a second one. When multiple already-numbered speakers speak or shout together, use a compound ID such as (S1,S2). A speaker keeps the same ID across shots; characters who never vocalize receive no speaker ID. EVERY <d> BLOCK STARTS WITH THE TAG [English] AND A SPACE. Copy those square brackets exactly. The spoken words begin with a capital letter and end with a full stop, a question mark or an exclamation mark. After the spoken line there is room for ONE more action, not two. For voiceover, use the exact phrase "says in an off-screen voiceover" and immediately after the <d> block state that the on-screen character's lips remain closed. When the same line of dialogue or lyrics crosses a cut, use <scenetrans> at the connecting points and explicitly state that the audio continues across the cut. Use <cutoff> when speech is truncated by the end of the video.
 
-5. Camera moves are lowercase inside the sentence. Use at most TWO of them, and each one ends with one of these four phrases, spelled exactly: with small amplitude, with large amplitude, at slow speed, at fast speed. A calm scene takes small amplitude and slow speed. Only a genuinely energetic scene takes large amplitude or fast speed. These words are banned: slightly, subtly, gently, a little, gradually.
+5. Camera moves are lowercase inside the sentence. Use at most TWO of them, and each one ends with one of these four phrases, spelled exactly: with small amplitude, with large amplitude, at slow speed, at fast speed. A calm scene takes small amplitude and slow speed. Only a genuinely energetic scene takes large amplitude or fast speed. These words are banned: slightly, subtly, gently, a little, gradually. Use these motion types: zoom in/out, push in/pull out, pan left/right, truck left/right, tilt up/down, pedestal up/down, arc shot, tracking shot, static shot, shake slightly/shake strongly, POV, roll clockwise/counterclockwise. Write camera motion as a natural English action within the shot, not stacked as separate labels: "The camera pushes in with small amplitude at slow speed toward the folded letter in her hands." Not: "Camera: push in, small amplitude, slow speed."
 
 6. non_diegetic_music names instruments, tempo and volume that suit YOUR scene. Choose the instruments yourself.
 
 7. NOBODY TALKS IN overall_soundscape. List three to five sounds that really exist in the place in the IDEA, and nothing else. These words are BANNED from that field: voice, voices, talking, talk, chatter, murmur, mutter, conversation, speech, speaking, whisper, shouting, singing, lyrics, crowd noise. A cafe, a restaurant, a bar, a shop, a station or any other crowded place is still SILENT of people here. Name the OBJECTS instead of the people: cups, plates, chairs, machines, doors, footsteps, traffic. Wind, fabric, machines, engines and moving air never whisper or murmur here; they hiss, rush, hum, moan, rustle or sigh instead. Never ask for silence or clean audio. There is always some room tone.
 
-8. This is ONE continuous shot. There is only [Shot 1] in the whole answer, and [Shot 1] carries no timestamp. If only the distance or a slight angle needs to change, move the camera; never cut. Do not write [Shot 2].
+8. ON-SCREEN TEXT: Place any banner, sign, label, subtitle, or neon text that is actually visible on screen in English double quotation marks. Preserve the original text and punctuation verbatim, without translation: A red neon sign reading "营业中" glows above the doorway.
+
+9. This is ONE continuous shot. There is only [Shot 1] in the whole answer, and [Shot 1] carries no timestamp. If only the distance or a slight angle needs to change, move the camera; never cut. Do not write [Shot 2].
 
 LAST CHECK, never printed:
 - My first line is the exact alignment line (for image-guided modes) or the three fields directly (for T2VA), with one blank line after the alignment line.
 - No camera word from the IDEA became a thing in the scene, and no drone, cameraman or lens appears.
 - NO word for talking or voices anywhere in overall_soundscape.
-- If the IDEA gave me no words to say, there is no <d> block at all. Every <d> block starts with the tag [English]. Every spoken line has the jaw and lips moving before it, an (S1) tag on the speaker, and He closes his lips or She closes her lips straight after </d>.
-- Every camera move ends with one of the four exact phrases, and there are at most two.
+- If the IDEA gave me no words to say, there is no <d> block at all. Every <d> block starts with the tag [English]. Every spoken line has the jaw and lips moving before it, an (S1) tag on the speaker, and He closes his lips or She closes his lips straight after </d>.
+- Every camera move ends with one of the four exact phrases, and there are at most two. Each camera move uses a real motion type from the list in rule 5.
+- Any visible text on screen is in English double quotation marks with original punctuation preserved.
 - The description is inside the word range the LENGTH line asked for, and never under it.
 - There is only [Shot 1] in the whole answer.
 """.strip()
@@ -1338,7 +1341,79 @@ overall_soundscape: Fingertips tap the glass before it scrapes across the tablet
 non_diegetic_music: A low electronic pulse at a slow tempo, ending immediately after the glass breaks."""
 
 
-def _h3_base_prompt(mode, instruction, duration_seconds, aspect_ratio, reference_context, roles):
+# ── Style preset rules extracted from MiniMax-H3 official skills ──────────
+# Source: https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills
+_STYLE_PRESETS = {
+    "Minimalist Product Ad": """
+STYLE: MINIMALIST PRODUCT AD (Apple-inspired)
+Composition: clean negative space, premium light, restrained motion. Product silhouette stays clear against background.
+Product fidelity: preserve the original body color, material tint, accent color, and finish. Never recolor the product body or change its proportions.
+Typography: single-line English text, three to five words. First half black or dark gray, second half product main color. Text sits in vertically centered composition zone, not subtitle position.
+Motion: product-edge highlights drive transitions. One main action per beat. Peaks at variant entrance and copy landing. Material-detail pause before final hold.
+Transitions: real product elements such as edges, highlights, opening, rotation. No white flashes, abstract particles, or random light effects.
+Opening: quickly reveal product action or angle. No empty dead time.""",
+
+    "Brand Promo": """
+STYLE: BRAND PROMO
+Story spine: brand hook, user intent, product mechanism, capabilities, proof, logo and CTA.
+Beat planning: five to eight major beats for fifteen seconds, eight to twelve for thirty seconds. Each beat defines time range, visual owner, action, copy, color state, and transition.
+Motion: product motion, cursor paths, UI flow, or matched geometry drive transitions. Two to five deliberate color states tied to meaning.
+Authenticity: use verified assets. Do not redraw or approximate logos, wordmarks, or product UI.
+Copy: readable, not overcrowded. Final logo not stretched or cropped.""",
+
+    "Music Video": """
+STYLE: MUSIC VIDEO
+Beat-reactive: cuts land on snare, 808, hi-hat, or vocal accent. Hard cuts only for fast-paced styles.
+Typography: dynamic graphic subject in space, not subtitle bar. May sit in foreground, midground, or background. Never covers eyes or main facial expression. Visible words exactly match performed lyrics.
+Multi-shot: head and tail frame continuity. Same character card, wardrobe, lighting across shots. Same-direction camera motion or match-cut elements for hard scene switches.
+Aesthetic: unified grain, LUT, lighting across all shots. 35mm film grain overlay to reduce AI plasticity.
+Performance: lip-sync with visible jaw motion, breath, facial accents, nods, hand accents following phrasing.""",
+
+    "3D Animation": """
+STYLE: 3D ANIMATION (Pixar-inspired)
+Rendering: C4D plus Octane look, high-end animated feature quality. Warm subsurface scattering skin, soft translucent light through ears and cheeks.
+Character: exaggerated geometric simplification with excellent material detail. Two-point-five to three head-tall proportions for cute characters. Big heads, compact bodies, clear silhouettes.
+Hair and fur: strong sculpted clumps with fine edge flyaway hairs. Feels designed but tactile under light.
+Acting: exaggerated Disney or Pixar performance with squash and stretch, strong brows, eye corners, pupils, lips, cheek changes.
+Motion: high-energy poses, clear line of action, forward lean, strong anticipation, fast but readable timing, elastic body mechanics.
+Negative: no photorealistic live-action, no flat 2D anime, no plastic toy skin, no stiff mannequin posing.""",
+
+    "Hand-drawn Fusion": """
+STYLE: HAND-DRAWN PLUS LIVE-ACTION FUSION
+Structure: flat hand-drawn luminous animation appears in real space. Contacts live-action hands or objects in the first three seconds. Continuously morphs as one entity. Escapes. Handheld camera follows slightly late.
+Texture: crayon, chalk, colored pencil, pastel, rough brush. Slight line jitter, uneven smudge, rough edges, frame-by-frame redraw feel.
+Morphing: continuous transformation between forms such as line, creature, mark, plant, vehicle, object. Preserve a line, tail, color smear, or motif from previous form.
+Camera: handheld phone camera, not neatly centered. Lags behind, pans, tilts, or advances after entity leaves frame edge.
+Tone: cute, everyday, nostalgic, gentle, slightly bittersweet. Never horror, jump scares, or threatening motion.""",
+
+    "Papercraft Stop-Motion": """
+STYLE: PAPERCRAFT STOP-MOTION
+Material: layered diorama, cut-paper, pop-up book, miniature sets. Visible paper texture, fold lines, shadow layers.
+Motion: stop-motion feel with frame-by-frame imperfection. Slight wobble, uneven timing, tactile paper movement.
+Characters: paper craft figures with visible cut edges, tab connections, and layered construction.
+Lighting: warm directional light casting real paper shadows. Depth from layered paper planes.
+Sound: paper rustle, fold crease, scissors snip, glue stick, card stock flap.""",
+
+    "Paper Collage": """
+STYLE: PAPER COLLAGE
+Texture: halftone dots, rough print edges, scan offsets, film grain, photocopy paper texture.
+Material: torn paper edges, layered collage elements, vintage print feel.
+Motion: paper movement, collage elements shifting, stop-motion assembly feel.
+Color: muted palette with occasional bold accent. Vintage print registration offsets.
+Sound: paper collage sound effects such as tear, fold, crumple, layer.""",
+
+    "Co-op Game Intro": """
+STYLE: CO-OP GAME INTRO
+Framework: fixed menu framework with coordinated color, buttons, icons, and typography.
+Characters: two player characters with identity cues locked. Player cards with names and stats.
+Motion: menu interaction animation. Character entrance, card reveal, button press, selection highlight.
+Typography: game UI style. Player names, menu text, button labels. Clean, readable, game-appropriate.
+Color: coordinated palette matching game theme. Team colors, accent highlights.""",
+}
+_STYLE_PRESET_NAMES = ["None"] + list(_STYLE_PRESETS.keys())
+
+
+def _h3_base_prompt(mode, instruction, duration_seconds, aspect_ratio, reference_context, roles, style_preset="None"):
     """Build the writer formula for the four base modes (T2VA/I2VA/FL2VA/L2VA)."""
     length_block = _h3_length_block(duration_seconds)
 
@@ -1362,6 +1437,7 @@ def _h3_base_prompt(mode, instruction, duration_seconds, aspect_ratio, reference
         preamble = "You can SEE the picture, and that picture is the FIRST FRAME of the video. The IDEA says what HAPPENS after that first frame."
         picture_rules = """
 The video BEGINS in the picture, so your description is the SAME person or thing, the SAME clothes and hair, the SAME place and the SAME light. Describe what is really there before anything moves, then what happens next. Never invent a different scene and never change what somebody is wearing. The STYLE comes FROM THE PICTURE, not from the IDEA: a photograph is live-action cinematic, a drawing is anime or illustration, a render is 3D. Say which one it is in the style sentence. The viewer is watching a video, so the words picture, image, photo, photograph and frame never appear in any field.
+<Picture 1> is the actual first frame of the video at 0.00 seconds and belongs to [Shot 1]. The description should first establish the style, subjects, composition, and scene anchors in the image, then describe the next action. Character identity, clothing, colors, key objects, and spatial relationships should remain consistent. Structure: first-frame anchor, action onset, continuous development, result or reaction.
 """
         alignment = f"""
 YOUR VERY FIRST LINE IS ALWAYS THIS ONE, TYPED OUT IN FULL:
@@ -1376,6 +1452,7 @@ That line never changes, whatever the picture and whatever the idea. Copy it cha
         preamble = "You can SEE two pictures. The FIRST is the FIRST FRAME of the video and the SECOND is the LAST FRAME. They are the start and the end of ONE continuous shot, never two separate scenes. The IDEA says what HAPPENS between those two frames."
         picture_rules = """
 The video BEGINS as the first picture looks and ENDS as the second picture looks. Describe the person or thing ONCE, as the first picture shows it, then describe the change that carries it into the second picture as one continuous movement. Keep the SAME PERSON throughout: the same face, the same build. Their clothes, their pose and the light are as the first picture shows them at the start and as the second picture shows them at the end. Never invent a scene that is in neither picture. EVERY DIFFERENCE BETWEEN THE TWO PICTURES IS AN ACTION OR A CAMERA MOVE. If the second picture is framed wider, the camera moved back. If it looks along a different direction, the camera turned. If somebody is no longer there, they walked out of the shot. If the place itself is different, the camera travelled to it in one continuous move. If the CLOTHING or the BODY is different, that is a TRANSFORMATION: describe the one turning into the other as it happens, never as two separate outfits and never as a cut. The STYLE comes FROM THE PICTURES, not from the IDEA. NEVER TELL THE VIEWER THERE ARE TWO PICTURES: the words picture, image, photo, photograph, frame, left, right, side by side, split screen and collage never appear in any field.
+FL2VA favors a single shot so the model can interpolate continuously from the first frame to the last frame. Use multiple shots only when explicitly specified. The last frame must be reached by the final [Shot N] at the end of the video. Structure: first-frame state, observable intermediate changes, progressively narrowing differences, last-frame state.
 """
         alignment = """
 YOUR VERY FIRST LINE IS THE ALIGNMENT LINE AT THE VERY END OF THIS MESSAGE. Copy it character for character, keeping the long dash and BOTH numbers exactly as they are written there, then leave one blank line and carry on with the three fields. Never invent your own numbers.
@@ -1387,7 +1464,7 @@ YOUR VERY FIRST LINE IS THE ALIGNMENT LINE AT THE VERY END OF THIS MESSAGE. Copy
         whole = "the alignment line and the three fields"
         preamble = "You can SEE the picture, and that picture is the FINAL FRAME of the video. The IDEA says what HAPPENS before it."
         picture_rules = """
-The picture is the FINAL frame of the video, not the first. The STYLE comes FROM THE PICTURE: a photograph is live-action cinematic, a drawing is anime or illustration, a render is 3D. Infer a plausible earlier state from the IDEA and the picture, then describe the actions, camera movement and scene changes that progressively converge on the exact final arrangement in the picture. The final shot lands exactly on what the picture shows: the same composition, subject state, lighting and camera angle. The viewer is watching a video, so the words picture, image, photo, photograph and frame never appear in any field.
+The picture is the FINAL frame of the video, not the first. It belongs to the last [Shot N]; it does not inherently belong to Shot 1. The STYLE comes FROM THE PICTURE: a photograph is live-action cinematic, a drawing is anime or illustration, a render is 3D. Infer a plausible earlier state from the IDEA and the picture, then describe the actions, camera movement and scene changes that progressively converge on the exact final arrangement in the picture. The final shot lands exactly on what the picture shows: the same composition, subject state, lighting and camera angle. The viewer is watching a video, so the words picture, image, photo, photograph and frame never appear in any field. Structure: plausible preceding state, explicit action and transition path, gradual convergence in the final shot, last-frame landing.
 """
         alignment = """
 YOUR VERY FIRST LINE IS THE ALIGNMENT LINE AT THE VERY END OF THIS MESSAGE. Copy it character for character, keeping the long dash and the number exactly as written there, then leave one blank line and carry on with the three fields. Never invent your own number.
@@ -1400,6 +1477,8 @@ YOUR VERY FIRST LINE IS THE ALIGNMENT LINE AT THE VERY END OF THIS MESSAGE. Copy
             "EXAMPLE OF THE SHAPE ONLY - copy the shape, never the words, the workshop or the sounds. "
             "Its length is not a target; the LENGTH line at the end of this message decides how long yours must be."
         )
+
+    style_rules = _STYLE_PRESETS.get(style_preset, "")
 
     background = ""
     if reference_context:
@@ -1424,6 +1503,7 @@ YOUR VERY FIRST LINE IS THE ALIGNMENT LINE AT THE VERY END OF THIS MESSAGE. Copy
         {picture_rules}
         {example_note}
         {example}
+        {style_rules}
 
         OUTPUT CONTRACT: Return the alignment line first (for image-guided modes) and then exactly the three labeled fields in this order, one blank line between them, no line break inside any field, and nothing after non_diegetic_music. {ratio_note}
 
@@ -1453,6 +1533,7 @@ class PromptCrafter_H3ImageToVideoPrompt:
                 "duration_seconds": ("INT", {"default": 5, "min": 4, "max": 15, "step": 1, "tooltip": "MiniMax H3 video duration. The API accepts integer durations from 4 to 15 seconds."}),
                 "frame_rate": ("INT", {"default": 24, "min": 1, "max": 120, "step": 1}),
                 "aspect_ratio": (["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"], {"default": "16:9", "tooltip": "Requested output framing. Frame-guided modes should normally use adaptive."}),
+                "style_preset": (_STYLE_PRESET_NAMES, {"default": "None", "tooltip": "Optional style preset from MiniMax-H3 official skills. Adds genre-specific prompting rules."}),
             },
             "optional": {
                 "image_count": ("INT", {"default": 1, "min": 0, "max": cls.MAX_IMAGES, "step": 1}),
@@ -1471,7 +1552,8 @@ class PromptCrafter_H3ImageToVideoPrompt:
     def execute(self, instruction, model, input_mode="I2VA", duration_seconds=5, frame_rate=24, aspect_ratio="16:9",
                 image_count=1, reference_roles="", image_weights_json="{}", temperature=0.2,
                 seed=0, timeout=180, debug_mode=False, llm_device=config.DEFAULT_LLM_DEVICE,
-                reset_context=config.DEFAULT_LLM_STATELESS, strict_guide_validation=True, **kwargs):
+                reset_context=config.DEFAULT_LLM_STATELESS, strict_guide_validation=True,
+                style_preset="None", **kwargs):
         images_with_weights = _collect_visual_dynamic_images(
             image_count=image_count, image_weights_json=image_weights_json, max_images=self.MAX_IMAGES, **kwargs
         )
@@ -1520,10 +1602,10 @@ class PromptCrafter_H3ImageToVideoPrompt:
 
         if mode == "Ref2VA":
             prompt = self._build_ref2va_prompt(instruction, duration_seconds, frame_rate, aspect_ratio,
-                                               reference_roles, reference_context)
+                                               reference_roles, reference_context, style_preset)
         else:
             prompt = _h3_base_prompt(mode, instruction, duration_seconds, aspect_ratio,
-                                     reference_context, str(reference_roles or "").strip())
+                                     reference_context, str(reference_roles or "").strip(), style_preset)
 
         ok, response = api_clients.query_model_auto(
             model,
@@ -1551,7 +1633,7 @@ class PromptCrafter_H3ImageToVideoPrompt:
         return (response_text,) + passthrough_images
 
     def _build_ref2va_prompt(self, instruction, duration_seconds, frame_rate, aspect_ratio,
-                             reference_roles, reference_context):
+                             reference_roles, reference_context, style_preset="None"):
         """Build the full-reference (Ref2VA) rewrite formula for the six-section contract."""
         roles = str(reference_roles or "").strip() or (
             "No explicit reference roles supplied; classify image slots using the label policy below. "
@@ -1573,21 +1655,117 @@ class PromptCrafter_H3ImageToVideoPrompt:
             REFERENCE ROLES:
             {roles}
 
-            FULL-REFERENCE RULES:
-            - Return exactly these six labeled sections in this order: subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music.
-            - Use <Subject N> for reusable visible content, <Picture N> for concrete frame anchors, <Video N> for whole-video structure, and <Audio N> only for active audio copy/reference. Define every label before use and keep its meaning stable. Do not treat every uploaded image as a Subject or Picture automatically.
-            - subject_definitions gives each label its own line and states what it denotes, its reference role, and the main features to follow.
-            - summary begins with a square-bracketed task-type prefix such as [reference generation] and uses only labels defined above.
-            - retention_analysis uses one line per label with relationship markers: fully_preserved, partially_preserved, attribute_transfer, weak_reference, fully_copy, partially_copy, or reference.
-            - detailed_description establishes the overall visual style in one or two sentences before [Shot 1], then writes the shot-by-shot production plan with labels inserted where active. Use concrete camera actions such as push in, pull out, truck left/right, pedestal, pan, tilt, arc, tracking, POV, roll, or static shot.
-            - Start [Shot 1] without a timestamp. Every later cut begins with [Shot N] At MM:SS.mmm using three decimal places, strictly increasing, inside the requested duration, and introducing genuinely new subject, space, state, viewpoint, or time information.
-            - Assign stable speaker IDs as (S1), (S2) in vocal-event order. Put speaker identity and delivery outside dialogue; inside <d>, keep only the language tag and exact spoken words. Preserve visible text in English double quotation marks without translating it.
-            - Keep dialogue and synchronized effects in the timeline; overall_soundscape contains continuing ambience and physical sounds without repeating dialogue or music; non_diegetic_music contains only audience-only score instrumentation, tempo, rhythm, and dynamics, or N/A.
-            - Write the rewrite sections in English but preserve dialogue, lyrics, and visible scene text in their original language.
-            - Keep the complete output under 7000 characters so it can be submitted to MiniMax H3 without truncation.
-            - Do not write a plot summary. Do not invent unresolved reference labels. Do not add timing that exceeds the request. Keep every reference label stable and define it before using it.
+            ════════════════════════════════════════════════════════════════
+            FULL-REFERENCE OUTPUT FORMAT
+            ════════════════════════════════════════════════════════════════
 
-            Return only the six requested labeled sections. Do not add markdown fences, commentary, or extra fields.
+            Return exactly these six labeled sections in this order, one blank line between sections:
+            1. subject_definitions:
+            2. summary:
+            3. retention_analysis:
+            4. detailed_description:
+            5. overall_soundscape:
+            6. non_diegetic_music:
+
+            Do not add markdown fences, headings, commentary, or extra fields. Return only the six sections.
+
+            ── REFERENCE LABELS ──────────────────────────────────────────
+
+            Use four label types. Define every label in subject_definitions before use and keep its meaning stable across all sections.
+
+            <Subject N> — Reusable visible content: people, animals, objects, scenes, environments, clothing, props, styles, actions, expressions, poses. This represents a content unit actually used in the target video, not the source file itself. One subject may combine multiple reference assets:
+              "<Subject 1> is the woman whose appearance comes from <Picture 1> and whose walking motion comes from <Video 1>."
+
+            <Picture N> — A reference image serving as a concrete frame anchor: first frame, keyframe, last frame, edited keyframe, or shot-planning reference. Only create a standalone <Picture N> when the image itself serves as a frame anchor; if an image only defines a character, scene, or style, cite it inside the corresponding <Subject N> definition instead:
+              "<Picture 1> is the first frame of [Shot 1], showing a woman seated beside a café window."
+              "<Picture 3> is a storyboard reference for [Shot 1] and [Shot 2], defining their viewpoint and subject placement."
+
+            <Video N> — A reference video providing editing source, continuation starting point, or whole-video temporal structure (cuts, rhythm, camera movement). If a person, object, scene, or action from a reference video is reused as visible content, it belongs under <Subject N>; <Video N> identifies the structural source only:
+              "<Video 1> is the source video for the target video edit."
+
+            <Audio N> — A standalone audio asset or enabled synchronized audio track from a reference video. Used when copying audio, referencing voice timbre, referencing music style, or reusing dialogue/lyrics/sound effects. When <Audio N> corresponds to a target speaker, bind the speaker ID: "<Audio 1> is the voice-timbre reference for <Subject 1> (S1)." Video and audio tracks from the same reference video are numbered independently; different indices do not prevent them from coming from the same source.
+
+            ── SECTION 1: subject_definitions ─────────────────────────────
+
+            Give each label its own line. State what it denotes, its reference role, and the main features to follow. Name the source asset when provenance matters. If <Picture N> or <Video N> only identifies the source of a subject and will not be used separately, cite it inside that subject's definition without adding a separate line.
+
+            ── SECTION 2: summary ────────────────────────────────────────
+
+            Begin with a square-bracketed task-type prefix using one or more of these types joined by " + ":
+              keyframe completion — an image serves as first frame, keyframe, last frame, or composition anchor
+              reference generation — an asset provides generation guidance without serving as a concrete frame or edited source
+              video editing — an existing source video is directly modified
+              video continuation — new content continues or extends from an existing source video
+              audio reuse — the same audio signal is reused in full or in part
+              audio reference — only the audio's timbre, rhythm, style, or content is referenced, not copied
+
+            Then write one short paragraph summarizing the target video and reference relationships using only labels defined above. For video-editing tasks, begin with "The target video is an edited version of <Video N>."
+
+            ── SECTION 3: retention_analysis ──────────────────────────────
+
+            One line per label. Use the exact relationship markers shown below — these are fixed English values:
+
+            Visible content markers (for <Subject N>, <Picture N>, <Video N>):
+              fully_preserved — the defined role is fully preserved
+              partially_preserved — still used but some characteristics are changed
+              attribute_transfer — referenced characteristics transferred to a different target
+              weak_reference — only broad similarity in style, category, or atmosphere
+
+            Audio markers (for <Audio N>):
+              fully_copy — complete source audio serves as the target's complete final audio track
+              partially_copy — only part of the timeline or selected layers are copied, or sounds are added/removed after copying
+              reference — only timbre, rhythm, style, dialogue content, or texture is referenced
+              weak_reference — only broad similarity in category or atmosphere
+
+            Format examples:
+              "<Subject 1> (appears in [Shot 1], [Shot 3]): fully_preserved - the blue cardigan and silver necklace are retained."
+              "<Picture 2> ([Shot 1] first frame): fully_preserved - the composition and subject placement match."
+              "<Audio 1>: reference - the target speaker follows <Audio 1>'s voice timbre without copying the original signal."
+
+            ── SECTION 4: detailed_description ────────────────────────────
+
+            This is the main body. Describe visuals, actions, sound, and dialogue shot by shot in target-video playback order.
+
+            STYLE OPENING: Establish the overall visual style in one or two English sentences before [Shot 1].
+
+            SHOT FORMAT:
+              [Shot 1] has no timestamp. Later shots: [Shot N] At MM:SS.mmm, ...
+              Timestamps use three decimal places, are strictly increasing, and stay within the requested duration.
+              Each cut must introduce genuinely new subject, space, state, viewpoint, or time information.
+              Use concrete camera vocabulary: push in, pull out, truck left/right, pedestal, pan, tilt, arc, tracking, POV, roll, static shot, handheld, steadicam, drone, whip pan, crash zoom.
+
+            REFERENCE LABELS IN SHOTS: At the first clear appearance of an important <Subject N>, describe its referenced characteristics, position, and action. Continue using the same label without redefining it. For concrete frame anchors use natural phrasing: "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". Cite <Video N> and <Audio N> where their relationships apply.
+
+            SPEAKERS AND DIALOGUE:
+              Assign stable speaker IDs (S1), (S2) in vocal-event order. Reuse the same ID at every vocal event.
+              When a referenced subject speaks, write both the visual label and speaker ID: "<Subject 2> (S1) turns and says, <d>[English] Last summer I went to his house.</d>"
+              Inside <d>, write only the language tag in square brackets and the exact spoken words. Put speaker identity and delivery description outside <d>.
+              For dialogue from reused audio that only exists as a cue within a directly reused BGM, use <Audio N> as the audible source without inventing an additional (Sx).
+              When only timbre or rhythm is referenced, do not carry original dialogue into the target video.
+              Preserve visible text in English double quotation marks without translating it.
+
+            WORD COUNT: For generation tasks, write 350-500 English words. Dialogue-dense content prioritizes fitting the complete spoken timeline over hitting a word count. Video-editing descriptions scale with source complexity.
+
+            ── SECTION 5: overall_soundscape ──────────────────────────────
+
+            Summarize continuing ambience and physical sounds across the full video. Dialogue, singing, and sound events synchronized to a particular shot remain in detailed_description. Do not repeat dialogue or music here. When reference audio provides ambience, state the relationship:
+              "The copied ambience layer from <Audio 1> continues throughout the target video."
+
+            ── SECTION 6: non_diegetic_music ──────────────────────────────
+
+            Describe only audience-only score: instrumentation, tempo, rhythm, dynamics. When reference audio is reused as score, state the relationship:
+              "<Audio 2> is directly reused as the complete audience-only score."
+            Write "N/A" when no background music is present. Do not repeat dialogue or lyrics here.
+
+            ════════════════════════════════════════════════════════════════
+            GLOBAL RULES
+            ════════════════════════════════════════════════════════════════
+
+            - Write all six sections in English. Preserve the original language only for dialogue and lyrics inside <d> and for text visibly present in the scene.
+            - Keep the complete output under 7000 characters for MiniMax H3 submission.
+            - Make detailed_description as detailed and explicit as possible. For each shot establish composition, subject appearance, environment, lighting, actions, camera movement, and sound.
+            - Do not write a plot summary. Do not invent unresolved reference labels. Do not add timing that exceeds the requested duration. Do not treat newly added actions or backgrounds as losses of reference fidelity in retention_analysis.
+            {_STYLE_PRESETS.get(style_preset, "")}
         """).strip()
 
     @staticmethod

@@ -1523,7 +1523,10 @@ class HuggingFaceClient:
             attn_impl = "eager"
         else:
             device = comfy.model_management.get_torch_device()
-            dtype = torch.bfloat16 if comfy.model_management.supports_bf16(device) else torch.float16
+            try:
+                dtype = torch.bfloat16 if comfy.model_management.supports_bf16(device) else torch.float16
+            except AttributeError:
+                dtype = torch.float16
             device_map = "auto"
             attn_impl = "flash_attention_2" if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else "eager"
 
@@ -1671,10 +1674,22 @@ class OllamaClient:
                         self._chat_api_unsupported.add(model_id)
                         print(f"\033[94m[PromptCrafter] Ollama model '{model_id}' does not support /api/chat. Switching to /api/generate.\033[0m")
                 else:
-                    print(f"\033[93m[PromptCrafter] Ollama /api/chat failed for '{model_id}' (status {status_code}). Retrying via /api/generate.\033[0m")
+                    err_detail = f" ({data_or_err})" if data_or_err else ""
+                    print(f"\033[93m[PromptCrafter] Ollama /api/chat failed for '{model_id}' (status {status_code}{err_detail}). Retrying via /api/generate.\033[0m")
                 continue
 
             break
+
+        # If images were sent and the last failure mentions multimodal, retry
+        # without images so the text prompt can still be generated.
+        if images_b64 and last_err and "multimodal" in str(last_err).lower():
+            print(f"\033[93m[PromptCrafter] Model '{model_id}' rejected multimodal input. Retrying without images.\033[0m")
+            fallback_endpoint = endpoints_to_try[-1]
+            payload = self._build_payload(fallback_endpoint, model_id, prompt, None, temperature, seed, max_tokens=max_tokens, raw=raw, template=template, system=system, format=format)
+            ok, data_or_err, status_code = self._make_request(url=f"{self.base_url}/api/{fallback_endpoint}", headers={}, payload=payload, timeout=timeout)
+            if ok:
+                return self._parse_response(data_or_err)
+
         return False, (last_err or "Unknown Ollama error")
 
     def _format_http_error(self, e: requests.exceptions.HTTPError) -> str:
@@ -1951,7 +1966,7 @@ EMPTY_CACHE_EXPIRATION_SECONDS = 10
 
 class ModelInspector:
     """A helper class to determine model capabilities from its metadata."""
-    VISION_KEYWORDS = {"llava", "moondream", "bakllava", "fuyu", "idefics", "qwen", "qwen2", "qwen2.5", "qwen3", "vision", "clip", "mmproj", "minicpm", "glm", "florence"}
+    VISION_KEYWORDS = {"llava", "moondream", "bakllava", "fuyu", "idefics", "gemma", "qwen", "qwen2", "qwen2.5", "qwen3", "vision", "clip", "mmproj", "minicpm", "glm", "florence"}
 
     @classmethod
     def is_vision_model(cls, model_details: dict) -> bool:

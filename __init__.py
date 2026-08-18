@@ -107,6 +107,9 @@ pgfx_visual_browser = _safe_import(".nodes.pgfx_visual_browser", "pgfx_visual_br
 pgfx_minimax_music_nodes = _safe_import(
     ".nodes.pgfx_minimax_music_nodes", "pgfx_minimax_music_nodes"
 )
+pgfx_minimax_h3_audio = _safe_import(
+    ".nodes.pgfx_minimax_h3_audio", "pgfx_minimax_h3_audio"
+)
 
 # --- MERGE ALL MAPPINGS ---
 NODE_CLASS_MAPPINGS = {}
@@ -134,6 +137,7 @@ NODE_MODULES = [
     pgfx_logo_designer,
     pgfx_visual_browser,
     pgfx_minimax_music_nodes,
+    pgfx_minimax_h3_audio,
 ]
 NODE_MODULES = [m for m in NODE_MODULES if m is not None]
 
