@@ -1208,7 +1208,17 @@ def tool_run_template(comfyui_url, params, timeout, out_dir, can_preview, audio_
         return {"prompt_id": prompt_id, "ok": False, "error": err, **io_note, **extra}
     saved, tensor = download_outputs(comfyui_url, record, out_dir, can_preview)
     tensor = _ensure_video_preview(saved, tensor)
+    _free_models_after_generation(comfyui_url)
     return {"prompt_id": prompt_id, "ok": True, "files": saved, "preview_tensor": tensor}
+
+
+def _free_models_after_generation(comfyui_url):
+    # ComfyUI caches all models used in VRAM + RAM after a run. Unload them so the next
+    # generation starts clean (avoids OOM on machines with limited memory). Best-effort.
+    try:
+        free_memory(comfyui_url)
+    except Exception:
+        pass
 
 
 def tool_run_workflow(comfyui_url, params, timeout, log=None, image_ref=None, audio_ref=None, prompt=None):
@@ -1242,6 +1252,7 @@ def tool_run_workflow(comfyui_url, params, timeout, log=None, image_ref=None, au
         return {"prompt_id": prompt_id, "submitted": True,
                 "note": "poll with job(action='wait', prompt_id=...), then fetch_outputs(prompt_id, out_dir=...)"}
     record, ok, err = wait_for_completion(comfyui_url, prompt_id, timeout, log=log)
+    _free_models_after_generation(comfyui_url)
     if not ok:
         if record is not None and prompt_id:
             try:
@@ -1320,6 +1331,7 @@ def tool_fetch_outputs(comfyui_url, params, out_dir=None, can_preview=True):
         return {"prompt_id": prompt_id, "error": "job not found in history", "files": []}
     saved, tensor = download_outputs(comfyui_url, record, out_dir, can_preview)
     tensor = _ensure_video_preview(saved, tensor)
+    _free_models_after_generation(comfyui_url)
     return {"prompt_id": prompt_id, "ok": True, "files": saved, "preview_tensor": tensor}
 
 
@@ -1768,6 +1780,7 @@ def _run_template_tool(comfyui_url, params):
     if not params.get("wait", True):
         return {"prompt_id": prompt_id, "submitted": True, "note": "poll with job(action='status')"}
     record, ok, err = wait_for_completion(comfyui_url, prompt_id, 120)
+    _free_models_after_generation(comfyui_url)
     if not ok:
         return {"prompt_id": prompt_id, "ok": False, "error": err}
     return {"prompt_id": prompt_id, "ok": True, "status": (record or {}).get("status", {}).get("status_str")}
@@ -1798,6 +1811,7 @@ def _minimal_t2i(comfyui_url, prompt, checkpoint=None, width=1024, height=1024, 
         return {"ok": False, "error": submit.get("error"), "node_errors": submit.get("node_errors")}
     prompt_id = submit.get("prompt_id")
     record, ok, err = wait_for_completion(comfyui_url, prompt_id, 120)
+    _free_models_after_generation(comfyui_url)
     if not ok:
         return {"prompt_id": prompt_id, "ok": False, "error": err}
     return {"prompt_id": prompt_id, "ok": True, "status": (record or {}).get("status", {}).get("status_str")}
@@ -1865,7 +1879,6 @@ class AgentSession:
         self.ref_audio_file = None
         self.ref_image_file = None
         self.user_message = None
-        self._freed = False
 
     def log(self, msg):
         if self.debug:
@@ -1920,20 +1933,27 @@ class AgentSession:
                 self.log(f"stage audio failed: {e}")
         return staged
 
-    def execute_tool(self, name, params):
-        if name in ("run_template", "run_workflow") and not self._freed:
-            if self.llm_unloader is not None:
-                try:
-                    rel = self.llm_unloader()
-                    if rel:
-                        self.log(f"released local LLM VRAM: {rel}")
-                except Exception:
-                    pass
+    def _release_models(self, tag=""):
+        # Free BOTH ComfyUI model cache (VRAM + RAM) and the local LLM so every run
+        # starts from a clean slate. ComfyUI caches models after each generation;
+        # without this, a second generation OOMs because old models are still resident
+        # while the new ones load. Always best-effort -- never fatal.
+        if self.llm_unloader is not None:
             try:
-                free_memory(self.comfyui_url)
+                rel = self.llm_unloader()
+                if rel:
+                    self.log(f"released local LLM VRAM ({tag}): {rel}")
             except Exception:
                 pass
-            self._freed = True
+        try:
+            free_memory(self.comfyui_url)
+        except Exception:
+            pass
+
+    def execute_tool(self, name, params):
+        # Free memory before EVERY heavy (model-loading) run, not just the first one.
+        if name in ("run_template", "run_workflow", "generate_image"):
+            self._release_models("pre-run")
         if name == "server_info":
             return {"content": tool_server_info(self.comfyui_url, params)}
         if name == "nodes":

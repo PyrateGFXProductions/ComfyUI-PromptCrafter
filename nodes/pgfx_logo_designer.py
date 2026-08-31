@@ -2926,6 +2926,15 @@ class PGFX_LogoDesignerMCPAgent:
         result = session.run(chat_message, reference_image=reference_image,
                              reference_audio=reference_audio, max_rounds=14, llm_call=llm_call)
 
+        # Agent is done: release the local LLM again so it never sits resident holding
+        # VRAM between jobs. ComfyUI models were already freed post-generation by the
+        # agent; this evicts the LLM that reloaded for the last agent query. Without it,
+        # a later generation has to contend with an idle LLM still parked in VRAM.
+        try:
+            api_clients.unload_local_llm_vram()
+        except Exception:
+            pass
+
         if not result.get("ok"):
             return (placeholder_fn(), f"Agent failed: {result.get('error')}", "{}", "AGENT_FAILED")
 

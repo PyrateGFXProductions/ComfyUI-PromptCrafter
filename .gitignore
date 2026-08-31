@@ -91,3 +91,4 @@ all_nodes.json
 session-*.md
 opencode.json
 nodes/pgfx_logo_designer.py.bak
+nodes/resources/video_minimax_h3_r2v.json
