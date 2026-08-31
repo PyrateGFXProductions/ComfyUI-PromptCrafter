@@ -528,24 +528,24 @@ def _normalize_node_errors(node_errors):
 # ---------------------------------------------------------------------------
 
 _HEAVY_MODEL_NODES = {
-    # class-substring -> (approx GPU GB when fully resident, per-extra-unit)
-    # Values are conservative (high-end) guesses so the guard errs safe.
-    "CheckpointLoaderSimple": (6.0, 0),
-    "CheckpointLoader": (6.0, 0),
-    "UNETLoader": (6.0, 0),
-    "DiffusionModel": (6.0, 0),
-    "DiffusionModelLoader": (6.0, 0),
-    "CLIPLoader": (4.0, 0),
-    "CLIP": (4.0, 0),
-    "DualCLIPLoader": (6.0, 0),
-    "TripleCLIPLoader": (8.0, 0),
-    "VAELoader": (1.5, 0),
-    "VAE": (1.5, 0),
-    "BLIPModelLoader": (2.0, 0),
-    "PreImageTextEncode": (4.0, 0),
-    "MiniMaxH3": (9.0, 0),
-    "LoraLoader": (1.0, 0),
-    "LoraLoaderModelOnly": (1.0, 0),
+    # class-substring -> approx GB of that model when fully resident.
+    # Conservative (high-end) guesses so the guard errs safe.
+    "CheckpointLoaderSimple": 6.0,
+    "CheckpointLoader": 6.0,
+    "UNETLoader": 6.0,
+    "DiffusionModel": 6.0,
+    "DiffusionModelLoader": 6.0,
+    "CLIPLoader": 4.0,
+    "CLIP": 4.0,
+    "DualCLIPLoader": 6.0,
+    "TripleCLIPLoader": 8.0,
+    "VAELoader": 1.5,
+    "VAE": 1.5,
+    "BLIPModelLoader": 2.0,
+    "PreImageTextEncode": 4.0,
+    "MiniMaxH3": 9.0,
+    "LoraLoader": 1.0,
+    "LoraLoaderModelOnly": 1.0,
 }
 
 _FILE_GB_BY_HINT = {
@@ -589,38 +589,46 @@ def hardware_budget(comfyui_url):
 def _estimate_graph_mem(api):
     """Estimate the model-set footprint (GB) a graph will try to load.
 
-    Rough but conservative: sums the biggest model loaders by their class,
-    refined by the checkpoint/lora filename when present. This drives the
-    pre-flight guard; it is NOT a precise allocator.
+    Conservative but realistic: ComfyUI's NORMAL_VRAM paging keeps only the
+    WORKING SET resident in VRAM and pages the rest to system RAM, so the
+    model stack does not all sit in VRAM at once. We therefore model the
+    DOMINANT model (the diffusion UNet / multi-billion text encoder) at full
+    weight, then add a bounded allowance for the other loaders in the graph
+    (CLIP, VAEs, LoRAs). A big filename hint (e.g. minimax_h3, qwen3vl_32b)
+    only upgrades the dominant loader, never every loader, so we do not
+    over-count a single model's multi-line hint into multiple gigabytes.
     """
-    total = 0.0
-    best = 0.0
+    loaders = []  # (gb) per distinct heavy loader, using the BIGGEST hint-hit
     for node in (api or {}).values():
         ctype = str(node.get("class_type", ""))
         inputs = node.get("inputs", {}) or {}
-        # Largest single loader dominates (H3 = unet+clip+vaes are each loaders).
-        hit = 0.0
+        idx = None
         for key, gb in _HEAVY_MODEL_NODES.items():
             if key.lower() in ctype.lower():
-                hit = max(hit, gb)
+                idx = key
+                gb_keep = gb
                 break
-        # Refine by filename hints (e.g. minimax_h3_ref2va..., qwen3vl_32b...).
-        if hit:
-            for v in inputs.values():
-                if isinstance(v, str) and v:
-                    low = v.lower()
-                    for hint, hgb in _FILE_GB_BY_HINT.items():
-                        if hint in low:
-                            hit = max(hit, hgb)
-            total += hit
-            best = max(best, hit)
-        # Also count a fp16/fp32 VAE class even without a loader hit.
-        elif any(k in ctype.lower() for k in ("vae",)):
-            total += 1.5
-        elif "sampl" in ctype.lower() or "ksampl" in ctype.lower():
-            pass  # samplers don't load models by themselves
-    # 15% overhead for activations/latents + pin buffers.
-    return round(total * 1.25, 1)
+        if idx is None:
+            if any(k in ctype.lower() for k in ("vae", "vaedecode", "vaedecodeaudio")):
+                loaders.append(1.5)
+            continue
+        gb = gb_keep
+        # Filename hint can only upgrade THIS loader (largest of its hints).
+        for v in inputs.values():
+            if isinstance(v, str) and v:
+                low = v.lower()
+                for hint, hgb in _FILE_GB_BY_HINT.items():
+                    if hint in low:
+                        gb = max(gb, hgb)
+        loaders.append(gb)
+    if not loaders:
+        return 0.0
+    dominant = max(loaders)
+    others = sum(sorted(loaders, reverse=True)[1:])
+    # Working set = dominant fully; other loaders page off, so ~30% of them
+    # count as additional resident pressure, plus small pin/activation floor.
+    effective = dominant + (others * 0.3) + 1.0
+    return round(effective, 1)
 
 
 def guard_submit(comfyui_url, api, object_info=None):
