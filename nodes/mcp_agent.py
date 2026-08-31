@@ -509,6 +509,153 @@ def _normalize_node_errors(node_errors):
     return out
 
 
+# ---------------------------------------------------------------------------
+# Hardware-aware memory guardian
+#
+# ComfyUI has its own smart memory (lowvram paging between VRAM and system
+# RAM, LRU model eviction, a ~700MB VRAM reservation so the desktop/browser
+# don't get OOM-killed). BUT that paging can push huge model stacks (e.g.
+# MiniMax H3's int8 diffusion + 32B AWQ text encoder + dual VAEs) into SYSTEM
+# RAM. On a 16GB-VRAM / 34GB-RAM box where the browser+explorer already hold
+# half the RAM, model-load can exhaust physical RAM and crash python.exe
+# (c10.dll), cascading into the whole desktop. ComfyUI cannot prevent that --
+# its protections are per-workload soft limits, not hard guarantees.
+#
+# So the AGENT must be hardware-conscious BEFORE it submits: read the live
+# free VRAM + free RAM, estimate the graph's model-set weight, and refuse to
+# submit (returning a memory_guard block telling the LLM exactly what to
+# scale down) instead of letting ComfyUI page into a crash.
+# ---------------------------------------------------------------------------
+
+_HEAVY_MODEL_NODES = {
+    # class-substring -> (approx GPU GB when fully resident, per-extra-unit)
+    # Values are conservative (high-end) guesses so the guard errs safe.
+    "CheckpointLoaderSimple": (6.0, 0),
+    "CheckpointLoader": (6.0, 0),
+    "UNETLoader": (6.0, 0),
+    "DiffusionModel": (6.0, 0),
+    "DiffusionModelLoader": (6.0, 0),
+    "CLIPLoader": (4.0, 0),
+    "CLIP": (4.0, 0),
+    "DualCLIPLoader": (6.0, 0),
+    "TripleCLIPLoader": (8.0, 0),
+    "VAELoader": (1.5, 0),
+    "VAE": (1.5, 0),
+    "BLIPModelLoader": (2.0, 0),
+    "PreImageTextEncode": (4.0, 0),
+    "MiniMaxH3": (9.0, 0),
+    "LoraLoader": (1.0, 0),
+    "LoraLoaderModelOnly": (1.0, 0),
+}
+
+_FILE_GB_BY_HINT = {
+    "32b": 8.0, "64b": 12.0, "30b": 8.0, "34b": 9.0,  # big text encoders (AWQ/GGUF q4-ish)
+    "qwen3vl": 7.0,
+    "minimax_h3": 8.0,
+    "ref2v": 8.0, "ref2va": 8.0, "t2v": 9.0, "i2v": 9.0,
+    "sd1.5": 4.0, "sd1-5": 4.0, "sdxl": 6.0, "flux": 8.0,
+}
+
+
+def hardware_budget(comfyui_url):
+    """Read the live ComfyUI /system_stats and return a digest the LLM can act on."""
+    try:
+        stats = system_stats(comfyui_url)
+    except Exception as e:
+        return {"unknown": True, "error": str(e)}
+    vram_free_gb = vram_total_gb = ram_free_gb = ram_total_gb = 0.0
+    for d in stats.get("devices", []) or []:
+        vt = d.get("vram_total") or 0
+        vf = d.get("vram_free") or 0
+        vram_total_gb += vt / 1073741824
+        vram_free_gb += vf / 1073741824
+    sysinfo = stats.get("system", {}) or {}
+    ram_total_gb = (sysinfo.get("ram_total") or 0) / 1073741824
+    ram_free_gb = (sysinfo.get("ram_free") or 0) / 1073741824
+    # Keep a floor for the OS/browser/explorer so we never send RAM to zero.
+    usable_ram_gb = max(0.0, ram_free_gb - 2.0)
+    usable_vram_gb = max(0.0, vram_free_gb - 0.7)  # ComfyUI already reserves this
+    return {
+        "vram_total_gb": round(vram_total_gb, 1),
+        "vram_free_gb": round(vram_free_gb, 1),
+        "usable_vram_gb": round(usable_vram_gb, 1),
+        "ram_total_gb": round(ram_total_gb, 1),
+        "ram_free_gb": round(ram_free_gb, 1),
+        "usable_ram_gb": round(usable_ram_gb, 1),
+        "combined_headroom_gb": round(usable_vram_gb + usable_ram_gb, 1),
+    }
+
+
+def _estimate_graph_mem(api):
+    """Estimate the model-set footprint (GB) a graph will try to load.
+
+    Rough but conservative: sums the biggest model loaders by their class,
+    refined by the checkpoint/lora filename when present. This drives the
+    pre-flight guard; it is NOT a precise allocator.
+    """
+    total = 0.0
+    best = 0.0
+    for node in (api or {}).values():
+        ctype = str(node.get("class_type", ""))
+        inputs = node.get("inputs", {}) or {}
+        # Largest single loader dominates (H3 = unet+clip+vaes are each loaders).
+        hit = 0.0
+        for key, gb in _HEAVY_MODEL_NODES.items():
+            if key.lower() in ctype.lower():
+                hit = max(hit, gb)
+                break
+        # Refine by filename hints (e.g. minimax_h3_ref2va..., qwen3vl_32b...).
+        if hit:
+            for v in inputs.values():
+                if isinstance(v, str) and v:
+                    low = v.lower()
+                    for hint, hgb in _FILE_GB_BY_HINT.items():
+                        if hint in low:
+                            hit = max(hit, hgb)
+            total += hit
+            best = max(best, hit)
+        # Also count a fp16/fp32 VAE class even without a loader hit.
+        elif any(k in ctype.lower() for k in ("vae",)):
+            total += 1.5
+        elif "sampl" in ctype.lower() or "ksampl" in ctype.lower():
+            pass  # samplers don't load models by themselves
+    # 15% overhead for activations/latents + pin buffers.
+    return round(total * 1.25, 1)
+
+
+def guard_submit(comfyui_url, api, object_info=None):
+    """Pre-flight the graph's model demand against live headroom.
+
+    Returns None if it should go ahead, else a memory_guard dict describing
+    the shortfall so the LLM knows exactly what to scale down -- instead of
+    letting ComfyUI page the whole stack into RAM and crash the box.
+    """
+    est_gb = _estimate_graph_mem(api)
+    if est_gb <= 0:
+        return None
+    budget = hardware_budget(comfyui_url)
+    if budget.get("unknown"):
+        return None  # can't measure; let ComfyUI's own paging decide
+    combined = budget.get("combined_headroom_gb", 0.0)
+    if est_gb <= combined:
+        return None
+    return {
+        "memory_guard": True,
+        "estimated_model_gb": est_gb,
+        **budget,
+        "will_not_fit": True,
+        "guidance": (
+            f"This graph's model stack is estimated at ~{est_gb}GB but the machine has "
+            f"only ~{budget.get('combined_headroom_gb')}GB of usable headroom "
+            f"(vram_free ~{budget.get('vram_free_gb')}GB - 0.7GB reserve, ram_free ~{budget.get('ram_free_gb')}GB - 2GB OS/browser floor). "
+            "Submitting would make ComfyUI page models into system RAM and OOM-crash python.exe. "
+            "Do NOT submit this as-is. free_memory first, then SCALE DOWN: prefer a smaller/lighter "
+            "model, lower resolution (e.g. 480p not 768p), shorter duration, fewer frames, or "
+            "the --lowvram/--reserve-vram launch option. Retry only once the estimate fits the headroom."
+        ),
+    }
+
+
 def submit_prompt(comfyui_url, api_prompt, timeout=20):
     import uuid
     import requests
@@ -553,7 +700,7 @@ def wait_for_completion(comfyui_url, prompt_id, timeout=300, log=None):
         except requests.exceptions.ConnectionError:
             conn_losses += 1
             if conn_losses >= 6:
-                return None, False, "ComfyUI connection lost while awaiting job (server restarted/crashed)"
+                return None, False, "server_crash: ComfyUI connection lost while awaiting job (the server process crashed - likely an out-of-memory fault in python.exe/c10.dll during model load or sampling). free_memory, reduce resolution/duration or use a smaller model before retrying."
             time.sleep(2)
             continue
         except Exception:
@@ -566,7 +713,15 @@ def wait_for_completion(comfyui_url, prompt_id, timeout=300, log=None):
             if entry:
                 status = entry.get("status", {})
                 if status.get("status_str") in ("error",):
-                    return entry, False, f"workflow error: {status.get('messages', [])}"
+                    msgs = status.get('messages', [])
+                    errtext = "workflow error: %s" % (msgs,)
+                    if any(k.lower() in str(msgs).lower() for k in
+                           ("out of memory", "outofmemory", "cuda out of memory", "c10::outofmemory",
+                            "not enough memory", "defaultpytorchdevice", "cudamalloc")):
+                        errtext = "cuda_oom: " + errtext + (" This job asked for more VRAM than the card has. "
+                            "free_memory, then SCALE DOWN (lower resolution/shorter duration/smaller model or --lowvram) and retry. "
+                            "Do NOT re-run the same settings.")
+                    return entry, False, errtext
                 if status.get("completed"):
                     return entry, True, ""
         time.sleep(4)
@@ -1188,6 +1343,10 @@ def tool_run_template(comfyui_url, params, timeout, out_dir, can_preview, audio_
                 "io": io_check["notes"],
                 "guidance": "The graph has no node that outputs IMAGE/VIDEO/GIF/AUDIO. Pick a template that emits saves an image or video (inspect with get_template), then re-run. Do not submit a graph that can produce nothing."}
     io_note = {"io": io_check["notes"]} if io_check["notes"] else {}
+    _g = guard_submit(comfyui_url, api, object_info)
+    if _g:
+        return {"ok": False, "memory_guard": True, **{k: v for k, v in _g.items() if k != "memory_guard"},
+                "guidance": _g["guidance"]}
     submit = submit_prompt(comfyui_url, api)
     if not submit.get("ok"):
         return {"ok": False, "submit_error": True, "error": submit.get("error"),
@@ -1242,6 +1401,10 @@ def tool_run_workflow(comfyui_url, params, timeout, log=None, image_ref=None, au
                 "io": io_check["notes"],
                 "guidance": "The graph has no node that outputs IMAGE/VIDEO/GIF/AUDIO. Re-fetch a template that emits an image or video (inspect with get_template), then re-run."}
     io_note = {"io": io_check["notes"]} if io_check["notes"] else {}
+    _g = guard_submit(comfyui_url, api, object_info)
+    if _g:
+        return {"ok": False, "memory_guard": True, **{k: v for k, v in _g.items() if k != "memory_guard"},
+                "guidance": _g["guidance"]}
     submit = submit_prompt(comfyui_url, api)
     if not submit.get("ok"):
         return {"ok": False, "submit_error": True, "error": submit.get("error"),
@@ -1353,7 +1516,10 @@ def tool_server_info(comfyui_url, params):
 
 def tool_system_stats(comfyui_url, params):
     try:
-        return system_stats(comfyui_url)
+        budget = hardware_budget(comfyui_url)
+        raw = system_stats(comfyui_url)
+        raw["budget"] = budget
+        return raw
     except Exception as e:
         return {"error": str(e)}
 
@@ -1773,6 +1939,10 @@ def _run_template_tool(comfyui_url, params):
         return {"error": "no text-to-image template available (and no minimal graph)"}
     object_info = load_object_info(comfyui_url)
     api = normalize_api_prompt(ui, object_info)
+    _g = guard_submit(comfyui_url, api, object_info)
+    if _g:
+        return {"ok": False, "memory_guard": True, **{k: v for k, v in _g.items() if k != "memory_guard"},
+                "guidance": _g["guidance"]}
     submit = submit_prompt(comfyui_url, api)
     if not submit.get("ok"):
         return {"ok": False, "error": submit.get("error"), "node_errors": submit.get("node_errors")}
@@ -1806,6 +1976,10 @@ def _minimal_t2i(comfyui_url, prompt, checkpoint=None, width=1024, height=1024, 
         "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["4", 2]}},
         "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "pgfx_mcp_t2i"}},
     }
+    _g = guard_submit(comfyui_url, wf, None)
+    if _g:
+        return {"ok": False, "memory_guard": True, **{k: v for k, v in _g.items() if k != "memory_guard"},
+                "guidance": _g["guidance"]}
     submit = submit_prompt(comfyui_url, wf)
     if not submit.get("ok"):
         return {"ok": False, "error": submit.get("error"), "node_errors": submit.get("node_errors")}
@@ -2060,7 +2234,7 @@ HOW TO WORK (mirror the official ComfyUI MCP flow exactly):
 3. list_workflow_slots(path) to see settable node_id.input addresses and current values; set_workflow_slot(path, overrides) to change them (model filenames must be EXACT installed names from search_models - never guess).
 4. validate_workflow(path) before running. Then run_workflow(path, wait=true) to execute; it returns a prompt_id. Then fetch_outputs(prompt_id, out_dir=...) to download the generated files. Report the absolute file paths in "files".
 5. run_template(name, overrides) is the one-shot convenience (fetch+fill+run+download) - use it when you are already confident of the template and its slots.
-6. If VRAM is an issue or a run fails with out-of-memory, free_memory and retry.
+6. HARDWARE-AWARE (mandatory on limited machines): before a big run, call system_stats and read its "budget" (vram_free_gb, ram_free_gb, usable_ram_gb, combined_headroom_gb). If the model/checkpoint for your template is large (e.g. ~8-15GB for MiniMax H3, 32B text encoders, FLUX), SCALE DOWN the parameters on fetched workflows via set_workflow_slot BEFORE submitting: lower resolution (480p not 768p), shorter duration / fewer frames, and prefer a smaller model. A run whose model stack exceeds the combined budget must be scaled, not submitted. If a run returns a memory_guard block or errors with cuda_oom / server_crash, free_memory then retry at reduced size - NEVER re-run the same heavy settings.
 
 TEMPLATE INTEGRITY (non-negotiable):
 - A fetched template is a tuned graph. NEVER strip, mute, simplify, or delete its nodes, conditioning chains, LoRA/distilled paths, sigmas, or pass-through wiring. Change ONLY the prompt text, seed, and user-requested parameters (e.g. size/count). If an image-dependent path is a bypassed toggle, LEAVE it as-is.
@@ -2069,7 +2243,7 @@ TEMPLATE INTEGRITY (non-negotiable):
 ROUTING & EXPECTATIONS:
 - A single empty search is INCONCLUSIVE, not proof. Broaden it (drop version numbers, try the bare family name) before concluding a template/model/route is absent. Evidence beats assumption: a search that RETURNED something, or a run that succeeded, outranks a later empty lookup - never deny a route on an empty result alone.
 - Some model families (MiniMax H3 is a current example) exist as BOTH a local OSS template (video_minimax_h3_*) and a paid API template (api_minimax_h3_*). Tell them apart by TEMPLATE NAME, never assume a family has only one route. This node runs everything LOCALLY for free.
-- H3 on THIS machine (RTX 5060 Ti 16 GB): roughly 9-15 minutes per 5s clip at 480p, and generation time grows EXPONENTIALLY with pixel count. Quote the estimate before running. Faster = shorter duration/lower resolution; quality = ~768p canvas then upscale. If a run OOMs, lower the resolution or shorten duration - slow is not impossible, but OOM on 16 GB is real.
+- H3 on THIS machine (RTX 5060 Ti 16 GB VRAM / 34 GB RAM): roughly 9-15 minutes per 5s clip at 480p, and generation time grows EXPONENTIALLY with pixel count. Quote the estimate before running. THIS BOX IS MEMORY-CONSTRAINED: the H3 model stack (int8 diffusion + 32B AWQ text encoder + dual VAEs) can page 20GB+ into system RAM, where the browser+explorer already hold ~half the 34GB. That is what OOM-crashes python.exe (c10.dll) and cascades into the desktop. ALWAYS read system_stats "budget" first and run at 480p/short duration unless the user explicitly asks for larger; prefer ~768p only as a follow-up upscale. When free RAM is low, free_memory and close other heavy apps conceptually. Slow is fine; full-tilt OOM is not.
 - The H3 image-to-video template ships with one deliberately disconnected helper node; validation may flag it - expected. Proceed once the main path is wired; do not treat it as a dead end.
 - A graph must save/emit its output (SaveImage/SaveVideo/save node) to be retrievable. If a run reports it produces no output, re-fetch a template that saves, rather than running a graph that can only waste compute.
 
