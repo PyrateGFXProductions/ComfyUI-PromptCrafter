@@ -6,19 +6,23 @@ For full feature showcases and installation guides, see `README.md`.
 ---
 
 ## `PGFX_VisualFolderLoader` (Visual Folder Browser & Dataset Curation Workspace)
-A high-performance image explorer and dataset curator designed to preview directories and manage image captions.
+A high-performance file and image explorer and dataset curator designed to preview any directory and manage image captions.
 
 **Key Technical Behaviors:**
+- **Full-Folder Browsing:** Lists every file in the folder — not just images. Videos, audio, text, JSON, subtitles, models, and anything else shows up in the grid, so you can inspect a directory at a glance.
+- **File-Type Filter:** A dropdown next to the search box narrows the grid to **All Files** (default), Images, Videos, Audio, Text/Data, or Models. A **Custom extension** input accepts any arbitrary type (e.g. `.psd`, `mp3`) to show only files with that extension.
+- **File Tiles:** Images render as lazy-loaded thumbnails; every other file type renders as a type icon with its filename (🎬 video, 🎵 audio, 📄 text, 🧠 model, 💬 subtitle, …), so non-image results are never blank or broken.
 - **Recursive Deep-Scan:** Uses advanced directory walking to find every subfolder within your output path, no matter how deep.
-- **Thumbnail Optimization:** Forces compressed previews when listing folders, preventing browser lag when viewing hundreds of high-res images.
+- **Thumbnail Optimization:** Forces compressed previews (JPEG) when listing folders, preventing browser lag when viewing hundreds of high-res images.
 - **Strict Pagination:** Limits rendering page size to maintain high canvas rendering frame rates.
 - **Dataset Captioning Workspace:**
   - Manages `.txt` sidecar files stored next to each image, ideal for model/LoRA training datasets.
   - Displays a green `TXT` badge in the bottom-right corner of already-captioned thumbnails in the grid.
   - Supports on-demand single-image caption generation (`✨ Generate`) and sequential, cancelable batch captioning (`📝 Caption All` with a `🛑 Stop Batch` control).
   - Includes a background `auto_captioning` execution switch (`Always`, `If Missing`, `Disabled`) to write sidecar text files on the fly during workflow runs.
+  - Caption operations (single and batch) only apply to images, never to non-image files.
 - **Canvas Prompt Output:** Outputs a third parameter (`caption` as a `STRING`) representing the loaded image's caption text, making it easy to route tags/prompts directly into CLIP encoders.
-- **Technical Metadata Panel:** Real-time extraction of file size, resolution, and format upon selection.
+- **Technical Metadata Panel:** Real-time extraction of file type, size, and modification date on selection; resolution is shown for images and `-` for other file types.
 
 ---
 
@@ -61,6 +65,27 @@ The "Elite" AI consultant for the Logo Designer Studio.
 **Elite Enhancements:**
 - **Reasoning Awareness:** Automatically detects if you are using a reasoning model (like DeepSeek-R1) and wraps instructions in a `<thought>` trigger to improve complex layout accuracy.
 - **Forced JSON Mode:** Natively enforces valid JSON outputs, ensuring that even 3B/7B models can reliably populate the Designer Studio settings.
+
+---
+
+## `PGFX_LogoDesignerMCPAgent`
+A general-purpose, fire-and-forget ComfyUI MCP Agent that builds and executes workflows from natural language requests.
+
+**Features:**
+- **Chat-Driven:** Describe what you want to create in plain English - the agent interprets your request and runs the matching pipeline (image / video / audio / animation).
+- **Model-Agnostic Routing:** Never hard-codes a model; it picks the template that matches the requested output type and wires your prompt + reference media into it.
+- **Tool-Calling:** The LLM drives a real tool loop (template/node/model discovery, workflow fetch, slot editing, validation, submit, poll, fetch).
+- **Reference Media:** Accept optional input images or audio as starting points for img2img / video / TTS.
+- **Background Execution (non-blocking):** The agent runs on a background thread and returns immediately, so it never deadlocks ComfyUI's single serial queue worker. Results land in the ComfyUI output directory — browse them with a thumbnail/load node.
+
+**Workflow:**
+1. Send a chat message describing what you want to create
+2. The node returns `QUEUED_ASYNC` immediately and generates in the background
+3. The agent finds and runs the appropriate template, wiring in your prompt and reference media
+4. Finished files (image / `.mp4` / audio) are written to the ComfyUI output directory
+5. Open that folder in a thumbnail/load node to see and use the results
+
+**Output:** a single `status` string (the node is an `OUTPUT_NODE` trigger — it has no synchronous media output pins).
 
 ---
 

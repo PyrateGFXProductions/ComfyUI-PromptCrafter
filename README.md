@@ -23,7 +23,7 @@
 | If you... | You'll find... |
 |-----------|----------------|
 | **Design logos in-node** | A full Fabric.js + Three.js design studio with 2D/3D viewports, layer management, shape primitives, text layers, SVG import/export, GLTF/OBJ/STL 3D model loading, and keyboard nudging — all embedded directly in your ComfyUI graph |
-| **Browse and caption image datasets** | A dual-mode Load/Save image node with an embedded visual browser, thumbnail grid, dataset captioning workspace (single + batch), sidecar .txt management, duplicate scanner, and clickable breadcrumb navigation |
+| **Browse and caption image datasets** | A dual-mode Load/Save image node with an embedded visual browser — browse **all files** in a folder with a file-type filter (images, videos, audio, text, models, or any custom extension), thumbnail grid, dataset captioning workspace (single + batch), sidecar .txt management, duplicate scanner, and clickable breadcrumb navigation |
 | **Generate music prompts with MiniMax Music 3** | A multi-genre prompt creator with 237 genres, genre blending (primary = structure, secondary = seasoning), auto-gen subjects, instrumental mode, content safety filtering, slop word replacement, and a direct API connector |
 | **Want LLM-powered prompt engineering** | A QnA engine with dual-model chaining (thinker + instructor), forced JSON output, context summarization, conversation history, web search, and vision model support |
 | **Build full music-video productions** | A complete Studio pipeline: Producer → Sound Engineer → Screenwriter → Creative Director → Director → Cinematographer → Editor → PostMaster, with scene routing, character tracking, and shot planning |
@@ -78,32 +78,34 @@ All nodes appear under the `☠️PGFX /` menu in ComfyUI. The pack currently sh
 |------|-------------|
 | **PGFX Logo Designer Studio** (`PGFX_LogoDesignerStudio`) | Full embedded design studio (Fabric.js + Three.js). 2D vector canvas with shape primitives, text layers, pen tool, full drawing toolbar, layer panel with visibility/lock/rename, undo/redo history, and Figma/Illustrator-style arrow key + Shift nudging. **3D viewport** with Three.js orbit controls, GLTF/OBJ/STL model import, SVG extrusion, GLTF export, and 3D transform gizmos. Multiple environment slots, SVG export, server-side image persistence, and zero workflow file bloat. |
 | **PGFX Logo Designer Agent** (`PGFX_LogoDesignerAgent`) | LLM agent that analyzes brand requirements and generates detailed logo design briefs with color palettes, typography recommendations, and style direction. |
+| **🎭 PGFX MCP Agent** (`PGFX_LogoDesignerMCPAgent`) | General-purpose ComfyUI MCP Agent — chat-driven, fire-and-forget workflow builder. Picks the matching template/model for the requested media and wires in your prompt + reference media. Runs on a background thread (single `status` output, `OUTPUT_NODE`) so it never blocks ComfyUI's serial queue; finished files land in the ComfyUI output directory. |
 | **📐 PGFX Image Vectorizer** (`PGFX_ImageVectorizer`) | Converts raster logo images to SVG vector format using edge detection and path tracing. |
 | **PromptCrafter ✨ Image Trace to SVG** (`CP_ImageToSVG`) | Traces raster images to SVG vector paths using potrace-based algorithms. |
 | **PromptCrafter 💾 Save SVG** (`CP_SaveSVG`) | Saves SVG output to disk with customizable path and filename. |
 | Plus V3 API variants of all the above. |
 
-#### ☠️PGFX /Visual Browser — Image Folder Browser
+#### ☠️PGFX /Visual Browser — File & Image Folder Browser
 
 | Node | Description |
 |------|-------------|
-| **📂 Visual Folder Loader** (`PGFX_VisualFolderLoader`) | Dual-mode Load/Save image node with an embedded visual browser. **Load Mode**: Browse folder thumbnails, select an image, output image + mask + caption. **Save Mode**: Connect images to save directly to the browsed folder with timestamped filenames — same folder you browse is the folder you save to. |
+| **📂 Visual Folder Loader** (`PGFX_VisualFolderLoader`) | Dual-mode Load/Save image node with an embedded visual browser. **Load Mode**: Browse a folder's files (images and more), filter by type, select a file, output image + mask + caption. **Save Mode**: Connect images to save directly to the browsed folder with timestamped filenames — same folder you browse is the folder you save to. |
 
 **Visual Folder Loader Features:**
 
 | Feature | Description |
 |---------|-------------|
-| **Thumbnail Grid** | Visual grid of all images in the current folder with green TXT badges on images that have sidecar caption files |
+| **File Grid** | Visual grid of **all files** in the current folder — images render as lazy-loaded thumbnails (with green TXT badges when they have sidecar captions); videos, audio, text, JSON, models, etc. render as type icons with filenames |
+| **File-Type Filter** | Dropdown to narrow the grid by type: **All Files** (default), Images, Videos, Audio, Text/Data, or Models — plus a **Custom extension** input (e.g. `.psd`) for any other type |
 | **Clickable Breadcrumb Navigation** | Path bar with clickable segments to jump to any parent folder; folder dropdown lists all subfolders |
-| **Search & Pagination** | Real-time search (250ms debounce), paginated results with prev/next controls |
+| **Search & Pagination** | Real-time search (250ms debounce) across all file types, paginated results with prev/next controls |
 | **Caption on Save** | Auto-caption every saved image with a vision model and write `.txt` sidecar — zero extra steps |
 | **Execution-Time Auto-Captioning** | During workflow queue execution, auto-caption images on-the-fly (`Disabled` / `Always (Overwrite)` / `If Missing`) |
 | **✨ Generate (Single)** | Generate a caption for the selected image using any vision model (Ollama, GGUF, HuggingFace — auto-listed) |
-| **📝 Caption All (Batch)** | Caption every image in the folder or only missing ones, with estimated time display, live progress counter, and a 🛑 Stop button |
+| **📝 Caption All (Batch)** | Caption every image in the folder or only missing ones, with estimated time display, live progress counter, and a 🛑 Stop button — non-image files are always skipped |
 | **Ground Truth Prompting** | Enter text like "Super Hero" — it's injected as ground truth context: *"Describe this image in detail. Use the following as ground truth context: Super Hero"* |
 | **Caption Output Formats** | Sidecar .txt (default), Single JSON (`captions.json`), or Single TXT Append (`captions.txt`) |
 | **Duplicate Scanner 🔍** | Scans for exact (MD5) and near-duplicate (perceptual dhash) images with selectable duplicates and bulk deletion |
-| **Image Details Bar** | Shows resolution, file size, date, and format for the selected image |
+| **File Details Bar** | Shows file type, size, modification date, and resolution (for images) for the selected file |
 | **Keyboard Shortcuts** | Escape closes overlays, Delete/Backspace triggers bulk deletion in the scanner |
 
 #### ☠️PGFX /Text — LLM Q&A and Text Processing

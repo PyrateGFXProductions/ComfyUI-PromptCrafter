@@ -444,6 +444,144 @@ GENRE_STRUCTURE_TEMPLATES = {
 
 
 # ------------------------------------------------------------------------------------
+# MiniMax Music 3 Genre Family Router (from official skill)
+# Maps genre keywords to 18 style families for structured caption routing.
+# Each family has: positive cues, disambiguation, and a description template.
+# ------------------------------------------------------------------------------------
+GENRE_FAMILY_ROUTER = {
+    "east-asian-modern": {
+        "cues": ["mandopop", "c-pop", "cantopop", "j-pop", "k-pop", "c-pop electronic", "c-pop r&b", "c-pop hip-hop", "c-pop dance", "c-pop funk", "c-pop rock", "c-pop metal"],
+        "disambiguation": "Use heritage family for acoustic, orchestral, traditional, or conventional ballad writing",
+        "description": "East Asian modern pop with electronic/R&B/hip-hop/dance/funk/rock/metal production"
+    },
+    "east-asian-ballad-heritage": {
+        "cues": ["mandopop ballad", "c-pop ballad", "cantopop ballad", "j-pop ballad", "guofeng", "east asian acoustic", "east asian orchestral", "east asian traditional"],
+        "disambiguation": "Add roots/traditional only when traditional instruments are central rather than decorative",
+        "description": "East Asian ballad, heritage, acoustic, orchestral, or conventional ballad writing"
+    },
+    "modern-rnb-neo-soul": {
+        "cues": ["r&b", "neo-soul", "alternative r&b", "trap soul", "atmospheric r&b", "contemporary r&b", "alternative randb"],
+        "disambiguation": "Lo-fi R&B may also use hip-hop; classic soul belongs to soul/blues/gospel",
+        "description": "Contemporary R&B, alternative R&B, neo-soul, trap soul, atmospheric R&B"
+    },
+    "soul-blues-gospel": {
+        "cues": ["soul", "blues", "blues rock", "gospel", "worship", "soul-blues"],
+        "disambiguation": "Route jazz-blues primarily by the user's stated identity and groove",
+        "description": "Soul, blues, blues rock, gospel, worship"
+    },
+    "cinematic-pop-ballad": {
+        "cues": ["cinematic pop", "cinematic ballad", "orchestral pop", "soundtrack vocal", "film pop"],
+        "disambiguation": "Use cinematic orchestral when score, trailer, orchestra, or choir is the main identity",
+        "description": "Cinematic pop, cinematic ballad, orchestral pop song, soundtrack-like vocal ballad"
+    },
+    "cinematic-orchestral-epic": {
+        "cues": ["film score", "orchestral", "trailer", "epic choral", "symphonic", "contemporary classical", "epic orchestral"],
+        "disambiguation": "'Cinematic' alone is normally a modifier, not enough to choose this family",
+        "description": "Film score, orchestral, trailer, epic choral, symphonic soundtrack"
+    },
+    "electronic-synth-ambient-pop": {
+        "cues": ["synth-pop", "electropop", "dream pop", "ambient pop", "darkwave", "retrowave", "downtempo", "synthwave", "electronic pop"],
+        "disambiguation": "Use club/EDM only when the request emphasizes drops, club grooves, house, trance, or festival energy",
+        "description": "Synth-pop, electropop, dream pop, ambient pop, darkwave, retrowave, downtempo"
+    },
+    "jazz-swing-big-band": {
+        "cues": ["vocal jazz", "jazz ballad", "big band", "swing", "bossa nova", "lounge jazz", "jazz"],
+        "disambiguation": "Traditional crooner pop without strong jazz ensemble cues may use traditional vocal/stage",
+        "description": "Vocal jazz, jazz ballad, big band, swing, bossa nova, lounge jazz"
+    },
+    "traditional-vocal-stage": {
+        "cues": ["traditional pop", "crooner", "doo-wop", "a cappella", "musical theatre", "show tune", "cabaret"],
+        "disambiguation": "Use jazz/swing when the rhythm section or big-band language is dominant",
+        "description": "Traditional pop, crooner, doo-wop, a cappella, musical theatre, show tune"
+    },
+    "hip-hop-rap": {
+        "cues": ["hip-hop", "rap", "trap", "drill", "lo-fi hip-hop", "conscious rap", "melodic rap", "boom bap", "phonk"],
+        "disambiguation": "R&B singing over trap drums may use modern R&B as primary and hip-hop as secondary",
+        "description": "Hip-hop, rap, trap, drill, lo-fi hip-hop, conscious rap, melodic rap"
+    },
+    "metal-heavy-rock": {
+        "cues": ["metalcore", "power metal", "symphonic metal", "nu-metal", "hard rock", "post-hardcore", "heavy metal", "thrash", "death metal", "black metal", "doom metal"],
+        "disambiguation": "Alternative and pop rock without heavy-metal technique belong to pop/alternative rock",
+        "description": "Metalcore, power metal, symphonic metal, nu-metal, hard rock, post-hardcore"
+    },
+    "pop-alternative-rock": {
+        "cues": ["pop rock", "alternative rock", "indie rock", "arena rock", "j-rock", "punk", "post-grunge", "shoegaze", "grunge"],
+        "disambiguation": "Country rock, blues rock, and folk rock follow their roots family when that identity is primary",
+        "description": "Pop rock, alternative rock, indie rock, arena rock, punk, post-grunge"
+    },
+    "contemporary-folk-acoustic": {
+        "cues": ["indie folk", "contemporary folk", "folk pop", "singer-songwriter", "modern acoustic", "acoustic pop"],
+        "disambiguation": "Use roots/traditional for heritage, regional, maritime, Celtic, or traditional folk identity",
+        "description": "Indie folk, contemporary folk, folk pop, singer-songwriter, modern acoustic pop"
+    },
+    "roots-traditional-global": {
+        "cues": ["traditional folk", "celtic", "chinese traditional", "folk blues", "reggae", "maritime", "global folk", "world music", "flamenco"],
+        "disambiguation": "Guofeng pop remains East Asian pop when pop songwriting is primary",
+        "description": "Traditional folk, Celtic, Chinese traditional, folk blues, reggae, maritime, global folk"
+    },
+    "general-pop-ballad": {
+        "cues": ["pop", "contemporary pop", "pop ballad", "broadly described emotional song"],
+        "disambiguation": "Use only as fallback when no more specific genre family is supported",
+        "description": "Pop, contemporary pop, pop ballad — conservative fallback"
+    },
+    "dance-pop-disco-funk": {
+        "cues": ["dance-pop", "nu-disco", "funk-pop", "disco revival", "groove-led pop", "funk", "disco"],
+        "disambiguation": "House, trance, hardstyle, and festival drops belong to club/EDM",
+        "description": "Dance-pop, nu-disco, funk-pop, disco revival, groove-led pop"
+    },
+    "club-edm-house-trance": {
+        "cues": ["edm", "house", "trance", "hardstyle", "dubstep", "techno", "festival electronic", "drum and bass", "dnb"],
+        "disambiguation": "Electronic pop without a club or drop structure belongs to electronic/synth/ambient pop",
+        "description": "EDM, house, trance, hardstyle, dubstep, techno, festival electronic"
+    },
+    "country-americana": {
+        "cues": ["country", "americana", "bluegrass", "country rock", "country pop", "rockabilly", "honky-tonk", "outlaw country"],
+        "disambiguation": "Folk-country follows the user's primary label; read contemporary folk second only when necessary",
+        "description": "Country, Americana, bluegrass, country rock, country pop, rockabilly"
+    },
+}
+
+
+def route_genre_to_family(genre_keys: List[str]) -> Tuple[str, Optional[str]]:
+    """
+    Route resolved genre keys to MiniMax Music 3 family names using the official skill's
+    genre router. Returns (primary_family, secondary_family_or_None).
+    """
+    # Flatten all genre keys to lowercase for matching
+    all_cues = []
+    for key in genre_keys:
+        all_cues.append(key.lower().replace(" ", "").replace("-", "").replace("_", ""))
+    
+    # Score each family by how many cues match
+    family_scores = {}
+    for family, info in GENRE_FAMILY_ROUTER.items():
+        score = 0
+        for cue in info["cues"]:
+            cue_normalized = cue.lower().replace(" ", "").replace("-", "").replace("_", "")
+            for gk in all_cues:
+                if cue_normalized in gk or gk in cue_normalized:
+                    score += 1
+        if score > 0:
+            family_scores[family] = score
+    
+    if not family_scores:
+        return "general-pop-ballad", None
+    
+    # Sort by score descending
+    sorted_families = sorted(family_scores.items(), key=lambda x: x[1], reverse=True)
+    primary = sorted_families[0][0]
+    
+    # Secondary: next family with score > 0 if it differs from primary
+    secondary = None
+    for fam, score in sorted_families[1:]:
+        if fam != primary and score > 0:
+            secondary = fam
+            break
+    
+    return primary, secondary
+
+
+# ------------------------------------------------------------------------------------
 # Content Safety Filter
 # ------------------------------------------------------------------------------------
 # Basic inappropriate content patterns for safe_mode
@@ -1547,9 +1685,16 @@ class PromptCrafter_MiniMaxMusic3Creator:
         # Build genre blend hint with weight percentages
         genre_blend_hint = build_genre_blend_hint(primary_key, all_keys)
 
+        # Route to MiniMax Music 3 family for structured caption guidance
+        primary_family, secondary_family = route_genre_to_family(all_keys)
+        family_info = GENRE_FAMILY_ROUTER.get(primary_family, {})
+        family_description = family_info.get("description", primary_family)
+        family_disambiguation = family_info.get("disambiguation", "")
+
         print(f"|-- Genre blend: {genre_list}")
         print(f"|-- Primary key: {primary_key}")
         print(f"|-- Secondary keys: {all_keys[1:] if len(all_keys) > 1 else 'None'}")
+        print(f"|-- Family route: {primary_family}" + (f" + {secondary_family}" if secondary_family else ""))
         print(f"|-- Instrumental: {instrumental}")
         print(f"|-- Audio duration: {audio_duration}s")
         
@@ -1584,11 +1729,30 @@ class PromptCrafter_MiniMaxMusic3Creator:
         caption_builder = MiniMaxMusic3StructuredCaptionBuilder()
         
         # Build the prompt for expanding the song idea into the 3-section format
+        # Incorporates the MiniMax Music 3 Caption Rewriter skill methodology:
+        # progressive disclosure routing, Foundation/Modifier/Arrangement reference
+        # selection, and the three-section output contract.
         expand_prompt = textwrap.dedent(f"""
             You are an expert music producer and songwriter acting as a MiniMax Music 3 Caption Rewriter.
             
             Transform the user's musical intent into a professional structured caption with THREE sections.
             Use natural-language reasoning. Be specific enough to guide generation without becoming an essay.
+            
+            **GENRE FAMILY ROUTING (MiniMax Music 3 official):**
+            Routed to family: {primary_family}
+            Family description: {family_description}
+            {f'Disambiguation: {family_disambiguation}' if family_disambiguation else ''}
+            {f'Secondary family: {secondary_family}' if secondary_family else ''}
+            
+            Use this family as your stylistic anchor. The family determines the core
+            production language, instrumentation palette, and arrangement conventions.
+            
+            **REFERENCE SELECTION (Foundation / Modifier / Arrangement):**
+            When designing the caption, select up to three reference roles:
+            - Foundation: closest overall identity, groove, and songwriting language.
+            - Modifier: best source for a requested secondary genre, vocal character, cultural color, or production texture.
+            - Arrangement: best source for section development, energy contour, transitions, and instrument lifecycle.
+            Use one or two references when the request is simple. Do not select a weak match merely to reach three.
             
             **GENRE BLEND RULES:**
             {genre_blend_hint}
@@ -1632,15 +1796,31 @@ class PromptCrafter_MiniMaxMusic3Creator:
             PARAGRAPH 1 — Global Metadata:
             Start with: "[Genre] / [Subgenre(s)]. [BPM] BPM, [Key] [scale]."
             Then describe emotional progression, listening scenarios, and production profile.
+            Include genre and subgenres, tempo, emotional progression, and overall sonic/production profile.
+            Use an exact BPM only when explicit or strongly justified; otherwise use a range or qualitative tempo.
             {'INSTRUMENTAL TRACK — Do not mention or imply any vocals.' if instrumental else ''}
 
             PARAGRAPH 2 — {'OMIT THIS SECTION ENTIRELY (instrumental track).' if instrumental else 'Vocal Details:'}
-            {'(skip entirely)' if instrumental else 'Describe vocal gender, timbre, performance style, harmonies, backing vocals, and vocal effects in one flowing paragraph.'}
+            {'(skip entirely)' if instrumental else 'Describe vocal gender, timbre, performance style, harmonies, backing vocals, and vocal effects in one flowing paragraph. For instrumental music, state that the piece is instrumental and identify the instrument or texture carrying the lead melodic role.'}
 
             PARAGRAPH 3 — Arrangement:
             Describe the song as a section-by-section timeline using the genre structure template: {merged_module.get('structure', 'I-V-C-V-C-O')}
             Explain primary and secondary instrument lifecycles, groove development, transitions, textures, and spatial effects.
             Prefer concrete musical changes over decorative prose.
+            Create a readable energy arc rather than a static equipment list.
+            Target approximately 250–450 words for this section.
+
+            **VALIDATION CHECKLIST (verify before returning):**
+            - Every explicit user constraint is preserved
+            - No quoted, paraphrased, or summarized lyric content appears
+            - An instrumental request remains instrumental
+            - Vocal gender is not contradicted
+            - Genre and local modifiers coexist coherently
+            - The three required sections are present (Global Metadata, Vocal Details, Arrangement)
+            - The arrangement follows a readable timeline
+            - Instruments have coherent entrances, changes, and exits
+            - Exact BPM, key, and technical details are not fabricated
+            - The caption is specific enough to guide generation without becoming an essay
 
             **RULES:**
             - NO markdown headers (no ###, no **, no bullet points)
@@ -1650,6 +1830,8 @@ class PromptCrafter_MiniMaxMusic3Creator:
             - No fabricated BPM or key unless explicitly provided
             - Use genre-appropriate vocabulary from the lists above
             - Avoid words from the blacklist above
+            - Do not invent a precise key, BPM, vocal gender, melodic interval, or production technique when a broader description is sufficient
+            - Preserve an explicit instrumental request. Do not add vocals.
 
             Return ONLY the three paragraphs of flat text. No commentary, no labels, no preamble.
         """).strip()

@@ -490,7 +490,7 @@ async def get_subfolders(request):
 
 
 # ---------------------------------------------------------------------------
-# API: list images with pagination + search
+# API: list files with pagination + search + type filter
 # ---------------------------------------------------------------------------
 @_route("get", "/pgfx/browser/images")
 async def get_images(request):
@@ -499,43 +499,54 @@ async def get_images(request):
         search = request.query.get("search", "").strip().lower()
         page = int(request.query.get("page", "0"))
         per_page = int(request.query.get("per_page", "18"))
+        file_filter = request.query.get("filter", "all").strip().lower()
         target_dir = resolve_path(folder)
 
         if not os.path.exists(target_dir):
             return web.json_response({"error": "Folder not found"}, status=404)
 
-        valid_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.bmp'}
-        all_images = []
+        allowed = _resolve_file_filter(file_filter)
+
+        all_files = []
         for entry in os.scandir(target_dir):
-            if entry.is_file() and os.path.splitext(entry.name)[1].lower() in valid_extensions:
-                if search and search not in entry.name.lower():
-                    continue
-                mtime = entry.stat().st_mtime
-                full_path = os.path.join(target_dir, entry.name)
-                has_caption = _caption_exists_any(target_dir, entry.name)
-                all_images.append({
-                    "filename": entry.name,
-                    "mtime": mtime,
-                    "path": full_path,
-                    "url": f"/pgfx/browser/serve?path={quote(full_path)}",
-                    "has_caption": has_caption,
-                })
+            if not entry.is_file():
+                continue
+            ext = os.path.splitext(entry.name)[1].lower()
+            if allowed is not None and ext not in allowed:
+                continue
+            if search and search not in entry.name.lower():
+                continue
+            mtime = entry.stat().st_mtime
+            full_path = os.path.join(target_dir, entry.name)
+            is_image = ext in VALID_IMG_EXT
+            has_caption = is_image and _caption_exists_any(target_dir, entry.name)
+            all_files.append({
+                "filename": entry.name,
+                "ext": ext.lstrip("."),
+                "mtime": mtime,
+                "path": full_path,
+                "url": f"/pgfx/browser/serve?path={quote(full_path)}",
+                "has_caption": has_caption,
+                "is_image": is_image,
+            })
 
-        all_images.sort(key=lambda x: x["mtime"], reverse=True)
+        all_files.sort(key=lambda x: x["mtime"], reverse=True)
 
-        total = len(all_images)
+        total = len(all_files)
         total_pages = max(1, (total + per_page - 1) // per_page)
         page = max(0, min(page, total_pages - 1))
         start = page * per_page
         end = start + per_page
-        page_images = all_images[start:end]
+        page_files = all_files[start:end]
 
         return web.json_response({
-            "images": page_images,
+            "files": page_files,
+            "images": page_files,
             "total": total,
             "page": page,
             "per_page": per_page,
             "total_pages": total_pages,
+            "filter": file_filter,
             "current": target_dir,
         })
     except Exception as e:
@@ -575,10 +586,11 @@ async def get_image_details(request):
 
         return web.json_response({
             "filename": filename,
-            "resolution": f"{width} x {height}",
+            "resolution": f"{width} x {height}" if width and height else "-",
             "size": size_str,
             "date": date_str,
             "format": os.path.splitext(filename)[1].upper().replace(".", ""),
+            "kind": _file_kind_label(filename),
         })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -802,6 +814,41 @@ def _compute_md5(filepath):
 
 
 VALID_IMG_EXT = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif'}
+
+# File-type filter categories for the visual browser (/pgfx/browser/images).
+FILE_KIND_FILTERS = {
+    "images": VALID_IMG_EXT,
+    "videos": {'.mp4', '.webm', '.mov', '.avi', '.mkv', '.flv', '.wmv', '.m4v', '.mpeg', '.mpg', '.3gp'},
+    "audio": {'.mp3', '.wav', '.flac', '.ogg', '.m4a', '.aac', '.opus', '.wma'},
+    "text": {'.txt', '.json', '.md', '.srt', '.vtt', '.csv', '.tsv', '.xml', '.html', '.log', '.yaml', '.yml', '.toml', '.ini', '.cfg'},
+    "models": {'.safetensors', '.ckpt', '.sft', '.pt', '.pth', '.gguf', '.onnx'},
+}
+
+
+def _resolve_file_filter(file_filter):
+    """Map a filter string to a set of allowed extensions, or None for all files.
+
+    Accepts a category name from FILE_KIND_FILTERS, 'all'/'*', or an extension
+    with or without the leading dot (e.g. 'png' or '.psd').
+    """
+    name = (file_filter or "all").strip().lower()
+    if name in ("", "all", "*"):
+        return None
+    if name in FILE_KIND_FILTERS:
+        return FILE_KIND_FILTERS[name]
+    ext = name if name.startswith(".") else "." + name
+    return {ext}
+
+
+def _file_kind_label(filename):
+    """Return a human-friendly type label for a filename."""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in VALID_IMG_EXT:
+        return "Image"
+    for name, exts in FILE_KIND_FILTERS.items():
+        if ext in exts:
+            return name.title()
+    return "File"
 
 
 def _list_images(target_dir):

@@ -121,4 +121,38 @@ Free-form text appended verbatim to the final model prompt.
 
 ---
 
-*Documentation maintained by PGFX Industrial Engineering.**
+## 🤖 MCP Agent — Chat-Driven Media Creation
+
+The **PGFX MCP Agent** (`🎭 PGFX MCP Agent`) is a general-purpose agent that creates any type of media from natural language requests. It operates outside the Logo Designer pipeline and has access to all ComfyUI capabilities.
+
+### Quick Start
+1. Add the `🎭 PGFX MCP Agent` node to your workflow
+2. Select an LLM model from the dropdown
+3. Send a chat message describing what you want to create
+4. The node returns `QUEUED_ASYNC` immediately and generates in the background
+5. Browse the ComfyUI output directory with a thumbnail/load node to see the finished files
+
+> **Note:** The agent is a fire-and-forget trigger node (`OUTPUT_NODE`). It runs on a background thread so it never blocks ComfyUI's single serial queue worker. Results are written to disk, not returned through output pins.
+
+### Example Prompts
+- "Create a cyberpunk cityscape at night with neon lights"
+- "Generate a realistic portrait of a woman with red hair"
+- "Make a short video of a cat walking"
+- "Download MiniMaxAI/MiniMax-Music3 to E:/models/music"
+- "List models in E:/models/checkpoints"
+
+### Output
+| Output | Type | Description |
+|--------|------|-------------|
+| `status` | STRING | `QUEUED_ASYNC` on submit (or `ALREADY_RUNNING` for a duplicate). Generated media appears in the ComfyUI output directory. |
+
+### Tool Calls
+The agent can execute tool calls for model management:
+- **Download models**: "Download [repo_id] to [local_dir]"
+- **List local files**: "List models in [directory]"
+
+Requires `huggingface-hub` to be installed for downloads.
+
+---
+
+*Documentation maintained by PGFX Industrial Engineering.*

@@ -5,10 +5,16 @@ import os
 import re
 import textwrap
 import threading
+import time
 
 import numpy as np
 import torch
 from PIL import Image
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 from ..core import pgfx_api_clients as api_clients
 from ..core import pgfx_config as config
@@ -2281,11 +2287,865 @@ if V3_IO_AVAILABLE:
 
 
 # ------------------------------------------------------------------------------------
+# PGFX Logo Designer MCP Agent - General-purpose chat-driven workflow builder
+# ------------------------------------------------------------------------------------
+class PGFX_LogoDesignerMCPAgent:
+    """General-purpose ComfyUI MCP Agent - chat-driven workflow builder and executor.
+    
+    This agent interprets natural language requests and builds/executes ComfyUI workflows
+    to create images, videos, audio, and other media.
+    """
+
+    DESCRIPTION = get_node_description("PGFX_LogoDesignerMCPAgent")
+
+    # Tool definitions for the LLM
+    AGENT_TOOLS = [
+        {
+            "name": "search_nodes",
+            "description": "Search available ComfyUI nodes by name, category, or description",
+            "parameters": {
+                "query": "Search query (e.g., 'load image', 'flux', 'video')",
+                "category": "Optional: filter by category (e.g., 'loaders', 'samplers')"
+            }
+        },
+        {
+            "name": "get_node_info",
+            "description": "Get detailed information about a specific node type, including inputs and outputs",
+            "parameters": {
+                "node_type": "The node class name (e.g., 'CheckpointLoaderSimple', 'KSampler')"
+            }
+        },
+        {
+            "name": "search_models",
+            "description": "Search available models (checkpoints, LoRAs, VAEs, etc.)",
+            "parameters": {
+                "query": "Search query (e.g., 'flux', 'realistic', 'anime')",
+                "model_type": "Optional: 'checkpoint', 'lora', 'vae', 'clip', etc."
+            }
+        },
+        {
+            "name": "list_models",
+            "description": "List all available models by folder",
+            "parameters": {
+                "folder": "Optional: specific folder to list (e.g., 'checkpoints', 'loras')"
+            }
+        },
+        {
+            "name": "create_workflow",
+            "description": "Create a new empty workflow",
+            "parameters": {}
+        },
+        {
+            "name": "add_node",
+            "description": "Add a node to the current workflow",
+            "parameters": {
+                "node_type": "The node class name to add",
+                "position": "Optional: [x, y] position on canvas",
+                "title": "Optional: custom title for the node"
+            }
+        },
+        {
+            "name": "connect_nodes",
+            "description": "Connect an output of one node to an input of another node",
+            "parameters": {
+                "source_node": "Source node index or title",
+                "source_output": "Output slot index (0-based)",
+                "target_node": "Target node index or title",
+                "target_input": "Input slot name or index"
+            }
+        },
+        {
+            "name": "set_node_input",
+            "description": "Set a literal value on a node input (for non-connected inputs)",
+            "parameters": {
+                "node": "Node index or title",
+                "input_name": "Input parameter name",
+                "value": "The value to set"
+            }
+        },
+        {
+            "name": "validate_workflow",
+            "description": "Validate the current workflow before execution",
+            "parameters": {}
+        },
+        {
+            "name": "run_workflow",
+            "description": "Execute the current workflow",
+            "parameters": {
+                "wait": "Whether to wait for completion (default: True)",
+                "timeout": "Timeout in seconds (default: 120)"
+            }
+        },
+        {
+            "name": "get_job_status",
+            "description": "Check the status of a submitted workflow",
+            "parameters": {
+                "prompt_id": "The prompt ID returned from run_workflow"
+            }
+        },
+        {
+            "name": "fetch_outputs",
+            "description": "Download outputs from a completed workflow",
+            "parameters": {
+                "prompt_id": "The prompt ID",
+                "output_dir": "Directory to save outputs (default: ComfyUI output folder)"
+            }
+        },
+        {
+            "name": "search_templates",
+            "description": "Search pre-built workflow templates",
+            "parameters": {
+                "query": "Search query (e.g., 'text to image', 'video generation')"
+            }
+        },
+        {
+            "name": "run_template",
+            "description": "Run a pre-built template with parameter overrides",
+            "parameters": {
+                "template": "Template name or ID",
+                "overrides": "Dict of parameter overrides"
+            }
+        },
+        {
+            "name": "generate_image",
+            "description": "Quick image generation with minimal parameters",
+            "parameters": {
+                "prompt": "Text prompt describing the image",
+                "model": "Optional: model to use",
+                "width": "Image width (default: 1024)",
+                "height": "Image height (default: 1024)",
+                "steps": "Sampling steps (default: 20)",
+                "cfg": "CFG scale (default: 7.0)",
+                "seed": "Random seed (-1 for random)"
+            }
+        },
+        {
+            "name": "generate_video",
+            "description": "Quick video generation",
+            "parameters": {
+                "prompt": "Text prompt describing the video",
+                "model": "Optional: model to use (e.g., 'wan', 'ltx')",
+                "duration": "Duration in seconds",
+                "fps": "Frames per second"
+            }
+        },
+        {
+            "name": "generate_audio",
+            "description": "Quick audio/music generation",
+            "parameters": {
+                "prompt": "Text prompt describing the audio",
+                "model": "Optional: model to use",
+                "duration": "Duration in seconds"
+            }
+        },
+        {
+            "name": "download_model",
+            "description": "Download a model from HuggingFace using huggingface-cli. Requires huggingface-hub installed.",
+            "parameters": {
+                "repo_id": "HuggingFace repo ID (e.g., 'MiniMaxAI/MiniMax-Music3', 'black-forest-labs/FLUX.1-dev')",
+                "local_dir": "Local directory to download to (e.g., 'E:/ComfyUI-Easy-Install/models/music')",
+                "filename": "Optional: specific filename to download (downloads all if empty)"
+            }
+        },
+        {
+            "name": "list_local_models",
+            "description": "List models in a local directory to verify what is installed. Accepts absolute paths or folder names relative to the ComfyUI models directory (e.g., 'checkpoints', 'loras', 'unet').",
+            "parameters": {
+                "directory": "Directory path or folder name to list (e.g., 'checkpoints' or 'E:/path/to/models/loras')"
+            }
+        }
+    ]
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        all_models = api_clients.get_all_models()
+        return {
+            "required": {
+                "chat_message": ("STRING", {
+                    "multiline": True,
+                    "placeholder": "Describe what you want to create...",
+                    "tooltip": "Natural language request for image, video, audio, or any ComfyUI-supported content"
+                }),
+                "llm_model": (all_models, {
+                    "tooltip": "LLM model for interpreting requests and building workflows"
+                }),
+            },
+            "optional": {
+                "reference_image": ("IMAGE", {
+                    "tooltip": "Optional input image for img2img, video starting frame, style reference, etc."
+                }),
+                "reference_audio": ("AUDIO", {
+                    "tooltip": "Optional input audio for music, voice, sound effects"
+                }),
+                "model_preference": ("STRING", {
+                    "default": "",
+                    "tooltip": "Optional model preference (e.g., 'flux', 'wan', 'ltx', 'sdxl')"
+                }),
+                "comfyui_url": ("STRING", {
+                    "default": "http://127.0.0.1:8188",
+                    "tooltip": "ComfyUI server URL"
+                }),
+                "temperature": ("FLOAT", {
+                    "default": 0.7,
+                    "min": 0.0,
+                    "max": 2.0,
+                    "step": 0.1,
+                    "tooltip": "LLM temperature for response creativity"
+                }),
+                "seed": ("INT", {
+                    "default": 0,
+                    "min": -1,
+                    "max": 0xffffffffffffffff,
+                    "tooltip": "Random seed for reproducibility (-1 for random)"
+                }),
+                "timeout": ("INT", {
+                    "default": 1800,
+                    "min": 60,
+                    "max": 7200,
+                    "tooltip": "Workflow execution timeout in seconds (video on a 16GB card can take 15-30 min; keep this large)"
+                }),
+                "debug_mode": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Enable verbose logging for debugging"
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("status",)
+    FUNCTION = "execute"
+    OUTPUT_NODE = True
+    CATEGORY = "☠️PGFX /Agent"
+
+    # Background execution state. ComfyUI runs a SINGLE serial prompt worker
+    # (main.prompt_worker -> e.execute() blocks until the whole graph completes).
+    # A node that submits a sub-workflow AND blocks waiting for that sub-workflow
+    # deadlocks: the sub-job can never start because this node never returns.
+    # We therefore run the agent loop off the worker and return immediately.
+    # This is a fire-and-forget trigger node: results land in the ComfyUI output
+    # directory for the user to browse (no synchronous output pins).
+    _BG_LOCK = threading.Lock()
+    _BG_ACTIVE = {}
+
+    def execute(self, chat_message, llm_model, reference_image=None, reference_audio=None,
+                model_preference="", comfyui_url="http://127.0.0.1:8188",
+                temperature=0.7, seed=0, timeout=1800, debug_mode=False, **kwargs):
+
+        def _placeholder_image():
+            """Return a 1x1 black pixel image so downstream nodes don't crash."""
+            return torch.zeros(1, 1, 1, 3, dtype=torch.float32)
+
+        job_key = (comfyui_url, chat_message, model_preference, seed, debug_mode)
+
+        with PGFX_LogoDesignerMCPAgent._BG_LOCK:
+            if PGFX_LogoDesignerMCPAgent._BG_ACTIVE.get(job_key):
+                return ("ALREADY_RUNNING: this request is already generating in the background.",)
+            PGFX_LogoDesignerMCPAgent._BG_ACTIVE[job_key] = True
+
+        def _worker():
+            try:
+                self._run_mcp_agent(chat_message, llm_model, reference_image, reference_audio,
+                                    model_preference, comfyui_url, temperature, seed, timeout,
+                                    debug_mode, _placeholder_image)
+            except Exception as e:
+                if debug_mode:
+                    print(f"\033[95m[MCP Agent]\033[0m background error: {e}")
+            finally:
+                with PGFX_LogoDesignerMCPAgent._BG_LOCK:
+                    PGFX_LogoDesignerMCPAgent._BG_ACTIVE.pop(job_key, None)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+        return ("QUEUED_ASYNC: agent is generating on the ComfyUI queue in the background. "
+                "Results will appear in the ComfyUI output directory.",)
+
+        if requests is None:
+            return (_placeholder_image(), "", "{}", "ERROR: 'requests' library not installed")
+
+        status_logs = []
+        workflow_json_str = "{}"
+        result_image = None
+        result_text = ""
+
+        def log(msg):
+            status_logs.append(msg)
+            if debug_mode:
+                print(f"\033[93m[MCP Agent]\033[0m {msg}")
+
+        def execute_comfyui_workflow(workflow):
+            """Submit workflow to ComfyUI and return results."""
+            try:
+                if not workflow or not isinstance(workflow, dict):
+                    return False, "Invalid workflow"
+
+                payload = {"prompt": workflow}
+                response = requests.post(
+                    f"{comfyui_url}/prompt",
+                    json=payload,
+                    timeout=10
+                )
+
+                if response.status_code != 200:
+                    return False, f"ComfyUI error (HTTP {response.status_code}): {response.text[:500]}"
+
+                data = response.json()
+                prompt_id = data.get("prompt_id")
+                if not prompt_id:
+                    return False, "No prompt_id returned from ComfyUI"
+
+                log(f"Workflow submitted: {prompt_id}")
+
+                start_time = time.time()
+                while time.time() - start_time < timeout:
+                    history_response = requests.get(
+                        f"{comfyui_url}/history/{prompt_id}",
+                        timeout=5
+                    )
+
+                    if history_response.status_code == 200:
+                        history = history_response.json()
+                        if prompt_id in history:
+                            entry = history[prompt_id]
+                            status = entry.get("status", {})
+                            if status.get("completed", False):
+                                elapsed = time.time() - start_time
+                                log(f"Workflow completed in {elapsed:.1f}s")
+                                return True, entry
+                            if status.get("status_str") == "error":
+                                msgs = status.get("messages", [])
+                                return False, f"Workflow failed: {msgs}"
+
+                    time.sleep(1)
+
+                return False, f"Workflow timed out after {timeout}s"
+
+            except requests.exceptions.ConnectionError:
+                return False, f"Cannot connect to ComfyUI at {comfyui_url}"
+            except Exception as e:
+                return False, f"Error: {str(e)}"
+
+        def download_image(filename, subfolder="", folder_type="output"):
+            """Download image from ComfyUI output."""
+            try:
+                resp = requests.get(
+                    f"{comfyui_url}/view",
+                    params={"filename": filename, "subfolder": subfolder, "type": folder_type},
+                    timeout=10
+                )
+                if resp.status_code == 200:
+                    img = Image.open(io.BytesIO(resp.content))
+                    img_np = np.array(img).astype(np.float32) / 255.0
+                    return torch.from_numpy(img_np)[None,]
+            except Exception as e:
+                log(f"Error downloading image: {e}")
+            return None
+
+        # Build prompts
+        system_prompt = self._build_system_prompt(model_preference)
+        user_message = self._build_user_message(chat_message, reference_image, reference_audio, model_preference)
+
+        # Query LLM
+        log("Interpreting request...")
+        # Detect if the selected model supports vision input (same pattern as other creator nodes)
+        model_is_vision = api_clients.ModelInspector.is_vision_model({"id": llm_model})
+        images_for_llm = []
+        if reference_image is not None and model_is_vision:
+            img_np = (reference_image[0].cpu().numpy() * 255).astype(np.uint8)
+            images_for_llm.append(Image.fromarray(img_np))
+            log(f"Reference image sent to vision-capable model: {llm_model}")
+        elif reference_image is not None and not model_is_vision:
+            log(f"Reference image attached but model '{llm_model}' is not vision-capable - will be passed to workflow as input, not sent to LLM")
+
+        ok, llm_response = api_clients.query_model_auto(
+            llm_model,
+            prompt=user_message,
+            system=system_prompt,
+            images=images_for_llm if images_for_llm else None,
+            temperature=temperature,
+            seed=seed,
+            timeout=120
+        )
+
+        # Retry without images if the model rejected image input (defensive fallback)
+        if not ok and images_for_llm and "image input is not supported" in str(llm_response):
+            log("Model rejected image input - retrying without image")
+            images_for_llm = []
+            ok, llm_response = api_clients.query_model_auto(
+                llm_model,
+                prompt=user_message,
+                system=system_prompt,
+                images=None,
+                temperature=temperature,
+                seed=seed,
+                timeout=120
+            )
+
+        if not ok:
+            return (_placeholder_image(), f"LLM error: {llm_response}", "{}", "LLM_FAILED")
+
+        log("LLM response received")
+
+        result_text = str(llm_response)
+
+        # --- Tool call execution ---
+        # Check if LLM wants to execute a tool (download, list, etc.) instead of building a workflow
+        try:
+            tool_call = None
+            json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', result_text, re.DOTALL)
+            if json_match:
+                try:
+                    tool_call = json.loads(json_match.group(1))
+                except json.JSONDecodeError:
+                    pass
+            else:
+                try:
+                    tool_call = json.loads(result_text)
+                except json.JSONDecodeError:
+                    pass
+
+            if tool_call and isinstance(tool_call, dict) and "tool_call" in tool_call:
+                tool_name = tool_call.get("tool_call")
+                params = tool_call.get("params", {})
+                log(f"Executing tool: {tool_name}")
+
+                if tool_name == "download_model":
+                    repo_id = params.get("repo_id", "")
+                    local_dir = params.get("local_dir", "")
+                    filename = params.get("filename", "")
+
+                    if not repo_id or not local_dir:
+                        return (_placeholder_image(), "Error: download_model requires repo_id and local_dir", "{}", "TOOL_ERROR")
+
+                    import subprocess
+                    cmd = ["huggingface-cli", "download", repo_id, "--local-dir", local_dir]
+                    if filename:
+                        cmd.extend(["--include", filename])
+
+                    log(f"Running: {' '.join(cmd)}")
+                    try:
+                        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                        output = proc.stdout + proc.stderr
+                        if proc.returncode == 0:
+                            log(f"Download complete: {output[-200:]}")
+                            return (_placeholder_image(), f"Download successful:\n{output}", "{}", "SUCCESS")
+                        else:
+                            return (_placeholder_image(), f"Download failed (exit {proc.returncode}):\n{output}", "{}", "DOWNLOAD_FAILED")
+                    except FileNotFoundError:
+                        return (_placeholder_image(), "Error: huggingface-cli not found. Install with: pip install huggingface-hub", "{}", "TOOL_ERROR")
+                    except subprocess.TimeoutExpired:
+                        return (_placeholder_image(), "Error: Download timed out after 600s", "{}", "TOOL_ERROR")
+
+                elif tool_name == "list_local_models":
+                    directory = params.get("directory", "")
+                    if not directory:
+                        return (_placeholder_image(), "Error: list_local_models requires a directory path", "{}", "TOOL_ERROR")
+
+                    import os
+                    # Resolve path: support relative names (e.g. "checkpoints") against ComfyUI models dir
+                    resolved = directory
+                    if not os.path.isabs(resolved) and not os.path.isdir(resolved):
+                        candidate = os.path.join(config.MODELS_DIR, directory)
+                        if os.path.isdir(candidate):
+                            resolved = candidate
+                        else:
+                            # Also try exact subdirectory match under models dir
+                            for sub in sorted(os.listdir(config.MODELS_DIR)):
+                                sub_path = os.path.join(config.MODELS_DIR, sub)
+                                if os.path.isdir(sub_path) and sub.lower() == directory.lower():
+                                    resolved = sub_path
+                                    break
+
+                    if not os.path.isdir(resolved):
+                        available = sorted(d for d in os.listdir(config.MODELS_DIR) if os.path.isdir(os.path.join(config.MODELS_DIR, d)))
+                        return (_placeholder_image(), f"Error: Directory not found: {directory}\n\nAvailable model folders:\n" + "\n".join(f"  {d}/" for d in available), "{}", "TOOL_ERROR")
+
+                    files = []
+                    for f in sorted(os.listdir(resolved)):
+                        fpath = os.path.join(resolved, f)
+                        if os.path.isfile(fpath):
+                            size_mb = os.path.getsize(fpath) / (1024 * 1024)
+                            files.append(f"{f}  ({size_mb:.1f} MB)")
+                        else:
+                            files.append(f"{f}/")
+
+                    listing = f"Contents of {resolved}:\n" + "\n".join(files[:50])
+                    if len(files) > 50:
+                        listing += f"\n... and {len(files) - 50} more items"
+                    return (_placeholder_image(), listing, "{}", "SUCCESS")
+
+                else:
+                    return (_placeholder_image(), f"Unknown tool: {tool_name}", "{}", "TOOL_ERROR")
+
+        except Exception as e:
+            log(f"Tool execution error: {e}")
+
+        # --- Workflow execution ---
+        try:
+            workflow_obj = None
+
+            # Look for JSON code blocks
+            json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', result_text, re.DOTALL)
+            if json_match:
+                workflow_obj = json.loads(json_match.group(1))
+            else:
+                # Try parsing entire response as JSON
+                try:
+                    workflow_obj = json.loads(result_text)
+                except json.JSONDecodeError:
+                    pass
+
+            if workflow_obj and isinstance(workflow_obj, dict) and ("nodes" in workflow_obj or "links" in workflow_obj):
+                workflow_json_str = json.dumps(workflow_obj, indent=2)
+                log("Executing workflow...")
+                success, result = execute_comfyui_workflow(workflow_obj)
+
+                if success:
+                    outputs = result.get("outputs", {})
+                    for node_id, node_output in outputs.items():
+                        if "images" in node_output:
+                            for img_info in node_output["images"]:
+                                img_tensor = download_image(
+                                    img_info["filename"],
+                                    img_info.get("subfolder", ""),
+                                    img_info.get("type", "output")
+                                )
+                                if img_tensor is not None:
+                                    result_image = img_tensor
+                                    log(f"Image downloaded: {img_info['filename']}")
+                                    break
+                        if result_image is not None:
+                            break
+
+                    return (result_image if result_image is not None else _placeholder_image(), result_text, workflow_json_str, "SUCCESS")
+                else:
+                    return (_placeholder_image(), result_text, workflow_json_str, f"EXECUTION_FAILED: {result}")
+            else:
+                return (_placeholder_image(), result_text, workflow_json_str, "TEXT_RESPONSE")
+
+        except json.JSONDecodeError:
+            return (_placeholder_image(), result_text, workflow_json_str, "TEXT_RESPONSE")
+        except Exception as e:
+            return (_placeholder_image(), f"Error: {str(e)}\n\n{result_text}", workflow_json_str, "ERROR")
+
+    @staticmethod
+    def _video_preview_frame(video_path):
+        try:
+            import mcp_agent as _ma
+            return _ma.video_preview_tensor(video_path)
+        except Exception:
+            pass
+        if not video_path or not os.path.isfile(video_path):
+            return None
+        try:
+            import subprocess
+            preview_png = video_path + ".preview.png"
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", video_path, "-frames:v", "1", preview_png],
+                capture_output=True, timeout=60
+            )
+            if not os.path.isfile(preview_png):
+                return None
+            with Image.open(preview_png) as im:
+                arr = np.asarray(im.convert("RGB"), dtype=np.float32) / 255.0
+            return torch.from_numpy(arr)[None]
+        except Exception:
+            return None
+
+    def _run_mcp_agent(self, chat_message, llm_model, reference_image, reference_audio,
+                       model_preference, comfyui_url, temperature, seed, timeout, debug_mode,
+                       placeholder_fn):
+        import sys
+        import os as _os
+        _pkg = _os.path.dirname(_os.path.abspath(__file__))
+        if _pkg not in sys.path:
+            sys.path.insert(0, _pkg)
+        import mcp_agent
+
+        try:
+            import folder_paths
+            out_dir = folder_paths.get_output_directory()
+        except Exception:
+            out_dir = _os.path.normpath(_os.path.join(_os.path.dirname(config.MODELS_DIR), "output"))
+
+        model_is_vision = api_clients.ModelInspector.is_vision_model({"id": llm_model})
+        vision_images = []
+        if reference_image is not None and model_is_vision:
+            try:
+                img_np = (reference_image[0].cpu().numpy() * 255).astype("uint8")
+                vision_images = [Image.fromarray(img_np)]
+            except Exception as e:
+                log_text = f"[MCP Agent] could not prepare reference image for LLM: {e}"
+                if debug_mode:
+                    print(f"\033[95m{log_text}\033[0m")
+
+        call_count = [0]
+
+        def llm_call(system_prompt, history):
+            conv = []
+            for m in history:
+                role = m.get("role")
+                content = m.get("content", "")
+                if role in ("user", "assistant"):
+                    conv.append(f"{role.upper()}:\n{content}")
+            prompt = "\n\n".join(conv)
+            images = vision_images if (call_count[0] == 0 and vision_images) else None
+            call_count[0] += 1
+            ok, res = api_clients.query_model_auto(
+                llm_model,
+                prompt=prompt,
+                system=system_prompt,
+                images=images,
+                temperature=temperature,
+                seed=seed,
+                timeout=120
+            )
+            if not ok and images is not None and res:
+                err_l = str(res).lower()
+                if "image input" in err_l or "support image" in err_l or "cannot read" in err_l:
+                    ok, res = api_clients.query_model_auto(
+                        llm_model,
+                        prompt=prompt,
+                        system=system_prompt,
+                        images=None,
+                        temperature=temperature,
+                        seed=seed,
+                        timeout=120
+                    )
+            return ok, str(res)
+
+        session = mcp_agent.AgentSession(
+            comfyui_url=comfyui_url,
+            timeout=int(timeout),
+            debug=bool(debug_mode),
+            out_dir=out_dir,
+            can_preview=True,
+            models_dir=getattr(config, "MODELS_DIR", None),
+            llm_unloader=api_clients.unload_local_llm_vram,
+        )
+
+        result = session.run(chat_message, reference_image=reference_image,
+                             reference_audio=reference_audio, max_rounds=14, llm_call=llm_call)
+
+        if not result.get("ok"):
+            return (placeholder_fn(), f"Agent failed: {result.get('error')}", "{}", "AGENT_FAILED")
+
+        summary = result.get("summary", "")
+        files = result.get("files", [])
+
+        workflow_json_str = json.dumps(files, indent=2) if files else "{}"
+        preview = result.get("preview_tensor")
+        if preview is None and result.get("success_image") in (None, False) and files:
+            try:
+                import mcp_agent as _ma
+                for f in files:
+                    preview = _ma.video_preview_tensor(f)
+                    if preview is not None:
+                        break
+            except Exception:
+                preview = None
+        if preview is not None:
+            return (preview, summary, workflow_json_str, "SUCCESS")
+        return (placeholder_fn(), summary, workflow_json_str,
+                "SUCCESS" if result.get("success_image") else "SUCCESS_FILE_ONLY")
+
+    def _build_system_prompt(self, model_preference):
+        tools_desc = json.dumps(self.AGENT_TOOLS, indent=2)
+        model_hint = ""
+        if model_preference:
+            model_hint = f"\nUser prefers to use: {model_preference}"
+
+        models_dir_hint = ""
+        try:
+            models_dir_hint = f"\nComfyUI models directory (use this base for list_local_models): {config.MODELS_DIR}"
+        except Exception:
+            pass
+
+        return f"""You are a ComfyUI MCP Agent - an AI assistant that creates media using ComfyUI.
+
+Your job is to interpret user requests and create ComfyUI workflows to produce the requested content.
+
+AVAILABLE TOOLS:
+{tools_desc}
+{model_hint}{models_dir_hint}
+
+WORKFLOW CREATION PROCESS:
+1. Understand what the user wants to create
+2. Search for appropriate nodes and models
+3. Build a ComfyUI API-format workflow
+4. Submit the workflow for execution
+5. Return the results
+
+WORKFLOW FORMAT:
+ComfyUI workflows are JSON objects with "nodes" and "links" arrays. Each node has:
+- "id": unique identifier (integer)
+- "type": node class name (string)
+- "inputs": list of input connections (each is [source_node_id, source_output_slot])
+- "widgets_values": list of widget values in order
+
+EXAMPLE WORKFLOW (text-to-image):
+{{
+  "last_node_id": 6,
+  "last_link_id": 5,
+  "nodes": [
+    {{
+      "id": 1,
+      "type": "CheckpointLoaderSimple",
+      "pos": [0, 0],
+      "size": [300, 100],
+      "inputs": [],
+      "outputs": [
+        {{ "name": "MODEL", "type": "MODEL", "links": [1] }},
+        {{ "name": "CLIP", "type": "CLIP", "links": [2] }},
+        {{ "name": "VAE", "type": "VAE", "links": [5] }}
+      ],
+      "widgets_values": ["model_name.safetensors"]
+    }},
+    {{
+      "id": 2,
+      "type": "CLIPTextEncode",
+      "pos": [400, 0],
+      "size": [300, 100],
+      "inputs": [
+        {{ "name": "clip", "type": "CLIP", "link": 2 }}
+      ],
+      "outputs": [
+        {{ "name": "CONDITIONING", "type": "CONDITIONING", "links": [3] }}
+      ],
+      "widgets_values": ["beautiful landscape, mountains, sunset"]
+    }},
+    {{
+      "id": 3,
+      "type": "CLIPTextEncode",
+      "pos": [400, 150],
+      "size": [300, 100],
+      "inputs": [
+        {{ "name": "clip", "type": "CLIP", "link": 2 }}
+      ],
+      "outputs": [
+        {{ "name": "CONDITIONING", "type": "CONDITIONING", "links": [4] }}
+      ],
+      "widgets_values": ["blurry, low quality, deformed"]
+    }},
+    {{
+      "id": 4,
+      "type": "EmptyLatentImage",
+      "pos": [0, 200],
+      "size": [300, 100],
+      "inputs": [],
+      "outputs": [
+        {{ "name": "LATENT", "type": "LATENT", "links": [6] }}
+      ],
+      "widgets_values": [1024, 1024, 1]
+    }},
+    {{
+      "id": 5,
+      "type": "KSampler",
+      "pos": [800, 0],
+      "size": [300, 200],
+      "inputs": [
+        {{ "name": "model", "type": "MODEL", "link": 1 }},
+        {{ "name": "positive", "type": "CONDITIONING", "link": 3 }},
+        {{ "name": "negative", "type": "CONDITIONING", "link": 4 }},
+        {{ "name": "latent_image", "type": "LATENT", "link": 6 }}
+      ],
+      "outputs": [
+        {{ "name": "LATENT", "type": "LATENT", "links": [7] }}
+      ],
+      "widgets_values": [0, "fixed", 20, 7.0, "euler", "normal", 1.0]
+    }},
+    {{
+      "id": 6,
+      "type": "VAEDecode",
+      "pos": [1200, 0],
+      "size": [300, 100],
+      "inputs": [
+        {{ "name": "samples", "type": "LATENT", "link": 7 }},
+        {{ "name": "vae", "type": "VAE", "link": 5 }}
+      ],
+      "outputs": [
+        {{ "name": "IMAGE", "type": "IMAGE", "links": [8] }}
+      ],
+      "widgets_values": []
+    }},
+    {{
+      "id": 7,
+      "type": "SaveImage",
+      "pos": [1600, 0],
+      "size": [300, 100],
+      "inputs": [
+        {{ "name": "images", "type": "IMAGE", "link": 8 }}
+      ],
+      "outputs": [],
+      "widgets_values": ["MCP_output"]
+    }}
+  ],
+  "links": [
+    [1, 1, 0, 5, 0],
+    [2, 1, 1, 2, 0],
+    [3, 2, 0, 5, 1],
+    [4, 3, 0, 5, 2],
+    [5, 1, 2, 6, 1],
+    [6, 4, 0, 5, 3],
+    [7, 5, 0, 6, 0],
+    [8, 6, 0, 7, 0]
+  ]
+}}
+
+IMPORTANT RULES:
+- Reference images provided by the user are available as INPUT to your workflow (e.g., LoadImage node, img2img, ControlNet)
+- Do NOT assume the LLM can "see" the reference image - describe how to use it in the workflow, not what it contains
+- Always return a valid ComfyUI API-format workflow as JSON
+- Use common node types: CheckpointLoaderSimple, CLIPTextEncode, KSampler, VAEDecode, SaveImage
+- For image generation, use the pattern shown above
+- For video generation, add VideoCombine or similar output nodes
+- Use real model filenames that exist on the system
+- Return the workflow as a JSON code block in your response
+- Include helpful text explaining what you are creating{model_hint}
+
+TOOL CALLS (when user asks to download or list models):
+When the user asks to download a model or list local files, return a JSON code block with:
+{{
+  "tool_call": "download_model",
+  "params": {{
+    "repo_id": "owner/repo",
+    "local_dir": "/path/to/destination",
+    "filename": "optional specific file"
+  }}
+}}
+
+Or for listing:
+{{
+  "tool_call": "list_local_models",
+  "params": {{
+    "directory": "/path/to/list"
+  }}
+}}
+
+Do NOT return a workflow when making a tool call - just the tool_call JSON.
+
+RESPONSE FORMAT:
+1. Explain what you are creating and why you chose specific settings
+2. Return the complete workflow JSON inside a ```json code block (or tool_call JSON)
+3. Explain any notable parameters or choices"""
+
+    def _build_user_message(self, chat_message, reference_image, reference_audio, model_preference):
+        parts = [chat_message]
+        if reference_image is not None:
+            parts.append("\n[Reference image attached - use as input for img2img, ControlNet, or style reference]")
+        if reference_audio is not None:
+            parts.append("\n[Reference audio attached - use as input for audio processing]")
+        if model_preference:
+            parts.append(f"\n[Model preference: {model_preference}]")
+        return "\n".join(parts)
+
+
+# ------------------------------------------------------------------------------------
 # Node Mappings
 # ------------------------------------------------------------------------------------
 NODE_CLASS_MAPPINGS = {
     "PGFX_LogoDesignerStudio": PGFX_LogoDesignerStudio,
     "PGFX_LogoDesignerAgent": PGFX_LogoDesignerAgent,
+    "PGFX_LogoDesignerMCPAgent": PGFX_LogoDesignerMCPAgent,
     "PGFX_ImageVectorizer": PGFX_ImageVectorizer,
 }
 if V3_IO_AVAILABLE:
@@ -2296,6 +3156,7 @@ if V3_IO_AVAILABLE:
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_LogoDesignerStudio": "PGFX Logo Designer Studio",
     "PGFX_LogoDesignerAgent": "PGFX Logo Designer Agent",
+    "PGFX_LogoDesignerMCPAgent": "🎭 PGFX MCP Agent",
     "PGFX_ImageVectorizer": "📐 PGFX Image Vectorizer",
 }
 if V3_IO_AVAILABLE:

@@ -896,10 +896,8 @@ class GGUFClient:
                     if isinstance(content_val, str) and content_val.strip():
                         return content_val.strip()
 
-                    # Qwen/Reasoning models may put text into reasoning_content.
-                    reasoning_val = message.get("reasoning_content", "")
-                    if isinstance(reasoning_val, str) and reasoning_val.strip():
-                        return reasoning_val.strip()
+                    # Never substitute reasoning_content ("thinking" dialog) for the
+                    # answer: internal reasoning must not leak into generated prompts.
 
                     text_val = choice.get("text", "") if isinstance(choice, dict) else ""
                     if isinstance(text_val, str) and text_val.strip():
@@ -938,9 +936,7 @@ class GGUFClient:
                                     parts.append(item)
                             if parts:
                                 return "".join(parts)
-                        reasoning_val = delta.get("reasoning_content")
-                        if isinstance(reasoning_val, str):
-                            return reasoning_val
+                        # Skip reasoning_content deltas: thinking must not be appended to output.
                     elif isinstance(delta, str):
                         return delta
 
@@ -1785,8 +1781,8 @@ class OllamaClient:
             content = data.get("response", "")
         elif "message" in data and isinstance(data["message"], dict):
             content = data["message"].get("content", "")
-            if not content:
-                content = data["message"].get("thinking", "")
+            # Never fall back to message.thinking: internal reasoning must not
+            # become the generated prompt.
         
         return (True, content.strip()) if content else (False, f"Could not find response content in Ollama output: {json.dumps(data)}")
 
@@ -1849,6 +1845,63 @@ if config.LLAMA_CPP_AVAILABLE:
     CLIENT_REGISTRY["gguf"] = GGUFClient()
 if config.HF_TRANSFORMERS_AVAILABLE:
     CLIENT_REGISTRY["hf"] = HuggingFaceClient()
+
+def unload_local_llm_vram():
+    """Best-effort release of VRAM held by ANY local LLM runtime.
+
+    Called before a heavy ComfyUI run so the image/video job has full VRAM.
+    Tries every configured/possible runtime (Ollama, LM Studio, llama-server,
+    text-generation-webui) regardless of which one the node happens to be using,
+    and ignores failures. Each runtime reloads its model on demand afterwards.
+    """
+    import shutil
+    import subprocess
+    released = []
+
+    def _get(url, timeout=4):
+        try:
+            return requests.get(url, timeout=timeout)
+        except Exception:
+            return None
+
+    def _post(url, payload, timeout=4):
+        try:
+            return requests.post(url, json=payload, timeout=timeout)
+        except Exception:
+            return None
+
+    # 1. Ollama — keep_alive:0 on each known model unloads it after the next call.
+    ollama_cfg = config.LOCAL_SERVER_CONFIG.get("ollama", {}) if hasattr(config, "LOCAL_SERVER_CONFIG") else {}
+    ollama_url = ollama_cfg.get("base_url")
+    if ollama_url:
+        try:
+            r = _get(f"{ollama_url}/api/tags")
+            if r is not None:
+                names = [m.get("name") or m.get("model") for m in (r.json().get("models", []) or [])]
+                names = [n for n in names if n]
+                for n in names:
+                    _post(f"{ollama_url}/api/generate", {"model": n, "prompt": "", "keep_alive": 0})
+                if names:
+                    released.append("ollama")
+        except Exception:
+            pass
+
+    # 2. LM Studio — 'lms unload --all' CLI (also reloads on demand via JIT).
+    if shutil.which("lms"):
+        try:
+            subprocess.run(["lms", "unload", "--all"], capture_output=True, timeout=15)
+            released.append("lmstudio")
+        except Exception:
+            pass
+
+    # 3. text-generation-webui — best-effort unload of the current model.
+    tgw_cfg = config.LOCAL_SERVER_CONFIG.get("text-generation-webui", {}) if hasattr(config, "LOCAL_SERVER_CONFIG") else {}
+    tgw_url = tgw_cfg.get("base_url")
+    if tgw_url:
+        _post(f"{tgw_url}/v1/internal/model/unload", {})
+        _post(f"{tgw_url}/api/v1/model", {"action": "unload"})
+
+    return released
 
 def check_local_server_status():
     """Performs a single, clear check for all configured local server connectivity at startup."""

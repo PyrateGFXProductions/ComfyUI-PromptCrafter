@@ -1542,6 +1542,7 @@ class PromptCrafter_H3ImageToVideoPrompt:
                 "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "seed": ("INT", {"default": 0, "min": -1, "max": 0xffffffffffffffff, "step": 1}),
                 "timeout": ("INT", {"default": 180, "min": 30, "max": 900, "step": 10}),
+                "unload_model_after_query": ("BOOLEAN", {"default": True, "tooltip": "Unload the local LLM from VRAM after the prompt is written. Keeps VRAM free for video generation; turn off for faster repeat runs."}),
                 "debug_mode": ("BOOLEAN", {"default": False}),
                 "strict_guide_validation": ("BOOLEAN", {"default": True, "tooltip": "Reject output that does not follow the MiniMax H3 prompt contract."}),
                 **_llm_runtime_optional_inputs(),
@@ -1553,7 +1554,7 @@ class PromptCrafter_H3ImageToVideoPrompt:
                 image_count=1, reference_roles="", image_weights_json="{}", temperature=0.2,
                 seed=0, timeout=180, debug_mode=False, llm_device=config.DEFAULT_LLM_DEVICE,
                 reset_context=config.DEFAULT_LLM_STATELESS, strict_guide_validation=True,
-                style_preset="None", **kwargs):
+                style_preset="None", unload_model_after_query=True, **kwargs):
         images_with_weights = _collect_visual_dynamic_images(
             image_count=image_count, image_weights_json=image_weights_json, max_images=self.MAX_IMAGES, **kwargs
         )
@@ -1619,13 +1620,23 @@ class PromptCrafter_H3ImageToVideoPrompt:
             debug_title="MiniMax H3 Image-to-Video Prompt",
             llm_device=llm_device,
             reset_context=reset_context,
+            unload_after_query=unload_model_after_query,
         )
         if not ok:
             return (f"[ERROR] H3 model call failed: {response}",) + passthrough_images
 
-        response_text = "" if response is None else str(response).strip()
+        response_text = "" if response is None else str(response)
+        # Defensive cleanup: strip any thinking/tool-plan traces that still slip through
+        # (e.g. gpt-oss analysis blocks or <think> tags) before validation.
+        response_text = re.sub(r"<think>.*?</think>", "", response_text, flags=re.DOTALL | re.IGNORECASE).strip()
         if not response_text:
-            return ("[ERROR] H3 model returned empty output.",) + passthrough_images
+            return ("[ERROR] H3 model returned empty output (possibly a thinking model with no final answer - try a non-thinking model).",) + passthrough_images
+
+        # Some models emit their chain-of-thought inline as plain content (no
+        # reasoning_content/thinking field to strip). Trim everything before the
+        # first valid output marker so only the actual H3 prompt remains.
+        response_text = self._trim_h3_reasoning_preamble(mode, response_text, duration_seconds)
+
         if strict_guide_validation:
             validation_error = self._validate_h3_output(mode, response_text, duration_seconds)
             if validation_error:
@@ -1767,6 +1778,35 @@ class PromptCrafter_H3ImageToVideoPrompt:
             - Do not write a plot summary. Do not invent unresolved reference labels. Do not add timing that exceeds the requested duration. Do not treat newly added actions or backgrounds as losses of reference fidelity in retention_analysis.
             {_STYLE_PRESETS.get(style_preset, "")}
         """).strip()
+
+    @staticmethod
+    def _trim_h3_reasoning_preamble(mode, response_text, duration_seconds=5):
+        """Drop any chain-of-thought / tool-plan chatter emitted as plain content
+        before the real H3 prompt. Keeps everything from the first valid output
+        marker onward; returns the text unchanged if no marker exists (validation
+        will then report it)."""
+        try:
+            duration_value = float(duration_seconds or 5)
+        except (TypeError, ValueError):
+            duration_value = 5.0
+
+        alignment_markers = {
+            "I2VA": (_H3_ALIGN_I2VA,),
+            "FL2VA": (_h3_align_fl2va(duration_value),),
+            "L2VA": (_h3_align_l2va(duration_value),),
+        }
+        field_markers = (
+            ("subject_definitions:",) if mode == "Ref2VA"
+            else ("integrated_multimodal_description:",)
+        )
+        markers = alignment_markers.get(mode, ()) + field_markers
+
+        candidates = [response_text.find(marker) for marker in markers]
+        candidates = [position for position in candidates if position >= 0]
+        if not candidates:
+            return response_text
+        start = min(candidates)
+        return response_text[start:].strip() if start > 0 else response_text
 
     @staticmethod
     def _validate_h3_output(mode, response_text, duration_seconds=5):

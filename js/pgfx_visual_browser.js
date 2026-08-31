@@ -159,6 +159,51 @@ const injectStyles = () => {
         .pgfx-browser-search:focus {
             border-color: #06b6d4;
         }
+        .pgfx-filter-select {
+            background: #000;
+            border: 1px solid #444;
+            color: white;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            outline: none;
+            flex-shrink: 0;
+        }
+        .pgfx-filter-select:focus {
+            border-color: #06b6d4;
+        }
+        .pgfx-filter-custom {
+            background: #000;
+            border: 1px solid #444;
+            color: white;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            outline: none;
+            width: 58px;
+            flex-shrink: 0;
+        }
+        .pgfx-filter-custom:focus {
+            border-color: #06b6d4;
+        }
+        .pgfx-file-icon {
+            font-size: 20px;
+            line-height: 1;
+        }
+        .pgfx-browser-item.file-item {
+            flex-direction: column;
+            gap: 3px;
+            padding: 4px;
+        }
+        .pgfx-file-name {
+            font-size: 8px;
+            color: #aaa;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding: 0 2px;
+        }
         .pgfx-details-bar {
             display: flex;
             align-items: center;
@@ -639,6 +684,8 @@ app.registerExtension({
             let imageData = { images: [], total: 0, page: 0, total_pages: 1 };
             let currentPage = 0;
             const perPage = 18;
+            let currentFilter = "all";
+            let customMode = false;
 
             const container = document.createElement("div");
             container.className = "pgfx-browser-container";
@@ -692,11 +739,38 @@ app.registerExtension({
             searchInput.className = "pgfx-browser-search";
             searchInput.placeholder = "Search...";
 
+            const filterSelect = document.createElement("select");
+            filterSelect.className = "pgfx-filter-select";
+            filterSelect.title = "Filter files by type";
+            const filterOptions = [
+                ["all", "All Files"],
+                ["images", "🖼️ Images"],
+                ["videos", "🎬 Videos"],
+                ["audio", "🎵 Audio"],
+                ["text", "📄 Text / Data"],
+                ["models", "🧠 Models"],
+                ["__custom__", "⌨️ Custom extension"],
+            ];
+            filterOptions.forEach(([val, label]) => {
+                const opt = document.createElement("option");
+                opt.value = val;
+                opt.textContent = label;
+                filterSelect.appendChild(opt);
+            });
+
+            const customFilterInput = document.createElement("input");
+            customFilterInput.className = "pgfx-filter-custom";
+            customFilterInput.placeholder = ".ext";
+            customFilterInput.title = "Type any file extension to show only those files";
+            customFilterInput.style.display = "none";
+
             const detailsBar = document.createElement("div");
             detailsBar.className = "pgfx-details-bar";
-            detailsBar.innerHTML = '<span class="pgfx-details-empty">Select an image</span>';
+            detailsBar.innerHTML = '<span class="pgfx-details-empty">Select a file</span>';
 
             searchRow.appendChild(searchInput);
+            searchRow.appendChild(filterSelect);
+            searchRow.appendChild(customFilterInput);
             searchRow.appendChild(detailsBar);
             container.appendChild(searchRow);
 
@@ -1098,6 +1172,63 @@ app.registerExtension({
 
             // --- Load images ---
             let searchTimer = null;
+            let filterTimer = null;
+
+            const normalizeExt = (v) => {
+                const s = String(v || "").trim().toLowerCase();
+                if (!s) return "all";
+                return s.startsWith(".") ? s : "." + s;
+            };
+
+            const fileIconFor = (ext, isImage) => {
+                if (isImage) return "🖼️";
+                const e = (ext || "").toLowerCase();
+                if ([".mp4", ".webm", ".mov", ".avi", ".mkv", ".flv", ".wmv", ".m4v", ".mpeg", ".mpg", ".3gp"].includes(e)) return "🎬";
+                if ([".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".opus", ".wma"].includes(e)) return "🎵";
+                if ([".srt", ".vtt"].includes(e)) return "💬";
+                if ([".json"].includes(e)) return "🧾";
+                if ([".safetensors", ".ckpt", ".sft", ".pt", ".pth", ".gguf", ".onnx"].includes(e)) return "🧠";
+                if ([".txt", ".md", ".csv", ".tsv"].includes(e)) return "📄";
+                if ([".zip", ".7z", ".rar", ".tar", ".gz"].includes(e)) return "🗜️";
+                if ([".html", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".log"].includes(e)) return "⚙️";
+                if ([".psd", ".xcf", ".ai", ".svg"].includes(e)) return "🎨";
+                return "📁";
+            };
+
+            const showFilterUI = () => {
+                customFilterInput.style.display = customMode ? "" : "none";
+                filterSelect.value = customMode ? "__custom__" : currentFilter;
+            };
+
+            const setFilter = (value) => {
+                if (value === "__custom__") {
+                    customMode = true;
+                    currentFilter = normalizeExt(customFilterInput.value);
+                    showFilterUI();
+                    customFilterInput.focus();
+                } else {
+                    customMode = false;
+                    currentFilter = String(value || "all");
+                    showFilterUI();
+                }
+                loadImages(0);
+            };
+
+            filterSelect.onchange = (e) => {
+                e.stopPropagation();
+                setFilter(filterSelect.value);
+            };
+
+            customFilterInput.oninput = () => {
+                if (!customMode) return;
+                if (filterTimer) clearTimeout(filterTimer);
+                filterTimer = setTimeout(() => {
+                    currentFilter = normalizeExt(customFilterInput.value);
+                    loadImages(0);
+                }, 250);
+            };
+
+            customFilterInput.onkeydown = (e) => e.stopPropagation();
 
             const loadImages = async (page) => {
                 const folder = currentFolder;
@@ -1105,7 +1236,7 @@ app.registerExtension({
 
                 try {
                     const query = searchInput.value.trim();
-                    let url = `/pgfx/browser/images?folder=${encodeURIComponent(folder)}&page=${page}&per_page=${perPage}`;
+                    let url = `/pgfx/browser/images?folder=${encodeURIComponent(folder)}&page=${page}&per_page=${perPage}&filter=${encodeURIComponent(currentFilter)}`;
                     if (query) url += `&search=${encodeURIComponent(query)}`;
                     const resp = await api.fetchApi(url);
                     const data = await resp.json();
@@ -1126,36 +1257,51 @@ app.registerExtension({
                 const images = imageData.images || [];
 
                 if (images.length === 0) {
-                    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px; color: #666;">No images found</div>';
+                    const msg = currentFilter === "all" ? "No files found" : "No files match filter";
+                    grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 20px; color: #666;">${msg}</div>`;
                     return;
                 }
 
                 images.forEach(imgData => {
                     const item = document.createElement("div");
                     item.className = "pgfx-browser-item";
+                    if (!imgData.is_image) {
+                        item.classList.add("file-item");
+                    }
                     if (selectedImageWidget.value === imgData.filename) {
                         item.classList.add("selected");
                     }
                     if (imgData.has_caption) {
                         item.classList.add("has-caption");
                     }
+                    item.title = imgData.filename;
 
-                    const img = document.createElement("img");
-                    const thumbUrl = imgData.url + "&preview=true";
-                    const cached = thumbCache.get(thumbUrl);
-                    if (cached && cached.complete && cached.naturalWidth > 0) {
-                        img.src = thumbUrl;
-                    } else {
-                        img.src = thumbUrl;
-                        if (!cached) {
-                            const cacheImg = new Image();
-                            cacheImg.src = thumbUrl;
-                            thumbCache.set(thumbUrl, cacheImg);
+                    if (imgData.is_image) {
+                        const img = document.createElement("img");
+                        const thumbUrl = imgData.url + "&preview=true";
+                        const cached = thumbCache.get(thumbUrl);
+                        if (cached && cached.complete && cached.naturalWidth > 0) {
+                            img.src = thumbUrl;
+                        } else {
+                            img.src = thumbUrl;
+                            if (!cached) {
+                                const cacheImg = new Image();
+                                cacheImg.src = thumbUrl;
+                                thumbCache.set(thumbUrl, cacheImg);
+                            }
                         }
+                        img.loading = "lazy";
+                        item.append(img);
+                    } else {
+                        const icon = document.createElement("div");
+                        icon.className = "pgfx-file-icon";
+                        icon.textContent = fileIconFor(imgData.ext, false);
+                        const label = document.createElement("div");
+                        label.className = "pgfx-file-name";
+                        label.textContent = imgData.filename;
+                        label.title = imgData.filename;
+                        item.append(icon, label);
                     }
-                    img.loading = "lazy";
-
-                    item.append(img);
 
                     item.onclick = () => {
                         const prevSelected = grid.querySelector(".selected");
@@ -1163,7 +1309,17 @@ app.registerExtension({
                         item.classList.add("selected");
                         selectedImageWidget.value = imgData.filename;
                         updateDetails(imgData.filename);
-                        if (captionsEnabled) loadCaption(imgData.filename);
+                        if (captionsEnabled) {
+                            if (imgData.is_image) {
+                                loadCaption(imgData.filename);
+                            } else {
+                                currentCaptionFile = imgData.filename;
+                                captionTextarea.value = "";
+                                captionStatus.textContent = "Not an image (no caption)";
+                                saveCaptionBtn.disabled = true;
+                                genCaptionBtn.disabled = true;
+                            }
+                        }
                         node.setDirtyCanvas(true, true);
                     };
 
@@ -1204,10 +1360,10 @@ app.registerExtension({
                     const d = await resp.json();
 
                     const parts = [
-                        { label: "Res", value: d.resolution },
+                        { label: "Type", value: d.kind || d.format },
                         { label: "Size", value: d.size },
                         { label: "Date", value: d.date },
-                        { label: "Format", value: d.format },
+                        { label: "Res", value: d.resolution },
                     ];
 
                     detailsBar.innerHTML = parts.map(p =>
@@ -1407,7 +1563,8 @@ app.registerExtension({
                 try {
                     const resp = await api.fetchApi(`/pgfx/browser/images?folder=${encodeURIComponent(currentFolder)}&per_page=999999`);
                     const data = await resp.json();
-                    const images = data.images || [];
+                    const files = data.images || [];
+                    const images = files.filter(f => f.is_image);
 
                     let toProcess = [];
                     if (overwrite) {
@@ -1845,6 +2002,7 @@ app.registerExtension({
                     }
                 }
                 renderPathBar();
+                showFilterUI();
                 await loadImages(0);
                 if (captionsEnabled) {
                     batchCaptionBtn.disabled = false;
