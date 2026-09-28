@@ -689,11 +689,28 @@ def submit_prompt(comfyui_url, api_prompt, timeout=20):
     return body
 
 
+def _prompt_alive(comfyui_url, prompt_id):
+    import requests
+    try:
+        resp = requests.get(f"{comfyui_url}/queue", timeout=5)
+        if resp.status_code != 200:
+            return None
+        q = resp.json()
+        for group in ("queue_running", "queue_pending"):
+            for item in (q.get(group) or []):
+                if isinstance(item, (list, tuple)) and len(item) > 1 and item[1] == prompt_id:
+                    return True
+        return False
+    except Exception:
+        return None
+
+
 def wait_for_completion(comfyui_url, prompt_id, timeout=300, log=None):
     import requests
     start = time.time()
     conn_losses = 0
     last_log = 0.0
+    history_misses = 0
     while time.time() - start < timeout:
         now = time.time()
         if log is not None and now - last_log >= 30:
@@ -719,6 +736,7 @@ def wait_for_completion(comfyui_url, prompt_id, timeout=300, log=None):
             history = resp.json()
             entry = history.get(prompt_id)
             if entry:
+                history_misses = 0
                 status = entry.get("status", {})
                 if status.get("status_str") in ("error",):
                     msgs = status.get('messages', [])
@@ -732,6 +750,26 @@ def wait_for_completion(comfyui_url, prompt_id, timeout=300, log=None):
                     return entry, False, errtext
                 if status.get("completed"):
                     return entry, True, ""
+            else:
+                # job not yet in history. If it is also not queued/running (after a short
+                # grace for ComfyUI to register it), the job is LOST - it either never
+                # registered or its history entry was already evicted. Fail fast instead of
+                # spinning the full timeout, so the caller can't loop forever on a dead id.
+                history_misses += 1
+                if history_misses >= 3:
+                    alive = _prompt_alive(comfyui_url, prompt_id)
+                    if alive is False:
+                        last_log = 0.0
+                        if log is not None:
+                            try:
+                                log(f"job {prompt_id} LOST: not in history and nothing queued/running. Aborting wait.")
+                            except Exception:
+                                pass
+                        return None, False, ("job_lost: prompt_id not found in ComfyUI history and nothing is "
+                                             "queued/running. The job either never registered or its history record "
+                                             "was evicted. Do NOT re-arm job(action='wait') on this id - it will never "
+                                             "resolve. Re-run the workflow (or report the failure) instead.")
+                    # still queued/running -> it is genuinely in-flight; keep waiting
         time.sleep(4)
     return None, False, f"timeout after {timeout}s"
 
@@ -948,7 +986,7 @@ def list_slots(ui_graph, object_info=None):
 def _widget_index_for(ui_node, input_name, object_info=None):
     ntype = ui_node.get("type")
     node_inputs = ui_node.get("inputs", []) or []
-    widgets = ui_node.get("widgets_values", []) or []
+    _ = ui_node.get("widgets_values", []) or []
     linked_names = set()
     for ins in node_inputs:
         if isinstance(ins, dict) and ins.get("link"):
@@ -1065,7 +1103,7 @@ def tool_fetch_template(comfyui_url, params, out_dir=None, audio_ref=None, image
         return {"error": f"template not found: {name}"}
     try:
         object_info = load_object_info(comfyui_url)
-    except Exception as e:
+    except Exception:
         object_info = {}
     if builtin:
         ui = apply_builtin_fixes(name, ui, reference_audio=audio_ref)
@@ -1081,7 +1119,7 @@ def tool_fetch_template(comfyui_url, params, out_dir=None, audio_ref=None, image
         with open(out_path, "w", encoding="utf-8") as fh:
             json.dump(ui, fh, indent=2)
         written = True
-    except Exception as e:
+    except Exception:
         written = False
         out_path = ""
     errors = []
@@ -1104,7 +1142,7 @@ def tool_get_template(comfyui_url, params):
         return {"error": f"template not found: {name}"}
     try:
         object_info = load_object_info(comfyui_url)
-    except Exception as e:
+    except Exception:
         object_info = {}
     errors = []
     try:
@@ -1161,7 +1199,18 @@ def tool_nodes(comfyui_url, params):
             if accepts and not any(accepts in str(i) for i in ins):
                 continue
             results.append({"name": cls, "display_name": disp, "category": node_cat, "output_types": spec.get("output_types", [])})
-        return results
+        # A broad query ("audio", "text", "list") can match HUNDREDS of nodes. Returning
+        # an unbounded list blows up the LLM's context window and breaks its JSON replies.
+        # Cap the result; when truncated, force the agent to narrow via query/category/name.
+        _MAX_PAGE = 40
+        if len(results) > _MAX_PAGE:
+            return {
+                "query": query_l, "truncated": True, "total_matches": len(results),
+                "shown": _MAX_PAGE,
+                "hint": f"Too many results. Narrow the search (more specific query, or category=, or nodes(action='get', name='<exact class>')). First {_MAX_PAGE} matches:",
+                "results": results[:_MAX_PAGE],
+            }
+        return {"results": results, "truncated": False, "total_matches": len(results), "query": query_l}
     if action == "types":
         counts = {}
         for cls, spec in info.items():
@@ -1299,9 +1348,56 @@ def tool_set_workflow_slot(comfyui_url, params):
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(ui, fh, indent=2)
         saved = True
-    except Exception as e:
+    except Exception:
         saved = False
     return {"changed": changed, "saved": saved, "path": path, "slots": list_slots(ui, object_info)}
+
+
+def tool_workflow_save(comfyui_url, params, out_dir=None):
+    """Authoring tool: write an API-format workflow (dict keyed by node id, each
+    {class_type, inputs}) to an absolute file path. This is the 'save the custom
+    workflow I assembled' action for authoring mode. Does NOT run anything."""
+    wf = params.get("workflow")
+    path = params.get("out_path", "")
+    if not isinstance(wf, dict) or not wf:
+        return {"error": "workflow must be a non-empty dict of {node_id: {class_type, inputs}}"}
+    if not path:
+        return {"error": "out_path must be an absolute file path"}
+    # Security: restrict saves to ComfyUI output directory or a designated workflows subfolder
+    try:
+        import folder_paths
+        output_base = folder_paths.get_output_directory()
+    except Exception:
+        output_base = None
+    if not output_base:
+        try:
+            import folder_paths as _fp
+            output_base = os.path.normpath(os.path.join(os.path.dirname(_fp.models_dir), "output"))
+        except Exception:
+            output_base = os.path.abspath("output")
+    workflows_dir = os.path.join(output_base, "PGFX_workflows")
+    os.makedirs(workflows_dir, exist_ok=True)
+    # Resolve the requested path and ensure it's within the allowed directory
+    requested = os.path.abspath(path)
+    # Allow if inside workflows_dir, or if it's a relative path that resolves there
+    if not requested.startswith(os.path.abspath(workflows_dir) + os.sep) and requested != os.path.abspath(workflows_dir):
+        # If user gave an absolute path outside the sandbox, redirect to sandbox with same filename
+        filename = os.path.basename(requested)
+        safe_path = os.path.join(workflows_dir, filename)
+    else:
+        safe_path = requested
+    try:
+        d = os.path.dirname(safe_path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d, exist_ok=True)
+        with open(safe_path, "w", encoding="utf-8") as fh:
+            json.dump(wf, fh, indent=2)
+    except Exception as e:
+        return {"error": f"failed to save workflow: {e}"}
+    node_count = len(wf)
+    classes = sorted({v.get("class_type", "?") for v in wf.values() if isinstance(v, dict)})
+    return {"saved": True, "path": safe_path, "node_count": node_count, "class_types": classes,
+            "note": "Workflow authored and saved to disk. It was NOT executed."}
 
 
 def tool_validate_workflow(comfyui_url, params):
@@ -1446,7 +1542,7 @@ def tool_job(comfyui_url, params, timeout=3600, log=None):
     action = params.get("action", "status")
     if action == "cancel":
         try:
-            resp = _http_post(comfyui_url, "/queue", {"delete": [prompt_id]}, timeout=10)
+            _ = _http_post(comfyui_url, "/queue", {"delete": [prompt_id]}, timeout=10)
         except Exception as e:
             return {"error": str(e)}
         return {"cancelled": True, "note": "queued/running job will be stopped at next queue iteration"}
@@ -1464,8 +1560,17 @@ def tool_job(comfyui_url, params, timeout=3600, log=None):
         waited, ok, err = wait_for_completion(comfyui_url, prompt_id, wt, log=log)
         if waited is not None:
             return {"prompt_id": prompt_id, "status": "done", **_job_summary(prompt_id, waited)}
+        if err.startswith("job_lost"):
+            return {"prompt_id": prompt_id, "status": "lost", "error": err,
+                    "note": "This job id is dead (not in history, nothing queued). Do NOT wait on it again. "
+                            "Report the failure, or re-run the workflow to get a fresh prompt_id."}
+        if err.startswith("server_crash"):
+            return {"prompt_id": prompt_id, "status": "crashed", "error": err,
+                    "note": "The ComfyUI server likely crashed (OOM). free_memory, scale down, and retry once - do not re-wait on this id."}
         return {"prompt_id": prompt_id, "status": "running", "error": err,
-                "note": "job not finished within polling budget; call job(action='status') or job(action='wait', timeout=...) again"}
+                "note": "job still in-flight within polling budget; call job(action='status') to check once, "
+                        "but do NOT repeatedly re-arm multi-minute waits on the same id - if status still "
+                        "shows 'running' after checks, report progress or wait on the queue instead."}
     if record is None:
         return {"prompt_id": prompt_id, "status": "pending", "note": "not yet in history - still queued/running"}
     return {"prompt_id": prompt_id, "status": "done", **_job_summary(prompt_id, record)}
@@ -1738,7 +1843,6 @@ def tool_download(comfyui_url, params):
             rec["status"] = "cancelled"
         return {"download_id": did, "status": "cancelled"}
     if action == "wait":
-        import requests
         start = time.time()
         wt = int(params.get("timeout_seconds") or 25)
         while time.time() - start < wt:
@@ -1930,7 +2034,6 @@ def tool_generate_image(comfyui_url, params):
         if any(k in n.lower() for k in ("t2i", "text_to_image", "text-to-image", "sd", "flux", "image")):
             name = n
             break
-    builtin_name = None
     if name:
         params2 = dict(params)
         params2["name"] = name
@@ -2024,6 +2127,7 @@ TOOLS = [
     {"name": "list_workflow_slots", "description": "List settable inputs of a workflow file (addresses + current values).", "parameters": {"workflow_path": "path"}},
     {"name": "list_workflow_notes", "description": "Read a template's authored Note/MarkdownNote documentation (trigger words, links, caveats).", "parameters": {"workflow_path": "path"}},
     {"name": "set_workflow_slot", "description": "Set slot values (prompt/seed/steps/model) on a fetched workflow.", "parameters": {"workflow_path": "path", "overrides": "list of {address,value}"}},
+    {"name": "workflow_save", "description": "AUTHOR tool: write the custom API-format workflow dict you assembled to an absolute file path (saves only, never runs).", "parameters": {"workflow": "dict {node_id: {class_type, inputs}}", "out_path": "absolute file path"}},
     {"name": "vary_workflow", "description": "Fan a workflow into variants over zipped slot value lists.", "parameters": {"workflow_path": "path", "slots": "list of ADDR=[v1,v2...]", "out_dir": "optional dir"}},
     {"name": "validate_workflow", "description": "Pre-flight a workflow against installed node classes.", "parameters": {"workflow_path": "path"}},
     {"name": "workflow_deps", "description": "Which node packs a workflow needs (resolves classes -> pack ids).", "parameters": {"workflow_path": "path"}},
@@ -2064,7 +2168,7 @@ class AgentSession:
 
     def log(self, msg):
         if self.debug:
-            print(f"\033[95m[MCP Agent]\033[0m {msg}")
+            pass  # Debug logging disabled
 
     def stage_media(self, reference_image, reference_audio):
         staged = []
@@ -2075,7 +2179,6 @@ class AgentSession:
             in_dir = None
         if reference_image is not None:
             try:
-                import torch
                 img = reference_image[0].cpu().numpy()
                 from PIL import Image as _PIL
                 if img.ndim == 3 and img.shape[2] == 3:
@@ -2092,7 +2195,6 @@ class AgentSession:
                 self.log(f"stage image failed: {e}")
         if reference_audio is not None:
             try:
-                import torch
                 audio = reference_audio.get("waveform")
                 sr = reference_audio.get("sample_rate", 44100)
                 if audio is not None:
@@ -2152,6 +2254,8 @@ class AgentSession:
             return {"content": tool_list_workflow_slots(self.comfyui_url, params)}
         if name == "set_workflow_slot":
             return {"content": tool_set_workflow_slot(self.comfyui_url, params)}
+        if name == "workflow_save":
+            return {"content": tool_workflow_save(self.comfyui_url, params, self.out_dir)}
         if name == "validate_workflow":
             return {"content": tool_validate_workflow(self.comfyui_url, params)}
         if name == "run_template":
@@ -2242,7 +2346,7 @@ HOW TO WORK (mirror the official ComfyUI MCP flow exactly):
 3. list_workflow_slots(path) to see settable node_id.input addresses and current values; set_workflow_slot(path, overrides) to change them (model filenames must be EXACT installed names from search_models - never guess).
 4. validate_workflow(path) before running. Then run_workflow(path, wait=true) to execute; it returns a prompt_id. Then fetch_outputs(prompt_id, out_dir=...) to download the generated files. Report the absolute file paths in "files".
 5. run_template(name, overrides) is the one-shot convenience (fetch+fill+run+download) - use it when you are already confident of the template and its slots.
-6. HARDWARE-AWARE (mandatory on limited machines): before a big run, call system_stats and read its "budget" (vram_free_gb, ram_free_gb, usable_ram_gb, combined_headroom_gb). If the model/checkpoint for your template is large (e.g. ~8-15GB for MiniMax H3, 32B text encoders, FLUX), SCALE DOWN the parameters on fetched workflows via set_workflow_slot BEFORE submitting: lower resolution (480p not 768p), shorter duration / fewer frames, and prefer a smaller model. A run whose model stack exceeds the combined budget must be scaled, not submitted. If a run returns a memory_guard block or errors with cuda_oom / server_crash, free_memory then retry at reduced size - NEVER re-run the same heavy settings.
+6. HARDWARE-AWARE (mandatory on limited machines): before a big run, call system_stats and read its "budget" (vram_free_gb, ram_free_gb, usable_ram_gb, combined_headroom_gb). If the model/checkpoint for your template is large (e.g. ~8-15GB for MiniMax H3, 32B text encoders, FLUX), SCALE DOWN the parameters on fetched workflows via set_workflow_slot BEFORE submitting: lower resolution (480p not 768p), shorter duration / fewer frames, and prefer a smaller model. A run whose model stack exceeds the combined budget must be scaled, not submitted. If a run returns a memory_guard block or errors with cuda_oom / server_crash, free_memory then retry at reduced size - NEVER re-run the same heavy settings. EXCEPTION: a "## MANDATORY GENERATION SETTINGS" block from the user is an explicit override - honor its resolution/strategy, and only scale below it in a genuine OOM (then say so).
 
 TEMPLATE INTEGRITY (non-negotiable):
 - A fetched template is a tuned graph. NEVER strip, mute, simplify, or delete its nodes, conditioning chains, LoRA/distilled paths, sigmas, or pass-through wiring. Change ONLY the prompt text, seed, and user-requested parameters (e.g. size/count). If an image-dependent path is a bypassed toggle, LEAVE it as-is.
@@ -2251,7 +2355,7 @@ TEMPLATE INTEGRITY (non-negotiable):
 ROUTING & EXPECTATIONS:
 - A single empty search is INCONCLUSIVE, not proof. Broaden it (drop version numbers, try the bare family name) before concluding a template/model/route is absent. Evidence beats assumption: a search that RETURNED something, or a run that succeeded, outranks a later empty lookup - never deny a route on an empty result alone.
 - Some model families (MiniMax H3 is a current example) exist as BOTH a local OSS template (video_minimax_h3_*) and a paid API template (api_minimax_h3_*). Tell them apart by TEMPLATE NAME, never assume a family has only one route. This node runs everything LOCALLY for free.
-- H3 on THIS machine (RTX 5060 Ti 16 GB VRAM / 34 GB RAM): roughly 9-15 minutes per 5s clip at 480p, and generation time grows EXPONENTIALLY with pixel count. Quote the estimate before running. THIS BOX IS MEMORY-CONSTRAINED: the H3 model stack (int8 diffusion + 32B AWQ text encoder + dual VAEs) can page 20GB+ into system RAM, where the browser+explorer already hold ~half the 34GB. That is what OOM-crashes python.exe (c10.dll) and cascades into the desktop. ALWAYS read system_stats "budget" first and run at 480p/short duration unless the user explicitly asks for larger; prefer ~768p only as a follow-up upscale. When free RAM is low, free_memory and close other heavy apps conceptually. Slow is fine; full-tilt OOM is not.
+- H3 on THIS machine (RTX 5060 Ti 16 GB VRAM / 34 GB RAM): roughly 9-15 minutes per 5s clip at 480p, and generation time grows EXPONENTIALLY with pixel count. Quote the estimate before running. THIS BOX IS MEMORY-CONSTRAINED: the H3 model stack (int8 diffusion + 32B AWQ text encoder + dual VAEs) can page 20GB+ into system RAM, where the browser+explorer already hold ~half the 34GB. That is what OOM-crashes python.exe (c10.dll) and cascades into the desktop. ALWAYS read system_stats "budget" first. If the user supplied a "## MANDATORY GENERATION SETTINGS" block (or an explicit resolution/strategy), OBEY ITS numbers exactly - it is the user's instruction and overrides any default here. Only when the user gave no explicit size should you default small (480p / short duration) and prefer ~768p as a follow-up upscale. When free RAM is low, free_memory and close other heavy apps conceptually. Slow is fine; full-tilt OOM is not.
 - The H3 image-to-video template ships with one deliberately disconnected helper node; validation may flag it - expected. Proceed once the main path is wired; do not treat it as a dead end.
 - A graph must save/emit its output (SaveImage/SaveVideo/save node) to be retrievable. If a run reports it produces no output, re-fetch a template that saves, rather than running a graph that can only waste compute.
 
@@ -2272,10 +2376,70 @@ At EVERY round you reply with exactly one JSON object:
 
 If a required model/file is missing, say so in reason and propose the nearest alternative found by listing models."""
 
-    def run(self, user_message, reference_image=None, reference_audio=None, max_rounds=14, llm_call=None):
+    def system_prompt_author(self, staged, out_path):
+        """System prompt for AUTHORING mode: assemble and SAVE a custom workflow,
+        never run it. Tells the LLM it may combine existing templates, base nodes,
+        and custom/3rd-party nodes into one API-format graph, then save it."""
+        tools_desc = json.dumps(TOOLS, indent=2)
+        media_note = ""
+        if staged:
+            media_note = "\nREFERENCE MEDIA STAGED INTO ComfyUI INPUT FOLDER (usable by LoadImage/LoadAudio by filename):\n" + \
+                "\n".join(f"- {m['file']} ({m['type']}) {m['note']}" for m in staged)
+        models_dir_note = f"\nComfyUI models directory: {self.models_dir}" if self.models_dir else ""
+        out_note = f"Save the final workflow to this file: {out_path or '<agent-chosen absolute path>'}"
+        return f"""You are a ComfyUI WORKFLOW AUTHOR - a specialist that ASSEMBLES and SAVES custom executable workflows. You do NOT run anything.
+
+Your only job: turn the user's request into a custom, executable API-format ComfyUI workflow graph, then SAVE it to disk. You never call run_workflow / run_template / generate_image / submit. You never fetch outputs. You never spend credits.
+
+Server URL: {self.comfyui_url}{models_dir_note}
+{out_note}
+
+AVAILABLE TOOLS:
+{tools_desc}{media_note}
+
+CAPABILITIES ALREADY ON THIS INSTALL (use these rather than generic searches):
+- Lyric/audio -> VISUAL PROMPT pipeline (PromptCrafter pack, category "PGFX /Creator"): PromptCrafter_LyricsCreator ("Lyrics -> Prompt"), PromptCrafter_LyricsCreatorEasy, PromptCrafter_V3Creator ("Prompt Creator V3", unified image/lyrics/audio + Whisper transcription + dual-model chain), PromptCrafter_VisualCreator ("Image -> Prompt"), PromptCrafter_VisualCreatorEasy.
+- Lyric structuring/correction (category "PGFX /Text"): PromptCrafter_LyricsThink, PromptCrafter_LyricsInstruct, PromptCrafter_PromptChunker.
+- Music-video direction (category "PGFX /Studio"): PromptCrafter_DirectorAgent (video edit decision list from lyrics + styles), PGFX_Studio_Director (Prompts), PGFX_Studio_Screenwriter (Lyrics), PGFX_Studio_ShotPlannerPromptBuilder, PGFX_Studio_ShotPlanToShotList, PGFX_Studio_CreativeDirector.
+- Audio segmentation/timing: PromptCrafter_AudioSplitter, PromptCrafter_SRTCreator, PGFX_FilmAudioSegmenter, and VRGDG nodes (VRGDG_MusicVideoPromptCreator/V2/V3, VRGDG_ManualLyricsExtractor*, VRGDG_TimestampedLyricsExtractor, VRGDG_LyricSegment*).
+When the user asks to derive image/video prompts from song lyrics, VERIFY and wire these real nodes via nodes(action="get", name=<class>) instead of searching for a nonexistent "lyric-to-prompt" node. Confirm each class_type with nodes(action="get") before adding it.
+
+HOW TO AUTHOR (combine templates + base nodes + custom/3rd-party nodes):
+1. server_info FIRST - confirm the server is up and see installed node classes.
+2. Investigate what actually exists on this install before designing:
+   - search_templates(name-like words) to find a proven base template whose topology you can extend.
+   - get_template(name) / fetch_template(name, out_path=...) to see and WRITE a template's real graph. fetch_template writes a runnable API workflow to disk and returns its slots + node layout - use it as your structural reference and starting point.
+   - list_workflow_slots(path) / set_workflow_slot(path, overrides, stdout=...) to inspect and parameterize an existing graph.
+   - nodes(action="search"|"get", ...) to confirm the EXACT class_type and required inputs of any base, custom, or 3rd-party node you want to add (e.g. RTXVideoSuperResolution, SeedVR2VideoUpscaler, ColorMatch, LoraLoaderModelOnly). Verify the node actually exists on this install - never fabricate a class_type.
+3. DESIGN the custom graph: extend the fetched template's proven topology with the additional nodes the user wants (upscale, color-match, LoRA, extra conditioning, etc.). For each added node you MUST:
+   - use a real, verified class_type (from nodes(action="get")),
+   - provide every required input, wiring outputs into inputs as [source_node_id, slot_index] link tuples,
+   - connect data-type-compatible outputs to inputs (MODEL/CLIP/CONDITIONING/LATENT/IMAGE/AUDIO match by type).
+   This means the graph can actually execute later even though you are not executing it now.
+4. SAVE: call workflow_save with the full assembled API-format dict ({{node_id: {{class_type, inputs}}}}) and the absolute out_path. workflow_save writes the JSON and returns the path, node_count, and class_types. That save is the ONLY accepted completion.
+5. If you used fetch_template as a starting point and then added nodes by hand, save the FINAL assembled graph (with your additions) via workflow_save - do not merely save the unmodified template.
+
+HARD REQUIREMENTS:
+- NEVER call run_workflow, run_template, generate_image, job(wait), fetch_outputs, or any executor. You only author and save.
+- NEVER fabricate node class_types or model filenames - verify against nodes() / search_models().
+- Respect template integrity where you extend a template: keep its working core wiring and only add/parameterize what the user asked for.
+- If a needed custom node pack is missing, report that (name the pack + class) rather than inventing a broken fake node.
+- If, after at most ~2 searches, a required node class or capability genuinely does not exist on this install, STOP and finish by replying done with a summary that names exactly what is missing (e.g. "missing: a lyric-to-prompt node"). Do NOT keep re-searching variants of the same missing thing - that wastes rounds without saving anything.
+- Only reply done AFTER a workflow_save succeeded. Your summary must state the saved absolute path and list the node classes used.
+- Do NOT modify or hand-edit definitions.subgraphs directly; set values via slots or list the graph as-is where possible.
+
+REFERENCE MEDIA: images staged as PNG, audio as WAV (see REFERENCE MEDIA STAGED). Reference them by filename in file widgets (LoadImage 'image', LoadAudio 'audio').
+
+OUTPUT FORMAT (STRICT JSON, no markdown, no code fences):
+At EVERY round reply with exactly one JSON object:
+- To call a tool: {{"tool": "<name>", "params": {{...}}, "reason": "one line"}}
+- To finish: {{"done": true, "summary": "saved path + node classes used", "success_image": false}}"""
+
+    def run(self, user_message, reference_image=None, reference_audio=None, max_rounds=14, llm_call=None,
+            authoring=False, author_out_path=None):
         self.user_message = user_message
         staged = self.stage_media(reference_image, reference_audio)
-        session_system = self.system_prompt(staged)
+        session_system = self.system_prompt_author(staged, author_out_path) if authoring else self.system_prompt(staged)
         if staged:
             user_message = user_message + "\n\nReference media attached: " + ", ".join(m["file"] for m in staged)
         history = [{"role": "user", "content": user_message}]
@@ -2283,25 +2447,35 @@ If a required model/file is missing, say so in reason and propose the nearest al
         files_seen = []
         executed_tools = []
         run_executed = False
+        save_executed = False
         discovery_tools = {"server_info", "nodes", "search_models", "search_templates", "get_template",
                            "list_workflow_slots", "system_stats"}
         for round_idx in range(max_rounds):
             self.log(f"round {round_idx + 1}/{max_rounds}")
-            if staged and len(executed_tools) >= 4:
+            if len(executed_tools) >= 5:
                 streak = 0
                 for t in reversed(executed_tools):
                     if t in discovery_tools:
                         streak += 1
                     else:
                         break
-                if streak >= 4:
-                    nudge = ("\n\nSTALL WARNING: your last " + str(streak) +
-                             " calls were discovery only and NOTHING has been run yet. STOP discovering. "
-                             "Execute now: fetch_template(name=<chosen>, out_path='job.json') then run_workflow(path) or run_template(name=<chosen>, overrides={...}) "
-                             "then fetch_outputs(prompt_id, out_dir=...). The template is already chosen - just run it.")
+                if streak >= 5:
+                    if authoring:
+                        nudge = ("\n\nSTALL WARNING: your last " + str(streak) +
+                                 " calls were discovery only and no workflow_save has happened. If a required "
+                                 "node class / package genuinely does not exist (nodes(search/get) returned "
+                                 "truncated or 'not found'), STOP searching: either (a) assemble the workflow from "
+                                 "the real nodes you HAVE verified and save it with workflow_save(...), or (b) "
+                                 "report the missing capability in your summary and reply done. Do NOT keep "
+                                 "searching variants of the same missing thing.")
+                    else:
+                        nudge = ("\n\nSTALL WARNING: your last " + str(streak) +
+                                 " calls were discovery only and NOTHING has been run yet. STOP discovering. "
+                                 "Execute now: fetch_template(name=<chosen>, out_path='job.json') then run_workflow(path) or run_template(name=<chosen>, overrides={...}) "
+                                 "then fetch_outputs(prompt_id, out_dir=...). The template is already chosen - just run it.")
                     history.append({"role": "user", "content": nudge})
                     self.log("STALL WARNING injected")
-            
+
             if self.debug:
                 self.log(f"--- LLM CALL ROUND {round_idx+1} ---")
                 self.log(f"SYSTEM PROMPT: {session_system}")
@@ -2310,7 +2484,7 @@ If a required model/file is missing, say so in reason and propose the nearest al
             ok, response = llm_call(session_system, history)
             if not ok:
                 return {"ok": False, "error": f"LLM call failed: {response}", "preview_tensor": None}
-            
+
             if self.debug:
                 self.log(f"RAW RESPONSE: {response}")
 
@@ -2322,11 +2496,34 @@ If a required model/file is missing, say so in reason and propose the nearest al
                 history.append({"role": "assistant", "content": text})
                 history.append({"role": "user", "content": "Your last reply was not valid JSON. Reply with exactly one JSON object: a tool call {{tool, params, reason}} or {{done, summary, success_image}}."})
                 continue
-            
+
             if self.debug:
                 self.log(f"PARSED JSON: {json.dumps(parsed, default=_json_default)}")
 
             if parsed.get("done"):
+                if authoring:
+                    if not save_executed:
+                        summ = str(parsed.get("summary", "") or "").lower()
+                        report_markers = ("missing", "not found", "unavailable", "does not exist",
+                                          "could not", "cannot", "no such", "unsupported", "not installed")
+                        if any(m in summ for m in report_markers):
+                            self.log("agent done (authoring, reported missing capability - no save)")
+                            return {"ok": True,
+                                    "summary": "Could not author: " + parsed.get("summary", text),
+                                    "success_image": False, "preview_tensor": preview_tensor,
+                                    "files": files_seen, "authoring": True, "out_path": author_out_path,
+                                    "no_save": True}
+                        self.log("done rejected: no workflow_save executed")
+                        history.append({"role": "assistant", "content": text})
+                        history.append({"role": "user", "content": (
+                            "ILLEGAL STOP: you replied done but did NOT save the authored workflow. "
+                            "Assemble the custom API-format workflow and save it with workflow_save "
+                            "(workflow dict + out_path). Only then may you reply done.")})
+                        continue
+                    self.log("agent done (authoring)")
+                    return {"ok": True, "summary": parsed.get("summary", text), "success_image": False,
+                            "preview_tensor": preview_tensor, "files": files_seen,
+                            "authoring": True, "out_path": author_out_path}
                 if not run_executed:
                     self.log("done rejected: no run tool executed")
                     history.append({"role": "assistant", "content": text})
@@ -2343,13 +2540,21 @@ If a required model/file is missing, say so in reason and propose the nearest al
             executed_tools.append(tool_name)
             if tool_name in ("run_workflow", "run_template"):
                 run_executed = True
+            if tool_name == "workflow_save":
+                save_executed = True
+                try:
+                    sp = params.get("out_path")
+                    if sp and author_out_path is None:
+                        author_out_path = os.path.abspath(str(sp))
+                except Exception:
+                    pass
             self.log(f"tool: {tool_name} params={json.dumps(params, default=_json_default)[:300]}")
-            
+
             if self.debug:
                 self.log(f"EXECUTING TOOL: {tool_name} with params {json.dumps(params, default=_json_default)}")
 
             result = self.execute_tool(tool_name, params)
-            
+
             if self.debug:
                 self.log(f"TOOL RESULT RAW: {json.dumps(result, default=_json_default)}")
 
@@ -2363,6 +2568,9 @@ If a required model/file is missing, say so in reason and propose the nearest al
                 files_seen = list(content["files"])
             history.append({"role": "assistant", "content": f"[tool {tool_name}] {json.dumps(parsed, default=_json_default)[:800]}"})
             history.append({"role": "user", "content": f"TOOL RESULT:\n{json.dumps(content, default=_json_default)[:4000]}"})
+        if authoring:
+            return {"ok": False, "error": "Maximum rounds reached before a workflow_save succeeded. No workflow was saved.",
+                    "preview_tensor": None, "authoring": True, "out_path": author_out_path}
         return {"ok": True, "summary": "Maximum rounds reached. Outputs (if any): " + json.dumps(files_seen),
                 "success_image": preview_tensor is not None, "preview_tensor": preview_tensor, "files": files_seen}
 

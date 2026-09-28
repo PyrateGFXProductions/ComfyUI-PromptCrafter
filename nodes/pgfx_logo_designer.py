@@ -21,10 +21,7 @@ from ..core import pgfx_config as config
 from ..core.pgfx_base_creator import PromptCrafter_BaseCreator
 from ..utils import pgfx_json_utils as json_utils
 
-try:
-    from . import pgfx_font_manager
-except Exception as e:
-    print(f"[PGFX Logo Studio] Could not load font manager: {e}")
+
 
 try:
     from comfy_api.latest import io as v3_io
@@ -523,7 +520,7 @@ def _summarize_canvas_json(canvas_json_text):
             font_family = _normalize_text(obj.get("fontFamily", ""))
             font_size = _safe_int(obj.get("fontSize"), 0)
             font_weight = _normalize_text(obj.get("fontWeight", ""))
-            
+
             label = f'text "{text_value}"' if text_value else "text layer"
             if obj_name:
                 label = f'"{obj_name}" ({label})'
@@ -541,7 +538,7 @@ def _summarize_canvas_json(canvas_json_text):
         shape = _shape_name(obj)
         label = f'"{obj_name}" ({shape})' if obj_name else shape
         shape_bits = [label, f"at {position}"]
-        
+
         fill = obj.get("fill")
         if isinstance(fill, dict) and fill.get("type"):
             shape_bits.append(f"{fill.get('type')} gradient fill")
@@ -549,7 +546,7 @@ def _summarize_canvas_json(canvas_json_text):
             fill_str = _normalize_text(fill or "")
             if fill_str and fill_str not in {"", "transparent"}:
                 shape_bits.append(f"fill {fill_str}")
-        
+
         if obj.get("shadow"):
             shape_bits.append("has drop shadow")
 
@@ -874,14 +871,14 @@ try:
             return web.json_response({"error": "Preset not found"}, status=404)
         return web.json_response({"config": config})
 
-    print("\033[96m[PGFX Logo Studio] Preset API routes registered.\033[0m")
-except Exception as _e:
-    print(f"\033[93m[PGFX Logo Studio] Could not register preset routes: {_e}\033[0m")
+    pass
+except Exception:
+    pass
 
 
 def _resolve_choice(category, raw_value, choices, default, allow_add, custom_notes, custom_note_key):
     normalized = _normalize_key(raw_value)
-    
+
     current_library = DesignLibrary.load()
     cat_key = DesignLibrary._canonical_category(category)
     current_keys = current_library.get(cat_key, {})
@@ -1123,9 +1120,9 @@ def _build_logo_prompt(kwargs):
             canvas_summary,
         )
 
-    subject = _normalize_text(extra_data.get("subject", "")) or "logo or wordmark design"
+    _subject = _normalize_text(extra_data.get("subject", "")) or "logo or wordmark design"
     scene_interaction = _normalize_text(kwargs.get("scene_interaction", ""))
-    layout_summary = _coalesce_non_empty(canvas_summary.get("layout_summary", ""), extra_data.get("layout_summary", ""))
+    _layout_summary = _coalesce_non_empty(canvas_summary.get("layout_summary", ""), extra_data.get("layout_summary", ""))
 
     intensity = _clamp(_safe_float(kwargs.get("intensity"), 1.0), 0.2, 2.0)
     intensity_phrase = (
@@ -1477,15 +1474,13 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
         llm_images = [img for img, _ in images_with_weights if img is not None]
         if llm_images:
             run_config = self._setup_config(PGFX_LogoDesignerAgent, "Image", user_prompt, thinking_model, **clean_kwargs)
-            
+
             # Inject a context-aware persona based on the user's specific choices
             intent_str = output_intent_override if output_intent_override != "AI DETERMINED" else "general graphic design"
             style_str = style_mode_override.replace("_", " ") if style_mode_override != "AI DETERMINED" else "professional logo design"
-            
             run_config.style_profile = {
                 "persona": f"You are an expert graphic designer and art director specializing in {style_str} and {intent_str} workflows."
             }
-            
             describe_result = self._describe_images(images_with_weights, run_config)
             if describe_result:
                 image_context = describe_result[0] or ""
@@ -1575,7 +1570,6 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
         ).strip()
 
         agent_temperature = _clamp((_temp * 0.5) + (_flair * 0.35), 0.1, 1.1)
-        
         # Elite Optimization: Use the specialized reasoning backend with forced JSON mode
         ok, raw_response = api_clients._reason_with_model(
             instruct_model,
@@ -1730,7 +1724,6 @@ class PGFX_LogoDesignerAgent(PromptCrafter_BaseCreator):
             custom_notes.pop("custom_environment_2", None)
             custom_notes.pop("custom_environment_3", None)
             added_negatives = ["photorealistic", "human skin", "body parts", "limbs", "flesh"]
-            
         elif style_mode == "sticker_decal":
             intent = "vector"
             env_1 = env_2 = env_3 = "none"
@@ -1845,8 +1838,8 @@ class PGFX_LogoDesignerStudio:
                 try:
                     encoded = b64.split(",", 1)[1] if "," in b64 else b64
                     img = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGBA")
-                except Exception as e:
-                    print(f"[PGFX Logo Studio] Error decoding base64: {e}")
+                except Exception:
+                    pass  # Error decoding base64
             else:
                 try:
                     import folder_paths
@@ -1861,9 +1854,9 @@ class PGFX_LogoDesignerStudio:
                         if os.path.exists(fallback_path):
                             img = Image.open(fallback_path).convert("RGBA")
                         else:
-                            print(f"[PGFX Logo Studio] Warning: Image file '{b64}' not found in input directory '{input_dir}'.")
-                except Exception as e:
-                    print(f"[PGFX Logo Studio] Error loading image from file path '{b64}': {e}")
+                            pass  # Warning: image file not found
+                except Exception:
+                    pass  # Error loading image
 
         if img is not None:
             try:
@@ -1875,8 +1868,8 @@ class PGFX_LogoDesignerStudio:
                     geo_val,
                     flair_val,
                 )
-            except Exception as e:
-                print(f"[PGFX Logo Studio] Error processing image tensor: {e}")
+            except Exception:
+                pass  # Error processing image tensor
 
 
         return (
@@ -1896,16 +1889,16 @@ class PGFX_ImageVectorizer:
             "required": {
                 "image": ("IMAGE", {"tooltip": "The source raster image to be vectorized."}),
                 "preset": ([
-                    "Custom (Use Manual Sliders)", 
-                    "1-Color Silhouette (Ultra Fast)", 
-                    "2-Color Minimalist", 
+                    "Custom (Use Manual Sliders)",
+                    "1-Color Silhouette (Ultra Fast)",
+                    "2-Color Minimalist",
                     "4-Color Vinyl / Tattoo Decal",
-                    "Clean Vector Logo (8 Colors)", 
-                    "Smooth Curves & Fonts (8 Colors)", 
-                    "Graphic Art (16 Colors)", 
-                    "Raster Optimization (32 Colors - Web Safe)", 
+                    "Clean Vector Logo (8 Colors)",
+                    "Smooth Curves & Fonts (8 Colors)",
+                    "Graphic Art (16 Colors)",
+                    "Raster Optimization (32 Colors - Web Safe)",
                     "High Fidelity Raster (64 Colors - Heavy)"
-                ], {"default": "Custom (Use Manual Sliders)", "tooltip": "Select a smart preset to automatically configure the vectorizer for specific scenarios."}),
+                ], {"default": "Custom (Use Manual Sliders)","tooltip": "Select a smart preset to automatically configure the vectorizer for specific scenarios."}),
                 "mode": (["polygon", "spline"], {"default": "polygon", "tooltip": "Vectorization mode. Spline creates smooth curves. Polygon creates sharp, angular vector paths."}),
                 "posterize_levels": ("INT", {"default": 32, "min": 2, "max": 256, "tooltip": "Number of colors to reduce the image to. Fewer colors mean a cleaner design and much faster processing."}),
                 "dithering": ("BOOLEAN", {"default": False, "tooltip": "Enable dithering during color reduction. Best left OFF for logos, vinyl, and stencils to prevent millions of tiny speckles. Turn ON only for high-fidelity raster photos."}),
@@ -2036,8 +2029,8 @@ class PGFX_ImageVectorizer:
             )
             preview = torch.from_numpy(np.array(img.convert("RGB")).astype(np.float32) / 255.0)[None,]
             return {"ui": nodes.PreviewImage().save_images(preview).get("ui"), "result": (svg, preview)}
-        except Exception as e:
-            print(f"Error in PGFX_ImageVectorizer: {e}")
+        except Exception:
+            pass  # Error in PGFX_ImageVectorizer
             return ("<svg></svg>", None)
 
 
@@ -2291,7 +2284,6 @@ if V3_IO_AVAILABLE:
 # ------------------------------------------------------------------------------------
 class PGFX_LogoDesignerMCPAgent:
     """General-purpose ComfyUI MCP Agent - chat-driven workflow builder and executor.
-    
     This agent interprets natural language requests and builds/executes ComfyUI workflows
     to create images, videos, audio, and other media.
     """
@@ -2508,6 +2500,44 @@ class PGFX_LogoDesignerMCPAgent:
                     "default": False,
                     "tooltip": "Enable verbose logging for debugging"
                 }),
+                "resolution": (["auto (let agent decide)", "1280x720 (720p 16:9)", "1920x1080 (1080p 16:9)", "1344x768 (H3 768p)", "864x480 (480p)", "480x256 (small)"], {
+                    "default": "auto (let agent decide)",
+                    "tooltip": "TARGET output resolution. The agent must HONOR this - it may not silently drop the requested resolution. Choose 'auto' to let the agent pick a memory-safe size."
+                }),
+                "strategy": (["auto (hardware-aware)", "native (generate at target res)", "low-res + upscale"], {
+                    "default": "auto (hardware-aware)",
+                    "tooltip": "How to reach the target resolution. 'native' generates directly at the target; 'low-res + upscale' generates smaller then upscales to target (faster on VRAM-limited rigs); 'auto' lets the agent pick from the live hardware budget."
+                }),
+                "upscale_node": (["none", "RTX Video Super Resolution (RTXVideoSuperResolution)", "SeedVR2 Video Upscaler (SeedVR2VideoUpscaler)", "Generic Upscale w/ Model (UpscaleModelLoader + ImageUpscaleWithModel)"], {
+                    "default": "none",
+                    "tooltip": "Post-generate upscale stage to wire into the workflow. The agent MUST add the chosen node as an actual stage after generating (never claim it ran when it did not). Uses ComfyUI nodes that already exist on this install."
+                }),
+                "upscale_scale": ("FLOAT", {
+                    "default": 2.0,
+                    "min": 1.0,
+                    "max": 4.0,
+                    "step": 0.1,
+                    "tooltip": "Multiplier for the upscale node (e.g. 2.0 doubles the resolution). Ignored when upscale_node is 'none'."
+                }),
+                "upscale_quality": (["LOW", "MEDIUM", "HIGH", "ULTRA"], {
+                    "default": "ULTRA",
+                    "tooltip": "Quality preset for RTX Video Super Resolution (ignored for other upscalers). Requires an RTX/Blackwell GPU."
+                }),
+                "color_match": (["none", "ColorMatch", "ColorMatchToReference", "easy imageColorMatch"], {
+                    "default": "none",
+                    "tooltip": "Color-matching stage to apply to the generated frames (pull colors toward a reference image, e.g. grade to a still-frame). Uses existing ComfyUI color-match nodes."
+                }),
+                "lora_name": ("STRING", {
+                    "default": "",
+                    "tooltip": "Optional LoRA filename (e.g. 'h3-realism-people-t2v-i2v-r2v.safetensors') to apply via an existing LoraLoader node. Leave empty for none."
+                }),
+                "lora_strength": ("FLOAT", {
+                    "default": 1.0,
+                    "min": -2.0,
+                    "max": 2.0,
+                    "step": 0.05,
+                    "tooltip": "LoRA strength (1.0 = default). Ignored when lora_name is empty."
+                }),
             },
         }
 
@@ -2529,7 +2559,10 @@ class PGFX_LogoDesignerMCPAgent:
 
     def execute(self, chat_message, llm_model, reference_image=None, reference_audio=None,
                 model_preference="", comfyui_url="http://127.0.0.1:8188",
-                temperature=0.7, seed=0, timeout=1800, debug_mode=False, **kwargs):
+                temperature=0.7, seed=0, timeout=1800, debug_mode=False,
+                resolution="auto (let agent decide)", strategy="auto (hardware-aware)",
+                upscale_node="none", upscale_scale=2.0, upscale_quality="ULTRA",
+                color_match="none", lora_name="", lora_strength=1.0, **kwargs):
 
         def _placeholder_image():
             """Return a 1x1 black pixel image so downstream nodes don't crash."""
@@ -2542,21 +2575,28 @@ class PGFX_LogoDesignerMCPAgent:
                 return ("ALREADY_RUNNING: this request is already generating in the background.",)
             PGFX_LogoDesignerMCPAgent._BG_ACTIVE[job_key] = True
 
+        plan = self._build_plan(resolution, strategy, upscale_node, upscale_scale, upscale_quality,
+                                color_match, lora_name, lora_strength)
+
         def _worker():
             try:
                 self._run_mcp_agent(chat_message, llm_model, reference_image, reference_audio,
                                     model_preference, comfyui_url, temperature, seed, timeout,
-                                    debug_mode, _placeholder_image)
-            except Exception as e:
+                                    debug_mode, _placeholder_image,
+                                    resolution=resolution, strategy=strategy, upscale_node=upscale_node,
+                                    upscale_scale=upscale_scale, upscale_quality=upscale_quality,
+                                    color_match=color_match, lora_name=lora_name,
+                                    lora_strength=lora_strength)
+            except Exception:
                 if debug_mode:
-                    print(f"\033[95m[MCP Agent]\033[0m background error: {e}")
+                    pass  # background error
             finally:
                 with PGFX_LogoDesignerMCPAgent._BG_LOCK:
                     PGFX_LogoDesignerMCPAgent._BG_ACTIVE.pop(job_key, None)
 
         threading.Thread(target=_worker, daemon=True).start()
 
-        return ("QUEUED_ASYNC: agent is generating on the ComfyUI queue in the background. "
+        return (plan + "\n\nQUEUED_ASYNC: agent is generating on the ComfyUI queue in the background. "
                 "Results will appear in the ComfyUI output directory.",)
 
         if requests is None:
@@ -2570,7 +2610,7 @@ class PGFX_LogoDesignerMCPAgent:
         def log(msg):
             status_logs.append(msg)
             if debug_mode:
-                print(f"\033[93m[MCP Agent]\033[0m {msg}")
+                pass  # debug log
 
         def execute_comfyui_workflow(workflow):
             """Submit workflow to ComfyUI and return results."""
@@ -2853,13 +2893,24 @@ class PGFX_LogoDesignerMCPAgent:
 
     def _run_mcp_agent(self, chat_message, llm_model, reference_image, reference_audio,
                        model_preference, comfyui_url, temperature, seed, timeout, debug_mode,
-                       placeholder_fn):
+                       placeholder_fn, resolution="auto (let agent decide)", strategy="auto (hardware-aware)",
+                       upscale_node="none", upscale_scale=2.0, upscale_quality="ULTRA", color_match="none",
+                       lora_name="", lora_strength=1.0):
         import sys
         import os as _os
         _pkg = _os.path.dirname(_os.path.abspath(__file__))
         if _pkg not in sys.path:
             sys.path.insert(0, _pkg)
         import mcp_agent
+
+        # Build an explicit, agent-followable settings directive from the node widgets so
+        # the LLM honors the user's generation settings instead of silently degrading them.
+        directive = self._build_settings_directive(
+            resolution, strategy, upscale_node, upscale_scale, upscale_quality,
+            color_match, lora_name, lora_strength, debug_mode,
+        )
+        if directive:
+            chat_message = directive + "\n\n" + chat_message
 
         try:
             import folder_paths
@@ -2873,10 +2924,9 @@ class PGFX_LogoDesignerMCPAgent:
             try:
                 img_np = (reference_image[0].cpu().numpy() * 255).astype("uint8")
                 vision_images = [Image.fromarray(img_np)]
-            except Exception as e:
-                log_text = f"[MCP Agent] could not prepare reference image for LLM: {e}"
+            except Exception:
                 if debug_mode:
-                    print(f"\033[95m{log_text}\033[0m")
+                    pass  # could not prepare reference image
 
         call_count = [0]
 
@@ -3137,6 +3187,156 @@ RESPONSE FORMAT:
 2. Return the complete workflow JSON inside a ```json code block (or tool_call JSON)
 3. Explain any notable parameters or choices"""
 
+    def _parse_resolution(self, resolution):
+        """Return (w, h) for a resolution label, or (None, None) for 'auto'/unparseable."""
+        if not resolution or not resolution.strip() or "auto" in resolution.lower():
+            return None, None
+        tokens = resolution.split()
+        size = tokens[0]  # e.g. 1280x720
+        try:
+            w, h = (int(x) for x in size.lower().split("x")[:2])
+            return w, h
+        except Exception:
+            return None, None
+
+    def _round_to_multiple(self, v, multiple=32):
+        v = max(multiple, int(round(v / multiple)) * multiple)
+        return v
+
+    def _build_plan(self, resolution, strategy, upscale_node, upscale_scale, upscale_quality,
+                    color_match, lora_name, lora_strength):
+        w, h = self._parse_resolution(resolution)
+        up = str(upscale_node or "none").lower()
+        has_upscale = up and "none" not in up and not up.startswith("auto")
+        strat = str(strategy or "auto (hardware-aware)").lower()
+        lines = ["[PLAN] PGFX MCP Agent - how this run will generate"]
+        if w and h:
+            target = f"{w}x{h} ({(w * h) / 1_000_000:.2f} MP)"
+        else:
+            target = "auto (hardware budget decides)"
+        lines.append(f"  target resolution : {target}")
+        if "low-res" in strat and has_upscale and w and h:
+            gw = self._round_to_multiple(int(w / max(1.0, float(upscale_scale))))
+            gh = self._round_to_multiple(int(h / max(1.0, float(upscale_scale))))
+            lines.append(f"  strategy          : low-res + upscale -> generate ~{gw}x{gh}, then upscale x{upscale_scale} to {w}x{h}")
+        elif "native" in strat:
+            lines.append("  strategy          : native -> generate directly at the target resolution")
+        else:
+            lines.append("  strategy          : auto (agent picks from live VRAM/RAM budget)")
+        stage = []
+        if has_upscale:
+            stage.append(f"upscale={upscale_node} x{upscale_scale} ({upscale_quality})")
+        cm = str(color_match or "none").lower()
+        if cm and "none" not in cm and not cm.startswith("auto"):
+            stage.append(f"color-match={color_match}")
+        if (lora_name or "").strip():
+            stage.append(f"LoRA={lora_name}@{lora_strength}")
+        lines.append(f"  post stages       : {', '.join(stage) if stage else 'none'}")
+        return "\n".join(lines)
+
+    def _build_settings_directive(self, resolution, strategy, upscale_node, upscale_scale,
+                                  upscale_quality, color_match, lora_name, lora_strength,
+                                  debug_mode=False):
+        """Compose an explicit instruction block from the settings widgets.
+
+        These are HARD requirements the LLM agent must follow, not suggestions. Each
+        entry names the ComfyUI node class (already installed and coded) to use, so the
+        agent only has to locate and wire an existing node - never build new machinery.
+        """
+        lines = ["## MANDATORY GENERATION SETTINGS (from the PGFX MCP Agent node widgets)", \
+                 "Obey every setting below exactly. Do NOT silently change, downgrade, or skip any of them. If you cannot honor a setting, stop and say so - never pretend you did."]
+        strat = str(strategy or "auto (hardware-aware)").lower()
+        w, h = self._parse_resolution(resolution)
+
+        if w and h:
+            mp = (w * h) / 1_000_000
+            up = str(upscale_node or "none").lower()
+            has_upscale = up and "none" not in up and not up.startswith("auto")
+            lines.append(
+                f"- Target resolution: {w}x{h} ({mp:.3f} MP). The FINAL output must be this size."
+            )
+            if "low-res" in strat and has_upscale:
+                gw = self._round_to_multiple(int(w / max(1.0, float(upscale_scale))))
+                gh = self._round_to_multiple(int(h / max(1.0, float(upscale_scale))))
+                lines.append(
+                    f"- Strategy is low-res + upscale: set the generation resolution to ~{gw}x{gh} "
+                    f"(set the template's ResolutionSelector.megapixels to {(gw * gh) / 1_000_000:.3f}, or its "
+                    f"width/height, to match). Then the upscale stage (below) MUST run to reach {w}x{h}. "
+                    f"Do NOT leave the template's default resolution unchanged - set it to the {gw}x{gh} value."
+                )
+            elif "native" in strat:
+                lines.append(
+                    f"- Strategy is native: generate DIRECTLY at {w}x{h}. Set the template's resolution control "
+                    f"(ResolutionSelector.megapixels to {mp:.3f}, or width/height) to {w}x{h}. "
+                    f"Do NOT downscale. Do NOT leave the template's default resolution unchanged."
+                )
+            else:
+                lines.append(
+                    f"- Strategy is auto: aim for {w}x{h}, but if the live hardware budget (system_stats) cannot "
+                    f"safely fit it, scale down and SAY SO in your report - never silently pick a smaller size."
+                )
+            lines.append(
+                "- IMPORTANT: the template ships with a DEFAULT resolution (often megapixels=0.125, ~480p). "
+                "You MUST change it to the value above - leaving the default is failing this setting."
+            )
+        elif resolution and resolution.strip() and "auto" in resolution.lower():
+            lines.append(
+                "- Resolution is AUTO: choose the largest memory-safe size from the live system_stats budget, "
+                "and say what you picked in your report."
+            )
+
+        up = str(upscale_node or "none").lower()
+        if up and "none" not in up and not up.startswith("auto"):
+            if "rtx" in up:
+                lines.append(
+                    f"- Upscale: append an RTX Video Super Resolution node "
+                    f"('RTXVideoSuperResolution') after the generated frames. Set resize_type to "
+                    f"'scale by multiplier' with scale={upscale_scale}, quality='{upscale_quality}'. "
+                    "Feed it the generated IMAGE frames (unwrap the video to frames if needed), then "
+                    "reassemble the video. This is an ACTUAL node stage - you must add and run it, "
+                    "not merely claim it."
+                )
+            elif "seedvr2" in up:
+                lines.append(
+                    f"- Upscale: append the SeedVR2 video upscaler pipeline (SeedVR2LoadDiTModel + "
+                    f"SeedVR2LoadVAEModel + SeedVR2VideoUpscaler) to boost resolution x{upscale_scale}. "
+                    "This is an ACTUAL node stage - add and run it, do not merely claim it."
+                )
+            elif "generic" in up or "upscalemodelloader" in up:
+                lines.append(
+                    f"- Upscale: append a generic model upscale stage "
+                    f"(UpscaleModelLoader + ImageUpscaleWithModel) at x{upscale_scale}. "
+                    "This is an ACTUAL node stage - add and run it, do not merely claim it."
+                )
+            else:
+                lines.append(f"- Upscale: apply the '{upscale_node}' stage after generation.")
+
+        cm = str(color_match or "none").lower()
+        if cm and "none" not in cm and not cm.startswith("auto"):
+            node = {
+                "colormatch": "ColorMatch",
+                "colormatchtoreference": "ColorMatchToReference",
+                "easy imagecolormatch": "easy imageColorMatch",
+            }.get(cm.replace(" ", ""), "ColorMatch")
+            lines.append(
+                f"- Color matching: apply a '{node}' stage to grade the generated frames toward a "
+                "reference (e.g. a reference image's palette). This is an ACTUAL node stage."
+            )
+
+        lora = (lora_name or "").strip()
+        if lora:
+            lines.append(
+                f"- LoRA: apply '{lora}' via an existing LoraLoader/LoraLoaderModelOnly node at "
+                f"strength {lora_strength}. Load it before the model, wire it into generation."
+            )
+
+        lines.append(
+            "- After running, your success report must be ACCURATE: state the actual resolution, "
+            "the upscale/color/LoRA stages actually executed, and the output file path. Never report "
+            "an upscale/color/LoRA stage that did not run."
+        )
+        return "\n".join(lines)
+
     def _build_user_message(self, chat_message, reference_image, reference_audio, model_preference):
         parts = [chat_message]
         if reference_image is not None:
@@ -3151,10 +3351,228 @@ RESPONSE FORMAT:
 # ------------------------------------------------------------------------------------
 # Node Mappings
 # ------------------------------------------------------------------------------------
+class PGFX_MCPWorkflowAuthorNode:
+    """🤖 PGFX MCP Workflow Author
+
+    Author-only MCP agent: uses the same ComfyUI MCP tool surface to ASSEMBLE a CUSTOM
+    executable workflow (combining workflow templates, base nodes, and custom/3rd-party
+    nodes) and SAVE it as an API-format JSON file. It never runs the workflow.
+    """
+
+    _BG_LOCK = threading.Lock()
+    _BG_ACTIVE = {}
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        all_models = api_clients.get_all_models()
+        return {
+            "required": {
+                "user_prompt": ("STRING", {
+                    "multiline": True,
+                    "placeholder": "Assemble a custom workflow that... e.g. 'MiniMax H3 ref2va + RTX Video Super Resolution upscale + ColorMatch grade + a LoRA'",
+                    "tooltip": "Describe the custom workflow you want authored (models, nodes, stages). It will be assembled and SAVED, not run."
+                }),
+                "llm_model": (all_models, {
+                    "tooltip": "LLM model for designing and assembling the workflow graph"
+                }),
+                "output_path": ("STRING", {
+                    "default": "",
+                    "placeholder": "Leave empty to auto-save to <ComfyUI>/output/PGFX_workflows/PGFX_wf#001_YYYYMMDD_HHMMSS.json",
+                    "tooltip": "Absolute path to save the authored workflow JSON. Leave empty to auto-generate under the ComfyUI output/PGFX_workflows folder (never inside custom_nodes)."
+                }),
+                "run_mode": (["no", "dry-run", "yes"], {
+                    "default": "no",
+                    "tooltip": "no = only author and save the workflow. dry-run = validate/pre-flight the saved workflow without executing. yes = author, save, then run it (and fetch outputs)."
+                }),
+            },
+            "optional": {
+                "comfyui_url": ("STRING", {
+                    "default": "http://127.0.0.1:8188",
+                    "tooltip": "ComfyUI server URL (used to inspect installed nodes/templates)"
+                }),
+                "temperature": ("FLOAT", {
+                    "default": 0.7, "min": 0.0, "max": 2.0, "step": 0.1,
+                    "tooltip": "LLM temperature for response creativity"
+                }),
+                "seed": ("INT", {
+                    "default": 0, "min": -1, "max": 0xffffffffffffffff,
+                    "tooltip": "Random seed for reproducibility (-1 for random)"
+                }),
+                "timeout": ("INT", {
+                    "default": 600, "min": 60, "max": 7200,
+                    "tooltip": "LLM/agent loop timeout in seconds"
+                }),
+                "debug_mode": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Enable verbose logging for debugging"
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("status", "workflow_path")
+    FUNCTION = "author"
+    OUTPUT_NODE = True
+    CATEGORY = "☠️PGFX /Agent"
+
+    def author(self, user_prompt, llm_model, output_path,
+               comfyui_url="http://127.0.0.1:8188", temperature=0.7, seed=0,
+               timeout=600, debug_mode=False, run_mode="no", **kwargs):
+        import os as _os
+        given = str(output_path or "").strip()
+        if given:
+            out_abs = _os.path.abspath(given)
+            # A bare directory (or a path whose final component lacks a .json extension) is
+            # not a usable save target. Append an auto-generated filename inside it so
+            # workflow_save writes a real .json instead of failing/overwriting a directory.
+            if _os.path.isdir(out_abs) or not out_abs.lower().endswith(".json"):
+                out_abs = self._default_output_path(base_dir=(out_abs if _os.path.isdir(out_abs) else None))
+        else:
+            out_abs = self._default_output_path()
+
+        job_key = (comfyui_url, user_prompt, out_abs, seed, debug_mode, run_mode)
+        with PGFX_MCPWorkflowAuthorNode._BG_LOCK:
+            if PGFX_MCPWorkflowAuthorNode._BG_ACTIVE.get(job_key):
+                return ("ALREADY_RUNNING: this authoring request is already in progress.", out_abs)
+            PGFX_MCPWorkflowAuthorNode._BG_ACTIVE[job_key] = True
+
+        def _worker():
+            try:
+                self._run_author(user_prompt, llm_model, out_abs, comfyui_url,
+                                 temperature, seed, timeout, debug_mode, run_mode)
+            except Exception:
+                if debug_mode:
+                    pass  # background error
+            finally:
+                with PGFX_MCPWorkflowAuthorNode._BG_LOCK:
+                    PGFX_MCPWorkflowAuthorNode._BG_ACTIVE.pop(job_key, None)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+        return (f"QUEUED_ASYNC: authoring workflow (run_mode='{run_mode}'). Will save to: {out_abs}", out_abs)
+
+    @staticmethod
+    def _default_output_path(base_dir=None):
+        """Auto-generate <ComfyUI>/output/PGFX_workflows/PGFX_wf#<seq>_<YYYYMMDD>_<HHMMSS>.json.
+
+        If base_dir is given (an existing directory), generate the filename INSIDE it instead.
+        """
+        import os as _os
+        import datetime as _dt
+        if base_dir and _os.path.isdir(base_dir):
+            wf_dir = base_dir
+        else:
+            base = None
+            try:
+                import folder_paths
+                base = folder_paths.get_output_directory()
+            except Exception:
+                pass
+            if not base:
+                try:
+                    base = _os.path.normpath(_os.path.join(_os.path.dirname(config.MODELS_DIR), "output"))
+                except Exception:
+                    base = "output"
+            wf_dir = _os.path.join(base, "PGFX_workflows")
+        try:
+            _os.makedirs(wf_dir, exist_ok=True)
+        except Exception:
+            pass
+        seq = 1
+        for name in sorted(_os.listdir(wf_dir)):
+            if name.startswith("PGFX_wf#"):
+                try:
+                    n = int(name.split("#")[1].split("_")[0])
+                    seq = max(seq, n + 1)
+                except Exception:
+                    pass
+        stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"PGFX_wf#{seq:03d}_{stamp}.json"
+        return _os.path.join(wf_dir, filename)
+
+    def _run_author(self, user_prompt, llm_model, out_abs, comfyui_url,
+                    temperature, seed, timeout, debug_mode, run_mode="no"):
+        import sys
+        import os as _os
+        _pkg = _os.path.dirname(_os.path.abspath(__file__))
+        if _pkg not in sys.path:
+            sys.path.insert(0, _pkg)
+        import mcp_agent
+
+        try:
+            import folder_paths
+            out_dir = folder_paths.get_output_directory()
+        except Exception:
+            out_dir = _os.path.normpath(_os.path.join(_os.path.dirname(config.MODELS_DIR), "output"))
+
+        call_count = [0]
+
+        def llm_call(system_prompt, history):
+            conv = []
+            for m in history:
+                role = m.get("role")
+                content = m.get("content", "")
+                if role in ("user", "assistant"):
+                    conv.append(f"{role.upper()}:\n{content}")
+            prompt = "\n\n".join(conv)
+            call_count[0] += 1
+            ok, res = api_clients.query_model_auto(
+                llm_model, prompt=prompt, system=system_prompt,
+                temperature=temperature, seed=seed, timeout=120,
+            )
+            return ok, str(res)
+
+        session = mcp_agent.AgentSession(
+            comfyui_url=comfyui_url,
+            timeout=int(timeout),
+            debug=bool(debug_mode),
+            out_dir=out_dir,
+            can_preview=False,
+            models_dir=getattr(config, "MODELS_DIR", None),
+            llm_unloader=api_clients.unload_local_llm_vram,
+        )
+
+        result = session.run(user_prompt, max_rounds=16, llm_call=llm_call,
+                             authoring=True, author_out_path=out_abs)
+
+        try:
+            api_clients.unload_local_llm_vram()
+        except Exception:
+            pass
+
+        if not result.get("ok"):
+            return
+
+        if result.get("no_save"):
+            return
+
+        has_file = bool(out_abs) and _os.path.exists(out_abs)
+        _ = result.get("summary", "")
+
+        if not has_file:
+            return
+
+        mode = str(run_mode or "no").strip().lower()
+        if mode == "dry-run":
+            try:
+                import mcp_agent as _ma
+                _ = _ma.tool_validate_workflow(comfyui_url, {"workflow_path": out_abs})
+            except Exception:
+                pass
+        elif mode == "yes":
+            try:
+                import mcp_agent as _ma
+                _ = _ma.tool_run_workflow(comfyui_url, {"workflow_path": out_abs, "wait": True},
+                                          timeout=int(timeout), image_ref=None, audio_ref=None, prompt=user_prompt)
+            except Exception:
+                pass
+
+
 NODE_CLASS_MAPPINGS = {
     "PGFX_LogoDesignerStudio": PGFX_LogoDesignerStudio,
     "PGFX_LogoDesignerAgent": PGFX_LogoDesignerAgent,
     "PGFX_LogoDesignerMCPAgent": PGFX_LogoDesignerMCPAgent,
+    "PGFX_MCPWorkflowAuthorNode": PGFX_MCPWorkflowAuthorNode,
     "PGFX_ImageVectorizer": PGFX_ImageVectorizer,
 }
 if V3_IO_AVAILABLE:
@@ -3166,6 +3584,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PGFX_LogoDesignerStudio": "PGFX Logo Designer Studio",
     "PGFX_LogoDesignerAgent": "PGFX Logo Designer Agent",
     "PGFX_LogoDesignerMCPAgent": "🎭 PGFX MCP Agent",
+    "PGFX_MCPWorkflowAuthorNode": "🤖 PGFX MCP Workflow Author",
     "PGFX_ImageVectorizer": "📐 PGFX Image Vectorizer",
 }
 if V3_IO_AVAILABLE:
