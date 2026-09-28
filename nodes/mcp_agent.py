@@ -9,6 +9,7 @@ fed back to the LLM until the request is fulfilled.
 
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -17,6 +18,15 @@ import tempfile
 import threading
 import time
 import uuid
+
+
+# Configure module logger
+_logger = logging.getLogger("PGFX_MCP")
+if not _logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("\033[95m[PGFX MCP]\033[0m %(message)s"))
+    _logger.addHandler(_handler)
+    _logger.setLevel(logging.DEBUG)
 
 UI_ONLY_NODE_TYPES = {"Note", "MarkdownNote", "PrimitiveNode", "GetNode", "SetNode", "Reroute"}
 
@@ -2168,7 +2178,7 @@ class AgentSession:
 
     def log(self, msg):
         if self.debug:
-            pass  # Debug logging disabled
+            logging.getLogger("PGFX_MCP").debug(msg)
 
     def stage_media(self, reference_image, reference_audio):
         staged = []
